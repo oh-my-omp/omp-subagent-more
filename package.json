@@ -1,0 +1,45 @@
+{
+	"name": "omp-subagent-more",
+	"version": "0.0.0",
+	"description": "fork_task, the fork:self agent and eval subagent orchestration for Oh My Pi",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/oh-my-omp/omp-subagent-more.git"
+	},
+	"files": [
+		"extensions",
+		"agents",
+		"CHANGELOG.md",
+		"README.md",
+		"README.zh-CN.md"
+	],
+	"omomp": {
+		"changelog": "CHANGELOG.md"
+	},
+	"omp": {
+		"extensions": [
+			"./extensions/fork-task/index.ts"
+		]
+	},
+	"scripts": {
+		"check": "biome check . && tsc --noEmit",
+		"format": "biome check --write .",
+		"test": "bun test tests"
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-agent-core": "*",
+		"@oh-my-pi/pi-ai": "*",
+		"@oh-my-pi/pi-catalog": "*",
+		"@oh-my-pi/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "latest",
+		"@oh-my-pi/pi-agent-core": "latest",
+		"@oh-my-pi/pi-ai": "latest",
+		"@oh-my-pi/pi-catalog": "latest",
+		"@oh-my-pi/pi-coding-agent": "latest",
+		"@types/bun": "latest",
+		"typescript": "latest"
+	}
+}
