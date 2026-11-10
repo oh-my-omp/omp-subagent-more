@@ -42,7 +42,7 @@
 		"## How to finish",
 		"Finish by calling `yield` with its `data` argument set to exactly one of these objects. The object goes inside `data`; `kind` is never a top-level argument of `yield`.",
 		'- The assignment is complete: `{"kind": "done", "data": <result>}`, where `<result>` matches the result schema you were given.',
-		'- You reached a decision that belongs to whoever dispatched you and must not be guessed: `{"kind": "needs_input", "question": "…", "options": ["…", "…"]}`, where `options` (optional) is a JSON array of strings. Ask only about a choice the assignment leaves open, never about what the assignment is or whether it is complete. This is not a failure: the answer arrives as a message in this same session; continue the assignment and call `yield` again.',
+		'- You reached a decision that belongs to whoever dispatched you and must not be guessed: `{"kind": "needs_input", "question": "…", "options": ["…", "…"]}`, where `options` (optional) is a JSON array of strings. Ask only about a choice the assignment leaves open, never about what the assignment is or whether it is complete. You were dispatched by code, not a person: a question goes only through this `yield`, never through the `ask` tool or any other tool. This is not a failure: the answer arrives as a message in this same session; continue the assignment and call `yield` again.',
 	].join("\n");
 
 	const taskText = (context, stage) =>
