@@ -57,10 +57,10 @@ It returns with nothing pending, so the cell ends normally. The result:
 
 ## The result protocol
 
-Each stage's subagent is told to yield exactly one of:
+Each stage's subagent is told to call `yield` with its `data` argument set to exactly one of:
 
 - `{"kind": "done", "data": …}` with `data` matching the stage schema;
-- `{"kind": "needs_input", "question": "…", "options": ["…"]}` when it reaches a decision that belongs to the orchestrator and must not be guessed. This is not a failure.
+- `{"kind": "needs_input", "question": "…", "options": ["…"]}` when it reaches a decision the assignment leaves open, belongs to the orchestrator and must not be guessed. This is not a failure.
 
 A subagent that is cancelled, exhausts its schema retries or ends in a yield error makes its item `failed`; other items continue.
 
