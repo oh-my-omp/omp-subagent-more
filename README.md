@@ -7,6 +7,7 @@ An [Oh My Pi](https://github.com/can1357/oh-my-pi) plugin for subagent work:
 - **`fork_task`**: native `task` subagents that start from a copy of the caller's conversation, or of another agent named by an item's `from`. Its parameters are described on the tool itself; limits and batching are in `xd://fork_task/limits` and `xd://fork_task/batch`.
 - **`fork:self`**: the internal agent every fork child is dispatched as. It is not meant to be named in `task` calls.
 - **report-limit**: a check on every `fork_task` call that blocks items dispatched to `task:*` (or with `agent` omitted) whose shared `context` or `task` caps the length of the worker's report. Long reports belong in a file such as `local://<name>.md`.
+- **Orchestration in eval** (skill `omp-subagent-more`): after `%load skill://omp-subagent-more/orchestrate.js` in a JS cell, `orchestrate(spec)` runs items of one or more subagent stages, each stage checked against its schema. A subagent that needs a decision yields `needs_input`; `drive()` returns at once with the question, and `answer(id, text)` sends the reply to the same subagent. Items do not wait for each other. Usage: `read skill://omp-subagent-more`.
 
 ## Install
 
@@ -32,6 +33,6 @@ bun run check   # biome check . && tsc --noEmit
 bun run test    # bun test tests
 ```
 
-The tests drive the pure parts (staging rewrites, replica copies, workspace records and rejection codes, the report-limit verdicts) with fixed inputs and no model. Hooks, worker threads and the spawn path need a real OMP session.
+The tests drive the pure parts (staging rewrites, replica copies, workspace records and rejection codes, the report-limit verdicts, the orchestration state transitions over a fake eval prelude) with fixed inputs and no model. Hooks, worker threads and the spawn path need a real OMP session.
 
 Changes go under `## [Unreleased]` in `CHANGELOG.md`.

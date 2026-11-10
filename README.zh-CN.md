@@ -7,6 +7,7 @@
 - **`fork_task`**：从调用方对话的副本（或某一项 `from` 指定的另一个代理的对话副本）开始工作的原生 `task` 子代理。参数说明在工具定义里；上限与批量派发见 `xd://fork_task/limits` 与 `xd://fork_task/batch`。
 - **`fork:self`**：每个分叉子代理派发时使用的内部 agent，不用在 `task` 调用里点名。
 - **report-limit**：对每次 `fork_task` 调用的检查。派给 `task:*`（或未填 `agent`）的项，如果共享 `context` 或该项 `task` 限制了子代理报告的长度，整次调用被拦下。长报告应写入文件，例如 `local://<name>.md`。
+- **eval 中的编排**（skill `omp-subagent-more`）：在 JS cell 里 `%load skill://omp-subagent-more/orchestrate.js` 后，`orchestrate(spec)` 按条目运行一到多个子代理阶段，每个阶段的结果按其 schema 校验。需要上级决定的子代理 yield `needs_input`，`drive()` 立即带着问题返回，`answer(id, text)` 把回答发给同一个子代理。条目之间互不等待。用法见 `read skill://omp-subagent-more`。
 
 ## 安装
 
@@ -32,6 +33,6 @@ bun run check   # biome check . && tsc --noEmit
 bun run test    # bun test tests
 ```
 
-测试用固定输入、不调用模型，覆盖纯逻辑部分（暂存改写、副本、工作区记录与拒绝码、report-limit 判定）。hook、worker 线程与派发路径需要真实的 OMP 会话。
+测试用固定输入、不调用模型，覆盖纯逻辑部分（暂存改写、副本、工作区记录与拒绝码、report-limit 判定、在假的 eval prelude 上的编排状态转移）。hook、worker 线程与派发路径需要真实的 OMP 会话。
 
 变更写在 `CHANGELOG.md` 的 `## [Unreleased]` 下。
