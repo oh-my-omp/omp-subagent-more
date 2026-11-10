@@ -15,7 +15,7 @@
  */
 import { z } from "@oh-my-pi/pi-coding-agent";
 
-/** Log message of the per-call verdict line; `task-split-check` in omp-config logs a different name. */
+/** Log message of the per-call verdict line, named after this plugin so it is not mistaken for another check's verdicts. */
 export const VERDICTS_LOG = "omp-subagent-more report-limit verdicts";
 
 export const DEADLINE_MS = 25_000;
