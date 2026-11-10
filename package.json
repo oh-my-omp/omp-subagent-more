@@ -10,6 +10,7 @@
 	"files": [
 		"extensions",
 		"agents",
+		"skills",
 		"CHANGELOG.md",
 		"README.md",
 		"README.zh-CN.md"
