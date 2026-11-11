@@ -12,7 +12,7 @@
 ## 安装
 
 ```bash
-omp plugin install https://github.com/oh-my-omp/omp-subagent-more
+omp plugin install https://github.com/oh-my-omp/omp-subagent-more#release
 ```
 
 `fork_task` 需要 OMP 的异步子代理：`config.yml` 中 `async.enabled: true`。
@@ -35,4 +35,4 @@ bun run test    # bun test tests
 
 测试用固定输入、不调用模型，覆盖纯逻辑部分（暂存改写、副本、工作区记录与拒绝码、report-limit 判定、在假的 eval prelude 上的编排状态转移）。hook、worker 线程与派发路径需要真实的 OMP 会话。
 
-变更写在 `CHANGELOG.md` 的 `## [Unreleased]` 下。
+PR 把改动 `git add` 后，用 [lgit](https://github.com/can1357/llm-git) 在 `CHANGELOG.md` 的 `## [Unreleased]` 下写条目：运行 `uvx --from lgit-cli lgit` 代替 `git commit`。每天 GMT+9 02:00 的发布运行把 `## [Unreleased]` 提升为一个版本段、打 tag 并推进 `release` 分支，`#release` 安装的就是该分支。
