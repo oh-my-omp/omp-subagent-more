@@ -12,7 +12,7 @@ An [Oh My Pi](https://github.com/can1357/oh-my-pi) plugin for subagent work:
 ## Install
 
 ```bash
-omp plugin install https://github.com/oh-my-omp/omp-subagent-more
+omp plugin install https://github.com/oh-my-omp/omp-subagent-more#release
 ```
 
 `fork_task` needs OMP's async subagents: `async.enabled: true` in `config.yml`.
@@ -35,4 +35,4 @@ bun run test    # bun test tests
 
 The tests drive the pure parts (staging rewrites, replica copies, workspace records and rejection codes, the report-limit verdicts, the orchestration state transitions over a fake eval prelude) with fixed inputs and no model. Hooks, worker threads and the spawn path need a real OMP session.
 
-Changes go under `## [Unreleased]` in `CHANGELOG.md`.
+A pull request stages its change and writes the entry under `## [Unreleased]` in `CHANGELOG.md` with [lgit](https://github.com/can1357/llm-git): `git add` it, then run `uvx --from lgit-cli lgit` instead of `git commit`. A daily run at 02:00 GMT+9 promotes `## [Unreleased]` into a version section, tags it and moves the `release` branch, which is what `#release` installs.
