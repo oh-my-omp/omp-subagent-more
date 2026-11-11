@@ -1,6 +1,6 @@
 {
 	"name": "omp-subagent-more",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "fork_task, the fork:self agent and eval subagent orchestration for Oh My Pi",
 	"type": "module",
 	"repository": {
