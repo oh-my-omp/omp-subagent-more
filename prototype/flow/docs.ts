@@ -79,14 +79,16 @@ Every session is new: none continues an earlier one. A session ends by yielding 
 
 - the handoff the earlier session yielded, when it raised and the raise was answered, or when a check reopened the item;
 - the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
-- for an \`isolated\` box, the changes the earlier session left in its worktree. A session that yields hands its changes to your checkout, where the next worktree starts from them; when \`task.isolation.apply\` is off they stay a patch, which the next session of the item receives. A session that failed or was cancelled hands nothing back, and the next session of the item starts with its uncommitted changes applied, whatever model it runs on.
+- for an \`isolated\` box, the changes the earlier session left in its worktree. A session that yields hands its changes to your checkout, where the next worktree starts from them; when \`task.isolation.apply\` is off they stay a patch, which the next session of the item receives. A session that failed or was cancelled hands nothing back, and the next session of the item starts with its uncommitted changes applied, whatever model it runs on. The same holds for a session that yielded and whose changes could not be merged: the item fails with \`workspace\`, and its next session starts from those changes.
+
+An \`isolated\` box needs \`task.isolation.merge\` set to \`branch\` while \`task.isolation.apply\` is on. A worktree holds no ignored files of your checkout (installed dependencies, build output): say in the brief how a session gets what its checks need, and keep what it creates for that out of its changes with an ignore rule.
 
 ## Runtime exceptions
 
 | Name | Raised when |
 |---|---|
-| \`spawn\` | The session could not be started. |
-| \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session. |
+| \`spawn\` | The session could not be started, or the box is \`isolated\` and the session's isolation settings do not allow it. |
+| \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session, or a session yielded and its changes could not be merged into your checkout (the reason names the branch that holds them). |
 | \`session\` | The session failed, aborted itself, or ended without yielding. |
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |

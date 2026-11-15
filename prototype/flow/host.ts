@@ -41,6 +41,7 @@ import {
 	cfgTaskDisabledAgents,
 	cfgTaskIsolationApply,
 	cfgTaskIsolationEnabled,
+	cfgTaskIsolationMerge,
 } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
@@ -51,8 +52,10 @@ import {
 	applyOverlay,
 	headerCwd,
 	type Inheritance,
+	inheritKeptBranch,
 	inheritReleasedPatch,
 	inheritSourceWorkspace,
+	keptTaskBranch,
 	recordStart,
 	writeOverlay,
 } from "../../extensions/fork-task/workspace.ts";
@@ -280,6 +283,9 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 	// A session that yielded has handed its changes to the caller's checkout, unless the user keeps them as patches.
 	if (earlier.yielded && cfgTaskIsolationApply.get(parent.settings)) return undefined;
 	const callerCwd = parent.sessionManager.getCwd();
+	// A session whose changes OMP could not merge left them on its task branch.
+	const kept = await keptTaskBranch(earlier.session, callerCwd);
+	if (kept !== undefined) return inheritKeptBranch(kept, callerCwd);
 	const released = await inheritReleasedPatch(path.join(flow.dir, `${earlier.session}.patch`), callerCwd);
 	if (released) return released;
 	const ref = AgentRegistry.global().get(earlier.session);
@@ -343,6 +349,13 @@ async function runAgent(
 ): Promise<Outcome> {
 	if (box.isolated === true && !cfgTaskIsolationEnabled.get(parent.settings)) {
 		return failed("spawn", "the box is `isolated`, and this session does not allow isolated subagents (`task.isolation.enabled`)");
+	}
+	// OMP reports a hand-back it could not complete only by the task branch it keeps, and only in branch mode.
+	if (box.isolated === true && cfgTaskIsolationApply.get(parent.settings) && cfgTaskIsolationMerge.get(parent.settings) !== "branch") {
+		return failed(
+			"spawn",
+			"the box is `isolated`, and with `task.isolation.merge` set to `patch` the flow cannot tell whether a session's changes reached your checkout; set it to `branch`",
+		);
 	}
 	let model: string | string[] | undefined;
 	if (box.model !== undefined) {
@@ -423,7 +436,17 @@ async function spawnAndWait(
 	else signal.addEventListener("abort", cancel, { once: true });
 	await job.promise;
 	signal.removeEventListener("abort", cancel);
-	return outcomeOfJob(box, job, session);
+	const outcome = outcomeOfJob(box, job, session);
+	if (outcome.kind !== "done" && outcome.kind !== "raise") return outcome;
+	// With `task.isolation.apply` off the branch is kept on purpose: nothing was to be merged.
+	if (box.isolated !== true || !cfgTaskIsolationApply.get(parent.settings)) return outcome;
+	// OMP deletes the task branch of a session once its changes are in the caller's checkout, and keeps it when it could not merge them.
+	const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
+	if (kept === undefined) return outcome;
+	return failed(
+		"workspace",
+		`the session yielded, but OMP could not merge its changes into your checkout; they are on branch \`${kept}\`, and your checkout may be left half-updated (\`git status\`). ${clip((job.resultText ?? "").slice(-600))} (history://${session})`,
+	);
 }
 
 async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing, signal: AbortSignal): Promise<Outcome> {

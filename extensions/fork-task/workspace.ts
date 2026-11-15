@@ -228,6 +228,35 @@ export async function inheritReleasedPatch(patchFile: string, callerCwd: string)
 			};
 }
 
+async function gitText(root: string, args: readonly string[]): Promise<string | undefined> {
+	const child = Bun.spawn(["git", "-C", root, ...args], { stdout: "pipe", stderr: "ignore" });
+	const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+	return code === 0 ? stdout : undefined;
+}
+
+/** The task branch OMP keeps of an isolated run whose changes it could not merge into the checkout at `callerCwd`, if there is one. */
+export async function keptTaskBranch(agentId: string, callerCwd: string): Promise<string | undefined> {
+	const branch = `omp/task/${agentId}`;
+	return (await gitText(callerCwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])) === undefined ? undefined : branch;
+}
+
+/**
+ * What a session inherits from a kept task branch: the branch's changes since it left the
+ * history of the checkout at `callerCwd`, when they apply to that checkout.
+ */
+export async function inheritKeptBranch(branch: string, callerCwd: string): Promise<Inheritance> {
+	const rejected = (detail: string): Inheritance => ({ kind: "rejected", code: "overlay-conflict", detail });
+	const base = (await gitText(callerCwd, ["merge-base", "HEAD", branch]))?.trim();
+	if (!base) return rejected(`branch \`${branch}\` shares no history with your checkout`);
+	const patch = await gitText(callerCwd, ["diff", "--binary", base, branch]);
+	if (patch === undefined) return rejected(`the changes on branch \`${branch}\` cannot be read`);
+	if (!patch.trim()) return { kind: "inherit", patch: "" };
+	const check = await gitApply(callerCwd, patch, true);
+	return check.kind === "ok"
+		? { kind: "inherit", patch }
+		: rejected(`the changes on branch \`${branch}\` do not apply to your checkout: ${check.message}`);
+}
+
 export type OverlayResult =
 	| { readonly kind: "none" }
 	| { readonly kind: "applied" }
