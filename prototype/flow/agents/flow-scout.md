@@ -15,7 +15,7 @@ You read one change request and the code it names, and return a plan. A program 
 ## Slices
 A slice is a piece of the change one agent can implement and prove alone: one responsibility, a few files, and the acceptance rows of the request it makes pass. Order slices by dependency. When the whole change is one such piece, return one slice; never split one module into slices that cannot be proved separately.
 
-A slice exists only where file content changes, and it lists exactly the files whose content it changes. Running acceptance rows, collecting evidence, refreshing a lockfile and running the repository's checks are the program's work, never a slice.
+A slice exists only where file content changes, and it lists exactly the files whose content it changes. Running acceptance rows, collecting evidence, refreshing a lockfile, writing the changelog entry and running the repository's checks are the program's work, never a slice or one of its files.
 
 ## Open points
 An open point is behaviour a user, a caller or a test can observe that the request neither states nor rules on, or states two ways. For each give the concrete input that shows it, the outcomes the request's wording would allow, and who can produce that input (path:line, or `none` with what you searched). Do not invent open points to look thorough.
