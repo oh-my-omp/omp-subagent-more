@@ -6,7 +6,15 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["extensions/**/*.ts", "skills/**/*.js", "tests/**/*.ts", "biome.json", "package.json", "tsconfig.json"]
+		"includes": [
+			"extensions/**/*.ts",
+			"prototype/**/*.ts",
+			"skills/**/*.js",
+			"tests/**/*.ts",
+			"biome.json",
+			"package.json",
+			"tsconfig.json"
+		]
 	},
 	"formatter": {
 		"indentStyle": "tab",

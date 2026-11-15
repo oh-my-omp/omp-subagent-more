@@ -1,0 +1,368 @@
+// The flow store without a host: commands in, firings out, sessions settled by the test.
+// Each test states a property of the design that a run with real sessions depends on.
+import { describe, expect, test } from "bun:test";
+import type { Json } from "../prototype/flow/defs.ts";
+import type { Firing } from "../prototype/flow/plan.ts";
+import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
+import { type Action, type Outcome, replay } from "../prototype/flow/state.ts";
+import { Store } from "../prototype/flow/store.ts";
+
+const HANDOFF: Json = { did: "work", decided: [], unverified: [] };
+const done = (value: Json): Outcome => ({ kind: "done", value, handoff: HANDOFF });
+const failed = (name: string): Outcome => ({ kind: "failed", name, reason: `${name} happened` });
+
+const OUT: Json = { type: "object" };
+const SCOUT: Json = { agent: "task:low", brief: "Slice {{issue}}", in: { issue: "input.issue" }, out: OUT };
+const WORK: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "scout.slices[]" }, out: OUT };
+const GATE: Json = { command: "check {{results}}", in: { results: "work" } };
+
+function open(log: Action[] = []) {
+	const store = new Store(log, (action) => log.push(action));
+	store.observe({ "task:low": "low-1", "task:mid": "mid-1" });
+	const keys = (firings: readonly Firing[]): string[] => firings.map((firing) => `${firing.key}@${firing.attempt}`);
+	return { store, log, keys, fire: () => keys(store.advance()) };
+}
+
+/** A flow of scout → work per slice → gate, run until both slices are in flight. */
+function fanned() {
+	const flow = open();
+	flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, gate: GATE } });
+	flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+	flow.store.submit({ kind: "run" });
+	flow.fire();
+	flow.store.settle("scout", 1, done({ slices: ["a", "b"] }));
+	flow.fire();
+	return flow;
+}
+
+describe("scheduling", () => {
+	test("a box fires once its inputs have values, and one item per element of a `[]` input", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, gate: GATE } });
+		flow.store.submit({ kind: "run" });
+		expect(flow.fire()).toEqual([]);
+		expect(flow.store.survey().needs).toEqual(["issue"]);
+
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		flow.store.submit({ kind: "run" });
+		expect(flow.fire()).toEqual(["scout@1"]);
+		flow.store.settle("scout", 1, done({ slices: ["a", "b"] }));
+		const firings = flow.store.advance();
+		expect(firings.map((firing) => [firing.key, firing.inputs.slice])).toEqual([
+			["work#0", "a"],
+			["work#1", "b"],
+		]);
+
+		flow.store.settle("work#0", 1, done({ n: 0 }));
+		expect(flow.fire()).toEqual([]);
+		flow.store.settle("work#1", 1, done({ n: 1 }));
+		const gate = flow.store.advance();
+		expect(gate.map((firing) => [firing.key, firing.inputs.results])).toEqual([["gate", [{ n: 0 }, { n: 1 }]]]);
+		flow.store.settle("gate", 1, done("ok"));
+		flow.fire();
+		expect(flow.store.state.mode.kind).toBe("idle");
+		expect(flow.store.everything()[0]).toStartWith("flow complete");
+	});
+
+	test("`limit` bounds how many items of a box are in flight", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: { work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, limit: 1 } },
+		});
+		flow.store.submit({ kind: "supply", name: "slices", value: ["a", "b", "c"] });
+		flow.store.submit({ kind: "run" });
+		expect(flow.fire()).toEqual(["work#0@1"]);
+		expect(flow.fire()).toEqual([]);
+		flow.store.settle("work#0", 1, done(1));
+		expect(flow.fire()).toEqual(["work#1@1"]);
+	});
+
+	test("the state is the fold of the log and nothing else", () => {
+		const flow = fanned();
+		flow.store.settle("work#0", 1, done({ n: 0 }));
+		flow.store.settle("work#1", 1, failed("timeout"));
+		const rebuilt = new Store(flow.log, () => {});
+		expect(rebuilt.state).toEqual(flow.store.state);
+		expect(replay(flow.log)).toEqual(flow.store.state);
+		expect(rebuilt.everything()).toEqual(flow.store.everything());
+	});
+
+	test("after a restart no session of the earlier process is alive: running items end cancelled and fire again on resume", () => {
+		const flow = fanned();
+		const next = open(flow.log);
+		next.store.recover();
+		expect(next.store.state.mode.kind).toBe("stopped");
+		expect(next.store.submit({ kind: "run" }).accepted).toBe(true);
+		expect(next.fire()).toEqual(["work#0@2", "work#1@2"]);
+	});
+});
+
+describe("runtime exceptions", () => {
+	test("one the box does not handle stops the whole flow, and sessions still running are no longer waited for", () => {
+		const flow = fanned();
+		flow.store.settle("work#1", 1, failed("timeout"));
+		expect(flow.store.state.mode).toEqual({
+			kind: "stopped",
+			cause: { kind: "exception", key: "work#1", name: "timeout", reason: "timeout happened" },
+		});
+		expect(flow.fire()).toEqual([]);
+		expect(flow.store.orphans([{ key: "work#0", attempt: 1 }])).toEqual([{ key: "work#0", attempt: 1 }]);
+	});
+
+	test("a stopped flow resumes only after the exception is handled", () => {
+		const flow = fanned();
+		flow.store.settle("work#1", 1, failed("timeout"));
+		flow.store.settle("work#0", 1, { kind: "cancelled" });
+
+		const refused = flow.store.submit({ kind: "run" });
+		expect(refused.accepted).toBe(false);
+		expect(refused.refusals.join("\n")).toContain("work#1: failed with `timeout`");
+		expect(flow.store.state.mode.kind).toBe("stopped");
+
+		expect(flow.store.submit({ kind: "retry", keys: ["work#1"] }).accepted).toBe(true);
+		expect(flow.store.submit({ kind: "run" }).accepted).toBe(true);
+		expect(flow.fire()).toEqual(["work#0@2", "work#1@2"]);
+	});
+
+	test("replacing the failed box's definition handles the exception; values of other boxes stand", () => {
+		const flow = fanned();
+		flow.store.settle("work#0", 1, done({ n: 0 }));
+		flow.store.settle("work#1", 1, failed("timeout"));
+		flow.store.submit({
+			kind: "define",
+			boxes: { work: { agent: "task:mid", brief: "Do {{slice}}", in: { slice: "scout.slices[]" }, out: OUT } },
+		});
+
+		// The value work#0 produced came from the earlier definition: the store names it and waits for a decision.
+		const refused = flow.store.submit({ kind: "run" });
+		expect(refused.refusals).toHaveLength(1);
+		expect(refused.refusals[0]).toStartWith("work#0: produced under an earlier definition");
+		expect(flow.store.survey().stale).toEqual(["work#0"]);
+
+		flow.store.submit({ kind: "keep", keys: ["work#0"] });
+		expect(flow.store.submit({ kind: "run" }).accepted).toBe(true);
+		expect(flow.fire()).toEqual(["work#1@2"]);
+		expect(flow.store.state.items.scout?.attempt).toBe(1);
+	});
+
+	test("a named exception the box handles fires the item again, as many times as declared, without stopping", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { gate: { command: "true", handle: { exit: 1 } } } });
+		flow.store.submit({ kind: "run" });
+		expect(flow.fire()).toEqual(["gate@1"]);
+		flow.store.settle("gate", 1, failed("exit"));
+		expect(flow.store.state.mode.kind).toBe("running");
+		expect(flow.fire()).toEqual(["gate@2"]);
+		flow.store.settle("gate", 2, failed("exit"));
+		expect(flow.store.state.mode.kind).toBe("stopped");
+	});
+
+	test("a session that outlived its item reports to nothing", () => {
+		const flow = fanned();
+		flow.store.submit({ kind: "retract", keys: ["work#0"] });
+		const before = flow.store.state;
+		flow.store.settle("work#0", 1, done({ n: 0 }));
+		expect(flow.store.state).toEqual(before);
+	});
+});
+
+describe("definitions and values", () => {
+	test("a definition with problems is refused whole and names every problem", () => {
+		const flow = open();
+		const verdict = flow.store.submit({
+			kind: "define",
+			boxes: { ok: GATE, bad: { agent: "task:low", brief: "{{nope}}", out: OUT, raises: "q", typo: 1 } },
+		});
+		expect(verdict.accepted).toBe(false);
+		expect(verdict.refusals).toEqual([
+			"bad: unknown field `typo`",
+			"bad: `{{nope}}` names no input of this box",
+			"bad: `raises` is an array of names",
+		]);
+		expect(flow.log.filter((action) => action.kind === "defined")).toEqual([]);
+	});
+
+	test("a reference to a box that does not exist keeps the flow from starting; nothing fires", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: WORK } });
+		const verdict = flow.store.submit({ kind: "run" });
+		expect(verdict.refusals).toEqual(["work: in.slice → no box `scout`"]);
+		expect(flow.fire()).toEqual([]);
+	});
+
+	test("boxes that need each other's results are refused as a cycle", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { a: { command: "a {{x}}", in: { x: "b" } }, b: { command: "b {{x}}", in: { x: "a" } } } });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["cycle: a → b → a"]);
+	});
+
+	test("a value produced under an earlier definition of the agent itself is stale, though the box did not change", () => {
+		const flow = fanned();
+		flow.store.settle("work#0", 1, done(0));
+		flow.store.settle("work#1", 1, done(1));
+		flow.fire();
+		flow.store.observe({ "task:low": "low-2" });
+		expect(flow.store.survey().stale).toEqual(["scout", "work#0", "work#1"]);
+		expect(flow.store.everything().join("\n")).toContain("work#0: done in session 1 · stale: produced under definition");
+	});
+
+	test("a box naming an agent that does not exist keeps the flow from starting", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { scout: { agent: "nobody", brief: "x", out: OUT } } });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["scout: there is no agent named `nobody`"]);
+	});
+
+	test("an item of a box that was dropped is illegal until retracted", () => {
+		const flow = fanned();
+		flow.store.settle("work#0", 1, done(0));
+		flow.store.settle("work#1", 1, done(1));
+		flow.fire();
+		flow.store.settle("gate", 1, done("ok"));
+		flow.fire();
+		flow.store.submit({ kind: "define", boxes: { gate: null } });
+		expect(flow.store.survey().illegal).toEqual(["gate"]);
+		expect(flow.store.submit({ kind: "run" }).accepted).toBe(false);
+		flow.store.submit({ kind: "retract", keys: ["gate"] });
+		expect(flow.store.submit({ kind: "run" }).accepted).toBe(true);
+	});
+
+	test("supplying an input again removes everything computed from it, and only that", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, other: { command: "date" } } });
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("scout", 1, done({ slices: ["a"] }));
+		flow.store.settle("other", 1, done("today"));
+		flow.fire();
+		flow.store.settle("work#0", 1, done(0));
+
+		flow.store.submit({ kind: "supply", name: "issue", value: "#2" });
+		expect(Object.keys(flow.store.state.items)).toEqual(["other"]);
+	});
+
+	test("submitting an unchanged definition or value again changes nothing", () => {
+		const flow = fanned();
+		const length = flow.log.length;
+		flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, gate: GATE } });
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		expect(flow.log).toHaveLength(length);
+	});
+
+	test("a verdict reports what changed since the last one, not the whole state", () => {
+		const flow = open();
+		const first = flow.store.submit({ kind: "define", boxes: { scout: SCOUT } });
+		expect(first.lines.filter((line) => line.startsWith("+ "))).toHaveLength(1);
+		const second = flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		expect(second.lines.filter((line) => /^[+~-] /.test(line))).toEqual(["+ input.issue: supplied (4 characters of JSON)"]);
+		expect(flow.store.changes().filter((line) => /^[+~-] /.test(line))).toEqual([]);
+	});
+});
+
+describe("exceptions raised by a session", () => {
+	const ASK: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question"] };
+	const ANSWER: Json = { agent: "task:mid", brief: "Answer {{raise}}", in: { raise: "work!question" }, out: OUT };
+
+	function raising(boxes: Readonly<Record<string, Json>> = { work: ASK, answer: ANSWER }) {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes });
+		flow.store.submit({ kind: "supply", name: "slices", value: ["a", "b"] });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		return flow;
+	}
+
+	test("a raise wired to a box fires that box with the raise, and its result continues the item in a new session", () => {
+		const flow = raising();
+		flow.store.settle("work#0", 1, done(0));
+		flow.store.settle("work#1", 1, { kind: "raise", type: "question", detail: "which one?", handoff: HANDOFF });
+		expect(flow.store.state.mode.kind).toBe("running");
+
+		const handler = flow.store.advance();
+		expect(handler.map((firing) => firing.key)).toEqual(["answer<work#1@1>"]);
+		expect(handler[0]?.inputs.raise).toEqual({ item: "work#1", type: "question", detail: "which one?", handoff: HANDOFF });
+
+		flow.store.settle("answer<work#1@1>", 1, done("the second"));
+		const continued = flow.store.advance();
+		expect(continued.map((firing) => [firing.key, firing.attempt, firing.inputs.slice])).toEqual([["work#1", 2, "b"]]);
+		expect(continued[0]?.continuation).toEqual({ answer: "the second", previous: HANDOFF });
+	});
+
+	test("a raise nothing is wired to waits for an answer from outside while the rest goes on", () => {
+		const flow = raising({ work: ASK });
+		flow.store.settle("work#1", 1, { kind: "raise", type: "question", detail: "which one?", handoff: HANDOFF });
+		expect(flow.fire()).toEqual([]);
+		expect(flow.store.survey().raised.map((raise) => raise.key)).toEqual(["work#1"]);
+
+		expect(flow.store.submit({ kind: "answer", key: "work#0", value: "x" }).accepted).toBe(false);
+		flow.store.submit({ kind: "answer", key: "work#1", value: "the first" });
+		expect(flow.store.advance().map((firing) => [firing.key, firing.attempt, firing.continuation?.answer])).toEqual([
+			["work#1", 2, "the first"],
+		]);
+	});
+
+	test("an item that raises in its last allowed session ends as the runtime exception `bound_exceeded`", () => {
+		const flow = raising({
+			work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question"], bound: 1 },
+		});
+		flow.store.settle("work#0", 1, { kind: "raise", type: "question", detail: "again?", handoff: HANDOFF });
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { key: "work#0", name: "bound_exceeded" } });
+	});
+
+	test("an input wired to a type the box does not raise is a definition problem", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: { command: "true" }, answer: ANSWER } });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["answer: in.raise → `work` does not raise `question`"]);
+	});
+
+	test("two boxes answering the same raise are a definition problem", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: ASK, answer: ANSWER, second: ANSWER } });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["work!question: answered by more than one box (answer, second)"]);
+	});
+});
+
+describe("what a session is told and hands back", () => {
+	const store = open().store;
+	store.submit({
+		kind: "define",
+		boxes: { work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.s" }, out: OUT, raises: ["question"] } },
+	});
+	const box = store.state.boxes.work;
+	if (box?.kind !== "agent") throw new Error("work is an agent box");
+
+	test("a continuation carries the earlier handoff and the answer, since the session itself is new", () => {
+		const brief = briefOf(box, {
+			key: "work",
+			box: "work",
+			attempt: 2,
+			inputs: { slice: "a" },
+			continuation: { answer: "the second", previous: HANDOFF },
+		});
+		expect(brief).toStartWith("Do a\n\n## Continuation");
+		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
+		expect(brief).toContain("the second");
+	});
+
+	test("the result schema requires a handoff and offers only the declared raise types", () => {
+		const schema = yieldSchema(box);
+		expect(schema.required).toEqual(["status", "handoff"]);
+		expect(schema.properties).toMatchObject({ raise: { enum: ["question"] } });
+	});
+
+	test("yielded data outside the protocol is the runtime exception `protocol`", () => {
+		expect(interpret(box, { status: "done", value: 1 })).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, { status: "raise", raise: "other", detail: "", handoff: HANDOFF })).toMatchObject({
+			kind: "failed",
+			name: "protocol",
+		});
+		expect(interpret(box, { status: "raise", raise: "question", detail: "which?", handoff: HANDOFF })).toEqual({
+			kind: "raise",
+			type: "question",
+			detail: "which?",
+			handoff: HANDOFF,
+		});
+		expect(interpret(box, { status: "done", value: { n: 1 }, handoff: HANDOFF })).toEqual(done({ n: 1 }));
+	});
+});
