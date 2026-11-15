@@ -403,6 +403,123 @@ describe("what follows from the definitions and the state", () => {
 	});
 });
 
+describe("checks", () => {
+	const CHECKED: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, bound: 2 };
+	const CHECK: Json = { command: "check {{work}}", in: { work: "work[]" }, checks: "work" };
+	const AFTER: Json = { command: "sum {{checks}}", in: { checks: "check" } };
+	const exit = (output: string): Outcome => ({ kind: "failed", name: "exit", reason: output });
+
+	/** Two slices done, both checks in flight. */
+	function checking(boxes: Readonly<Record<string, Json>> = { work: CHECKED, check: CHECK, after: AFTER }) {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes });
+		flow.store.submit({ kind: "supply", name: "slices", value: ["a", "b"] });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("work#0", 1, done(0));
+		flow.store.settle("work#1", 1, done(1));
+		flow.fire();
+		return flow;
+	}
+
+	test("a check that exits non-zero reopens the item it checks, which continues in a new session with the output", () => {
+		const flow = checking();
+		flow.store.settle("check#0", 1, done("ok"));
+		flow.store.settle("check#1", 1, exit("expected 3, got 2"));
+		expect(flow.store.state.mode.kind).toBe("running");
+
+		const again = flow.store.advance();
+		expect(again.map((firing) => [firing.key, firing.attempt, firing.inputs.slice])).toEqual([["work#1", 2, "b"]]);
+		expect(again[0]?.continuation).toEqual({ kind: "check", check: "check", output: "expected 3, got 2", previous: HANDOFF });
+	});
+
+	test("what was computed from the reopened item's result is gone and is produced again from the new one", () => {
+		const flow = checking();
+		flow.store.settle("check#0", 1, done("ok"));
+		flow.store.settle("check#1", 1, exit("no"));
+		// The failed check is gone with the result it judged; the check of the other item stands.
+		expect(Object.keys(flow.store.state.items).sort()).toEqual(["check#0", "work#0", "work#1"]);
+
+		flow.fire();
+		expect(flow.store.survey().waiting).toEqual(["after", "check"]);
+		flow.store.settle("work#1", 2, done(2));
+		expect(flow.fire()).toEqual(["check#1@1"]);
+		flow.store.settle("check#1", 1, done("ok"));
+		const after = flow.store.advance();
+		expect(after.map((firing) => [firing.key, firing.inputs.checks])).toEqual([["after", ["ok", "ok"]]]);
+	});
+
+	test("reopenings count towards the checked box's `bound`; once spent, the failed check stops the flow", () => {
+		const flow = checking();
+		flow.store.settle("check#1", 1, exit("no"));
+		flow.fire();
+		flow.store.settle("work#1", 2, done(2));
+		flow.fire();
+		flow.store.settle("check#1", 1, exit("still no"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { kind: "exception", key: "check#1", name: "exit" } });
+		expect(flow.store.state.items["work#1"]?.phase.kind).toBe("done");
+		expect(flow.store.state.items["check#1"]?.phase).toMatchObject({ kind: "failed", reason: expect.stringContaining("still no") });
+	});
+
+	test("`handle.exit` runs the check again before the item is reopened", () => {
+		const flow = checking({ work: CHECKED, check: { ...(CHECK as object), handle: { exit: 1 } } });
+		flow.store.settle("check#1", 1, exit("flaky"));
+		expect(flow.fire()).toEqual(["check#1@2"]);
+		flow.store.settle("check#1", 2, exit("no"));
+		expect(flow.fire()).toEqual(["work#1@2"]);
+	});
+
+	test("a check of a box with one item reopens that item", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: {
+				work: { agent: "task:low", brief: "Do {{issue}}", in: { issue: "input.issue" }, out: OUT },
+				check: { command: "check {{files}}", in: { files: "work.files" }, checks: "work" },
+			},
+		});
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("work", 1, done({ files: ["a"] }));
+		flow.fire();
+		flow.store.settle("check", 1, exit("no"));
+		expect(flow.fire()).toEqual(["work@2"]);
+	});
+
+	test("a check that could not say which item to reopen is a definition problem", () => {
+		const flow = open();
+		const problems = (check: Json, work: Json = CHECKED): readonly string[] => {
+			flow.store.submit({ kind: "define", boxes: { work, check } });
+			return flow.store.survey().problems;
+		};
+		expect(problems({ command: "check {{work}}", in: { work: "work" }, checks: "work" })).toEqual([
+			"check: `work` has many items; take `work[]` as an input so that each item is checked on its own",
+		]);
+		expect(problems({ command: "check", checks: "work" })).toEqual(["check: checks `work` but takes no input from it"]);
+		expect(problems({ command: "check {{work}}", in: { work: "work[]" }, checks: "gone" })).toEqual(["check: checks → no box `gone`"]);
+		expect(problems(CHECK, { command: "build" })).toEqual(["check: checks → `work` is a command box; only an agent box can be reopened"]);
+		expect(problems(CHECK)).toEqual([]);
+	});
+
+	test("the full report says which item a failed check reopens", () => {
+		const flow = checking();
+		expect(flow.store.everything()).toContain("wire check ← work[] · exit reopens work");
+		flow.store.changes();
+		flow.store.settle("check#1", 1, exit("expected 3,\n got 2"));
+		expect(flow.store.changes()).toContain("~ work#1: reopened after session 1 by check `check`: expected 3, got 2");
+	});
+
+	test("a log with a reopening folds to the same state", () => {
+		const flow = checking();
+		flow.store.settle("check#1", 1, exit("no"));
+		flow.fire();
+		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-check-")), "flow.jsonl");
+		for (const action of flow.log) appendLog(file, action);
+		expect(replay(readLog(file))).toEqual(flow.store.state);
+	});
+});
+
 describe("exceptions raised by a session", () => {
 	const ASK: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question"] };
 	const ANSWER: Json = { agent: "task:mid", brief: "Answer {{raise}}", in: { raise: "work!question" }, out: OUT };
@@ -429,7 +546,7 @@ describe("exceptions raised by a session", () => {
 		flow.store.settle("answer<work#1@1>", 1, done("the second"));
 		const continued = flow.store.advance();
 		expect(continued.map((firing) => [firing.key, firing.attempt, firing.inputs.slice])).toEqual([["work#1", 2, "b"]]);
-		expect(continued[0]?.continuation).toEqual({ answer: "the second", previous: HANDOFF });
+		expect(continued[0]?.continuation).toEqual({ kind: "answer", answer: "the second", previous: HANDOFF });
 	});
 
 	test("a raise nothing is wired to waits for an answer from outside while the rest goes on", () => {
@@ -440,8 +557,8 @@ describe("exceptions raised by a session", () => {
 
 		expect(flow.store.submit({ kind: "answer", key: "work#0", value: "x" }).accepted).toBe(false);
 		flow.store.submit({ kind: "answer", key: "work#1", value: "the first" });
-		expect(flow.store.advance().map((firing) => [firing.key, firing.attempt, firing.continuation?.answer])).toEqual([
-			["work#1", 2, "the first"],
+		expect(flow.store.advance().map((firing) => [firing.key, firing.attempt, firing.continuation])).toEqual([
+			["work#1", 2, { kind: "answer", answer: "the first", previous: HANDOFF }],
 		]);
 	});
 
@@ -596,7 +713,7 @@ describe("what a session is told and hands back", () => {
 				box: "work",
 				attempt: 2,
 				inputs: { slice: "a" },
-				continuation: { answer: "the second", previous: HANDOFF },
+				continuation: { kind: "answer", answer: "the second", previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
 			},
 			{ board: "/notes/work.md", inherited: false },
@@ -605,6 +722,24 @@ describe("what a session is told and hands back", () => {
 		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
 		expect(brief).toContain("the second");
 		expect(brief).not.toContain("## Earlier work");
+	});
+
+	test("a session reopened by a check is given the earlier handoff and the check's output", () => {
+		const brief = briefOf(
+			box,
+			{
+				key: "work",
+				box: "work",
+				attempt: 2,
+				inputs: { slice: "a" },
+				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", previous: HANDOFF },
+				earlier: { session: "S1", yielded: true },
+			},
+			{ board: "/notes/work.md", inherited: false },
+		);
+		expect(brief).toContain("the check `gate`");
+		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
+		expect(brief).toContain("expected 3, got 2");
 	});
 
 	test("the result schema requires a handoff and offers only the declared raise types", () => {

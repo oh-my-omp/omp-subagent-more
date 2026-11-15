@@ -296,6 +296,9 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
+/** A failed command's output as the session it reopens reads it: the start and the end, where the failure is named. */
+const clipOutput = (text: string): string =>
+	text.length > 8000 ? `${text.slice(0, 2000)}\n… ${text.length - 8000} characters left out …\n${text.slice(-6000)}` : text;
 
 function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 	const where = `history://${session}`;
@@ -432,8 +435,8 @@ async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing,
 		},
 	);
 	if (result.cancelled) return { kind: "cancelled" };
-	if (result.timedOut) return failed("timeout", clip(output.trim()));
-	if (result.exitCode !== 0) return failed("exit", `exit code ${result.exitCode ?? "unknown"}: ${clip(output.trim())}`);
+	if (result.timedOut) return failed("timeout", clipOutput(output.trim()));
+	if (result.exitCode !== 0) return failed("exit", `exit code ${result.exitCode ?? "unknown"}:\n${clipOutput(output.trim())}`);
 	return { kind: "done", value: output.trimEnd(), handoff: null };
 }
 

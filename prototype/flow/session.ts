@@ -5,7 +5,7 @@
 // (after an answer, or after a failure) starts fresh and has nothing else of this one.
 import { type AgentBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
-import type { Outcome } from "./state.ts";
+import type { Continuation, Outcome } from "./state.ts";
 
 const HANDOFF_SCHEMA: JsonObject = {
 	type: "object",
@@ -42,6 +42,34 @@ export type Surroundings = {
 	readonly inherited: boolean;
 };
 
+function continuationText(continuation: Continuation): string {
+	switch (continuation.kind) {
+		case "answer":
+			return [
+				"## Continuation",
+				"An earlier session worked on this same assignment and stopped to raise a question. You start fresh: nothing of that session reaches you except its handoff.",
+				"Handoff of the earlier session:",
+				textOf(continuation.previous),
+				"Answer to what it raised:",
+				textOf(continuation.answer),
+			].join("\n");
+		case "check":
+			return [
+				"## Continuation",
+				`An earlier session finished this same assignment and handed its work back: its changes are in your workspace. Then the program ran the check \`${continuation.check}\` on that work, and the check failed. You start fresh: nothing of that session reaches you except its handoff.`,
+				"Handoff of the earlier session:",
+				textOf(continuation.previous),
+				"Output of the failed check:",
+				continuation.output,
+				"Find what in the work makes the check fail and correct it. The check itself is not yours to change.",
+			].join("\n");
+		default: {
+			const unreachable: never = continuation;
+			return unreachable;
+		}
+	}
+}
+
 /** The assignment of one session: the box's brief with its inputs, what came before, and how to finish. */
 export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
 	const parts = [fill(box.brief, firing.inputs).trim()];
@@ -59,18 +87,7 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 			`\`${around.board}\` belongs to this assignment alone. Read it before you start: earlier sessions of this assignment may have left notes. Append short notes a later session would need (what you tried, what you found). It is scratch: your result and handoff go through \`yield\`, and nothing reads the notes for you.`,
 		].join("\n"),
 	);
-	if (firing.continuation) {
-		parts.push(
-			[
-				"## Continuation",
-				"An earlier session worked on this same assignment and stopped to raise a question. You start fresh: nothing of that session reaches you except its handoff.",
-				"Handoff of the earlier session:",
-				textOf(firing.continuation.previous),
-				"Answer to what it raised:",
-				textOf(firing.continuation.answer),
-			].join("\n"),
-		);
-	}
+	if (firing.continuation) parts.push(continuationText(firing.continuation));
 	const finish = [
 		"## How to finish",
 		"Finish by calling `yield` with its `data` argument set to exactly one object. Never use `yield`'s `error` argument: it aborts the session and nothing of your work reaches anyone.",

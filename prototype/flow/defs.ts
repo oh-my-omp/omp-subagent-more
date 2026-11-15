@@ -55,7 +55,12 @@ export type AgentBox = Common & {
 	readonly bound: number;
 };
 
-export type CommandBox = Common & { readonly kind: "command"; readonly command: string };
+export type CommandBox = Common & {
+	readonly kind: "command";
+	readonly command: string;
+	/** The box whose item this command checks: a non-zero exit reopens that item instead of stopping the flow. */
+	readonly checks: string | undefined;
+};
 
 export type Box = AgentBox | CommandBox;
 
@@ -127,7 +132,7 @@ const AGENT_KEYS: Record<string, true> = {
 	limit: true,
 	bound: true,
 };
-const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true };
+const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true };
 
 /** One box from its plain-data form; every problem found is reported, not only the first. */
 export function parseBox(name: string, raw: Json): Result<Box> {
@@ -201,8 +206,11 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	const fingerprint = fingerprintOf(raw);
 
 	if (!isAgent) {
+		const checksRaw = raw.checks;
+		if (checksRaw !== undefined && (typeof checksRaw !== "string" || !NAME.test(checksRaw))) say("`checks` names a box");
 		if (problems.length > 0) return { ok: false, problems };
-		return { ok: true, value: { kind: "command", command: template, inputs, handle, limit, fingerprint } };
+		const checks = typeof checksRaw === "string" ? checksRaw : undefined;
+		return { ok: true, value: { kind: "command", command: template, checks, inputs, handle, limit, fingerprint } };
 	}
 
 	const agent = text("agent");

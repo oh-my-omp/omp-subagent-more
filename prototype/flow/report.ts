@@ -33,6 +33,8 @@ function itemLabel(state: State, survey: Survey, item: Item): string {
 				raise === undefined ? "answered" : raise.handler === undefined ? "nothing answers it" : `waits for \`${raise.handler}\``;
 			return `raised \`${phase.type}\` (${answer}): ${oneLine(phase.detail)}${suffix}`;
 		}
+		case "reopened":
+			return `reopened after session ${item.attempt} by check \`${phase.check}\`: ${oneLine(phase.output)}${suffix}`;
 		case "failed":
 			return `failed with \`${phase.name}\` in session ${item.attempt}: ${oneLine(phase.reason)}${suffix}`;
 		case "retry":
@@ -68,7 +70,8 @@ export function wiring(state: State): string[] {
 					? box.raises.map((type) => `raises ${type} → ${handlerOf(state.boxes, name, type) ?? "an answer from outside"}`)
 					: [];
 			const handled = Object.entries(box.handle).map(([exception, times]) => `fires again on ${exception} ×${times}`);
-			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...handled];
+			const checks = box.kind === "command" && box.checks !== undefined ? [`exit reopens ${box.checks}`] : [];
+			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...handled, ...checks];
 			return `wire ${name} ${parts.join(" · ")}`;
 		});
 }

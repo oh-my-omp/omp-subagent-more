@@ -45,7 +45,8 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`raises\` | agent | Exception types a session may raise instead of returning a result. |
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
-| \`bound\` | agent | Most sessions one item may take through answered raises: the first, and one per answer. 3 when absent. |
+| \`bound\` | agent | Most sessions one item may take through answered raises and failed checks: the first, and one per answer or failed check. 3 when absent. |
+| \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
 
 ## References
@@ -60,11 +61,23 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 
 A box takes at most one reference of the last two kinds. References are resolved by name when the flow runs, so boxes may be defined in any order and redefined one at a time.
 
+## Checks
+
+A command box that names an agent box in \`checks\` is a verdict on that box's work:
+
+\`\`\`json
+{ "command": "bun test", "in": { "work": "work[]" }, "checks": "work" }
+\`\`\`
+
+When the command exits non-zero, the item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow does not stop. A reopening counts towards the checked box's \`bound\`; once that is spent, the failed check is an ordinary \`exit\` exception.
+
+The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`. A \`handle.exit\` count on the check runs the command again that many times before the item is reopened.
+
 ## Sessions
 
 Every session is new: none continues an earlier one. A session ends by yielding its result or one of its box's \`raises\` types, and a handoff with it. What a later session of the same item has of an earlier one:
 
-- the handoff the earlier session yielded, when it raised and the raise was answered;
+- the handoff the earlier session yielded, when it raised and the raise was answered, or when a check reopened the item;
 - the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
 - for an \`isolated\` box, the changes the earlier session left in its worktree. A session that yields hands its changes to your checkout, where the next worktree starts from them; when \`task.isolation.apply\` is off they stay a patch, which the next session of the item receives. A session that failed or was cancelled hands nothing back, and the next session of the item starts with its uncommitted changes applied, whatever model it runs on.
 
@@ -78,7 +91,7 @@ Every session is new: none continues an earlier one. A session ends by yielding 
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |
 | \`bound_exceeded\` | An item raised in its last allowed session. |
-| \`exit\` | A command exited non-zero. |
+| \`exit\` | A command exited non-zero, and it is not a check that could reopen an item. |
 | \`timeout\` | A command timed out. |
 | \`host\` | Starting or reading the session threw. |`;
 

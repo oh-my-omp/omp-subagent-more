@@ -21,8 +21,12 @@ export type Outcome =
 /** An ended session of an item: a later session of the same item starts from what it left. */
 export type Earlier = { readonly session: string; readonly yielded: boolean };
 
-/** What an attempt after an answered raise is given besides the box's inputs. */
-export type Continuation = { readonly answer: Json; readonly previous: Json };
+/** What a session that follows an earlier one of its item is given besides the box's inputs; `previous` is the earlier handoff. */
+export type Continuation =
+	/** The earlier session raised, and this is the answer. */
+	| { readonly kind: "answer"; readonly answer: Json; readonly previous: Json }
+	/** The earlier session finished, and the check box `check` failed on its result with this output. */
+	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json };
 
 export type Action =
 	/** Boxes in plain-data form; `null` drops a box. */
@@ -55,6 +59,8 @@ export type Phase =
 	| { readonly kind: "running" }
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raised"; readonly type: string; readonly detail: string; readonly handoff: Json }
+	/** A check on the item's result failed: the item continues in a new session that is given the check's output. */
+	| { readonly kind: "reopened"; readonly check: string; readonly output: string; readonly handoff: Json }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	/** A runtime exception the box handles: the item fires again. */
 	| { readonly kind: "retry"; readonly name: string; readonly reason: string }
@@ -67,7 +73,7 @@ export type Item = {
 	/** Mark of what the latest attempt ran under. */
 	readonly fingerprint: string;
 	readonly phase: Phase;
-	/** Sessions of this item that followed one another through answered raises, this one included. */
+	/** Sessions of this item that followed one another through answered raises and failed checks, this one included. */
 	readonly chain: number;
 	/** How many times each handled runtime exception has already made this item fire again. */
 	readonly refires: Readonly<Record<string, number>>;
@@ -135,6 +141,15 @@ export function partsOf(key: string): KeyParts {
 export const isFanned = (box: Box | undefined): boolean =>
 	box !== undefined && Object.values(box.inputs).some((ref) => ref.multi && ref.source.kind !== "raise");
 
+/** The item a check item checks: the item of the same index when the checked box is fanned, else its only item. */
+export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): string | undefined {
+	const parts = partsOf(key);
+	const box = boxes[parts.box];
+	if (box?.kind !== "command" || box.checks === undefined) return undefined;
+	if (!isFanned(boxes[box.checks])) return box.checks;
+	return parts.index === undefined ? undefined : itemKey(box.checks, parts.index);
+}
+
 /** Item keys whose inputs came from a changed input or item, transitively. */
 function dependents(state: State, changedInputs: ReadonlySet<string>, changedItems: ReadonlySet<string>): Set<string> {
 	const gone = new Set(changedItems);
@@ -186,10 +201,27 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 		...state,
 		items: { ...state.items, [item.key]: { ...item, ...extra, phase } },
 	});
-	const fail = (name: string, reason: string): State => {
+	const fail = (name: string, said: string): State => {
 		const allowed = state.boxes[item.box]?.handle[name] ?? 0;
 		const spent = item.refires[name] ?? 0;
-		if (spent < allowed) return put({ kind: "retry", name, reason }, { refires: { ...item.refires, [name]: spent + 1 } });
+		if (spent < allowed) return put({ kind: "retry", name, reason: said }, { refires: { ...item.refires, [name]: spent + 1 } });
+		let reason = said;
+		// A check that exits non-zero is a verdict on the item it checks: that item continues in a new
+		// session, and what was computed from its result, this check included, is gone with the result.
+		const checkedAt = name === "exit" ? checkedKey(state.boxes, item.key) : undefined;
+		const checked = checkedAt === undefined ? undefined : state.items[checkedAt];
+		const checkedBox = checked === undefined ? undefined : state.boxes[checked.box];
+		if (checked?.phase.kind === "done" && checkedBox?.kind === "agent") {
+			if (checked.chain < checkedBox.bound) {
+				const gone = dependents(state, new Set(), new Set([checked.key]));
+				const reopened: Item = {
+					...checked,
+					phase: { kind: "reopened", check: item.box, output: said, handoff: checked.phase.handoff },
+				};
+				return { ...state, items: { ...without(state.items, gone), [checked.key]: reopened } };
+			}
+			reason = `\`${checked.key}\` has taken its ${checkedBox.bound} sessions (bound), so this check no longer reopens it. ${said}`;
+		}
 		const failed = put({ kind: "failed", name, reason });
 		return state.mode.kind === "running"
 			? { ...failed, mode: { kind: "stopped", cause: { kind: "exception", key: item.key, name, reason } } }
@@ -294,7 +326,12 @@ export function reduce(state: State, action: Action): State {
 				key: action.key,
 				box: action.box,
 				attempt: action.attempt,
-				chain: earlier === undefined ? 1 : earlier.phase.kind === "raised" ? earlier.chain + 1 : earlier.chain,
+				chain:
+					earlier === undefined
+						? 1
+						: earlier.phase.kind === "raised" || earlier.phase.kind === "reopened"
+							? earlier.chain + 1
+							: earlier.chain,
 				fingerprint: markOf(state, box),
 				phase: { kind: "running" },
 				refires: earlier?.refires ?? {},

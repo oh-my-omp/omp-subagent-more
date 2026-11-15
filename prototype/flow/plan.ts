@@ -2,7 +2,7 @@
 // expects, which of them can start now, which values no longer match their definition, and what
 // in the definitions cannot work.
 import { type Box, isArray, isObject, type Json, type Ref } from "./defs.ts";
-import { answerKey, type Continuation, type Earlier, type Item, itemKey, markOf, type State } from "./state.ts";
+import { answerKey, type Continuation, type Earlier, type Item, isFanned, itemKey, markOf, type State } from "./state.ts";
 
 export type Firing = {
 	readonly key: string;
@@ -76,7 +76,10 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 				problems.push(`${name}: in.${input} → \`${ref.source.box}\` does not raise \`${ref.source.type}\``);
 			}
 		}
-		if (box.kind !== "agent") continue;
+		if (box.kind === "command") {
+			if (box.checks !== undefined) problems.push(...checkProblems(boxes, name, box.checks, Object.values(box.inputs)));
+			continue;
+		}
 		for (const type of box.raises) {
 			const handlers = handlersOf(boxes, name, type);
 			if (handlers.length > 1) problems.push(`${name}!${type}: answered by more than one box (${handlers.join(", ")})`);
@@ -97,6 +100,22 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 	};
 	for (const name of Object.keys(boxes).sort()) visit(name, []);
 	return problems;
+}
+
+/** Why `name` cannot check `checked`: a failed check has to name exactly one item of an agent box to reopen. */
+function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, checked: string, inputs: readonly Ref[]): string[] {
+	const target = boxes[checked];
+	if (!target) return [`${name}: checks → no box \`${checked}\``];
+	if (target.kind !== "agent") return [`${name}: checks → \`${checked}\` is a command box; only an agent box can be reopened`];
+	if (Object.values(target.inputs).some((ref) => ref.source.kind === "raise")) {
+		return [`${name}: checks → \`${checked}\` answers raises; its items cannot be reopened`];
+	}
+	const refs = inputs.filter((ref) => ref.source.kind === "box" && ref.source.box === checked);
+	if (refs.length === 0) return [`${name}: checks \`${checked}\` but takes no input from it`];
+	if (isFanned(target) && !refs.some((ref) => ref.multi && ref.path.length === 0)) {
+		return [`${name}: \`${checked}\` has many items; take \`${checked}[]\` as an input so that each item is checked on its own`];
+	}
+	return [];
 }
 
 /** The answer to an item's raise: one given from outside, else the result of the box wired to it. */
@@ -230,11 +249,21 @@ export function survey(state: State): Survey {
 								handler: handlerOf(state.boxes, item.box, item.phase.type),
 							});
 						} else {
-							const continuation: Continuation = { answer, previous: item.phase.handoff };
+							const continuation: Continuation = { kind: "answer", answer, previous: item.phase.handoff };
 							next = { key: item.key, box: name, attempt: item.attempt + 1, inputs: expected.inputs, continuation, earlier: item.last };
 						}
 						break;
 					}
+					case "reopened":
+						next = {
+							key: item.key,
+							box: name,
+							attempt: item.attempt + 1,
+							inputs: expected.inputs,
+							continuation: { kind: "check", check: item.phase.check, output: item.phase.output, previous: item.phase.handoff },
+							earlier: item.last,
+						};
+						break;
 					case "failed":
 					case "retry":
 					case "cancelled":

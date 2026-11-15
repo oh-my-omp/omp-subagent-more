@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isArray, isObject, type Json, type JsonObject, parseJson } from "./defs.ts";
-import type { Action, Outcome } from "./state.ts";
+import type { Action, Continuation, Outcome } from "./state.ts";
 
 /** Reads the fields of one logged object; a field of the wrong type makes `failed` true. */
 class Fields {
@@ -58,6 +58,22 @@ function outcomeOf(data: JsonObject): Outcome | undefined {
 	return fields.failed ? undefined : outcome;
 }
 
+function continuationOf(data: JsonObject): Continuation | undefined {
+	const fields = new Fields(data);
+	let continuation: Continuation;
+	switch (data.kind) {
+		case "answer":
+			continuation = { kind: "answer", answer: fields.json("answer"), previous: fields.json("previous") };
+			break;
+		case "check":
+			continuation = { kind: "check", check: fields.text("check"), output: fields.text("output"), previous: fields.json("previous") };
+			break;
+		default:
+			return undefined;
+	}
+	return fields.failed ? undefined : continuation;
+}
+
 /** One logged line as the action it records, or nothing when it is not one. */
 export function actionOf(data: Json): Action | undefined {
 	if (!isObject(data)) return undefined;
@@ -105,14 +121,9 @@ export function actionOf(data: Json): Action | undefined {
 			break;
 		case "fired": {
 			const raw = fields.json("continuation");
-			if (raw !== null && !(isObject(raw) && raw.answer !== undefined && raw.previous !== undefined)) return undefined;
-			action = {
-				kind: "fired",
-				key: fields.text("key"),
-				box: fields.text("box"),
-				attempt: fields.count("attempt"),
-				continuation: raw === null ? null : { answer: raw.answer ?? null, previous: raw.previous ?? null },
-			};
+			const continuation = raw === null ? null : isObject(raw) ? continuationOf(raw) : undefined;
+			if (continuation === undefined) return undefined;
+			action = { kind: "fired", key: fields.text("key"), box: fields.text("box"), attempt: fields.count("attempt"), continuation };
 			break;
 		}
 		case "spawned":
