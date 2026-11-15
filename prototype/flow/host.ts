@@ -64,10 +64,7 @@ const paramsSchema = z.object({
 		.describe(
 			"Keys as verdicts print them: an item (`scout`, `work#1`, `answer<work#1@1>`), and for `retract` and `value` also `input.<name>`; `value` takes a box name too. Required by `value`, `retract`, `keep` and `retry`; `answer` takes exactly one.",
 		),
-	reason: z
-		.string()
-		.optional()
-		.describe("Why the flow is stopped; recorded with the stop. Only with `stop`. Default: `stopped by the caller`."),
+	reason: z.string().optional().describe("Why the flow is stopped; recorded with the stop. Only with `stop`. Optional."),
 });
 type Params = z.infer<typeof paramsSchema>;
 
@@ -122,7 +119,10 @@ function parseRequest(params: Params): Result<Request> {
 			request = command({ kind: "run" });
 			break;
 		case "stop":
-			request = command({ kind: "stop", reason: params.reason ?? "stopped by the caller" });
+			request = command({
+				kind: "stop",
+				reason: params.reason === undefined ? "stopped by the caller" : `stopped by the caller: ${params.reason}`,
+			});
 			break;
 		case "status":
 			request = { kind: "status" };

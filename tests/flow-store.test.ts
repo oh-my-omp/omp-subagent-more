@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Json } from "../prototype/flow/defs.ts";
+import { fill, type Json, shellWord } from "../prototype/flow/defs.ts";
 import { appendLog, readLog } from "../prototype/flow/journal.ts";
 import type { Firing } from "../prototype/flow/plan.ts";
 import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
@@ -363,6 +363,16 @@ describe("exceptions raised by a session", () => {
 		const flow = open();
 		flow.store.submit({ kind: "define", boxes: { work: ASK, answer: ANSWER, second: ANSWER } });
 		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["work!question: answered by more than one box (answer, second)"]);
+	});
+});
+
+describe("command boxes", () => {
+	test("an input reaches the command as one word, whatever characters it holds", () => {
+		const nasty = 'it\'s "$HOME" `id` $(id) \\ ; rm -rf *\nsecond line';
+		const command = fill("printf %s {{text}}", { text: nasty }, shellWord);
+		const run = Bun.spawnSync(["sh", "-c", command]);
+		expect(run.stdout.toString()).toBe(nasty);
+		expect(run.exitCode).toBe(0);
 	});
 });
 

@@ -77,7 +77,8 @@ export type Item = {
 
 export type StopCause =
 	| { readonly kind: "exception"; readonly key: string; readonly name: string; readonly reason: string }
-	| { readonly kind: "caller"; readonly reason: string };
+	/** Stopped from outside the flow: by its caller, or because the process driving it ended. */
+	| { readonly kind: "halt"; readonly reason: string };
 
 export type Mode = { readonly kind: "idle" } | { readonly kind: "running" } | { readonly kind: "stopped"; readonly cause: StopCause };
 
@@ -268,7 +269,7 @@ export function reduce(state: State, action: Action): State {
 		case "resumed":
 			return { ...state, mode: { kind: "running" } };
 		case "halted":
-			return { ...state, mode: { kind: "stopped", cause: { kind: "caller", reason: action.reason } } };
+			return { ...state, mode: { kind: "stopped", cause: { kind: "halt", reason: action.reason } } };
 		case "idled":
 			return state.mode.kind === "running" ? { ...state, mode: { kind: "idle" } } : state;
 		case "fired": {

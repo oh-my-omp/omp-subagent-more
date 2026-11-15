@@ -100,7 +100,7 @@ export function headline(state: State, survey: Survey): string[] {
 			const why =
 				cause.kind === "exception"
 					? `\`${cause.key}\` failed with \`${cause.name}\`, which its box does not handle: ${brief(cause.reason)}`
-					: `stopped by the caller: ${brief(cause.reason)}`;
+					: brief(cause.reason);
 			lines.push(`flow STOPPED · ${counts}`, `cause: ${why}`);
 			break;
 		}
