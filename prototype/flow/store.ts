@@ -6,7 +6,7 @@
 // (starting a session, running a command) happens elsewhere and comes back as `settle`.
 import { isName, type Json, parseBox, stableText } from "./defs.ts";
 import { type Firing, lint, type Survey, survey } from "./plan.ts";
-import { delta, headline, type Marks, marksOf } from "./report.ts";
+import { delta, headline, type Marks, marksOf, wiring } from "./report.ts";
 import { type Action, EMPTY, markOf, type Outcome, reduce, type State } from "./state.ts";
 
 export type Command =
@@ -117,6 +117,28 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 	}
 }
 
+/** What the caller may do next, told from the state alone; `run` and `stop` are asked of the same judge that would decide them. */
+export function moves(state: State): string[] {
+	const found = survey(state);
+	const legal = (command: Command): boolean => judge(state, command).refusals.length === 0;
+	const list: string[] = [];
+	for (const name of found.needs) list.push(`supply ${name}`);
+	if (found.stale.length > 0) list.push(`keep or retract ${found.stale.join(", ")}`);
+	if (found.illegal.length > 0) list.push(`retract ${found.illegal.join(", ")}`);
+	const failed = Object.values(state.items).filter((item) => {
+		const box = state.boxes[item.box];
+		return item.phase.kind === "failed" && box !== undefined && markOf(state, box) === item.fingerprint;
+	});
+	if (failed.length > 0) {
+		const boxes = [...new Set(failed.map((item) => item.box))].sort();
+		list.push(`retry or retract ${failed.map((item) => item.key).join(", ")}, or define ${boxes.join(", ")} again`);
+	}
+	for (const raise of found.raised) if (raise.handler === undefined) list.push(`answer ${raise.key}`);
+	if (state.mode.kind !== "running" && found.ready.length > 0 && legal({ kind: "run" })) list.push("run");
+	if (legal({ kind: "stop", reason: "" })) list.push("stop");
+	return list;
+}
+
 export class Store {
 	#state: State = EMPTY;
 	#seen: Marks = {};
@@ -166,7 +188,7 @@ export class Store {
 	changes(): string[] {
 		const found = survey(this.#state);
 		const marks = marksOf(this.#state, found);
-		const lines = [...headline(this.#state, found), ...delta(this.#seen, marks)];
+		const lines = [...headline(this.#state, found), ...this.#next(), ...delta(this.#seen, marks)];
 		this.#seen = marks;
 		return lines;
 	}
@@ -174,7 +196,12 @@ export class Store {
 	/** Where the flow stands, with every box, input and item. */
 	everything(): string[] {
 		const found = survey(this.#state);
-		return [...headline(this.#state, found), ...delta({}, marksOf(this.#state, found))];
+		return [...headline(this.#state, found), ...this.#next(), ...wiring(this.#state), ...delta({}, marksOf(this.#state, found))];
+	}
+
+	#next(): string[] {
+		const open = moves(this.#state);
+		return open.length > 0 ? [`next: ${open.join(" | ")}`] : [];
 	}
 
 	/** While the flow runs: records what starts now and returns it; records that the flow came to rest when nothing can. */

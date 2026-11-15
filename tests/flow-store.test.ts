@@ -9,7 +9,7 @@ import { appendLog, readLog } from "../prototype/flow/journal.ts";
 import type { Firing } from "../prototype/flow/plan.ts";
 import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
 import { type Action, type Outcome, replay } from "../prototype/flow/state.ts";
-import { Store } from "../prototype/flow/store.ts";
+import { moves, Store } from "../prototype/flow/store.ts";
 
 const HANDOFF: Json = { did: "work", decided: [], unverified: [] };
 const done = (value: Json): Outcome => ({ kind: "done", value, handoff: HANDOFF });
@@ -275,6 +275,52 @@ describe("definitions and values", () => {
 		const second = flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
 		expect(second.lines.filter((line) => /^[+~-] /.test(line))).toEqual(["+ input.issue: supplied (4 characters of JSON)"]);
 		expect(flow.store.changes().filter((line) => /^[+~-] /.test(line))).toEqual([]);
+	});
+});
+
+describe("what follows from the definitions and the state", () => {
+	test("the moves open to the caller change with the state, and `run` is offered only when it would be accepted and start something", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, gate: GATE } });
+		expect(moves(flow.store.state)).toEqual(["supply issue"]);
+
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		expect(moves(flow.store.state)).toEqual(["run"]);
+
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		expect(moves(flow.store.state)).toEqual(["stop"]);
+
+		flow.store.settle("scout", 1, failed("session"));
+		expect(moves(flow.store.state)).toEqual(["retry or retract scout, or define scout again"]);
+
+		flow.store.submit({ kind: "retry", keys: ["scout"] });
+		expect(moves(flow.store.state)).toEqual(["run"]);
+
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("scout", 2, done({ slices: [] }));
+		flow.fire();
+		flow.store.settle("gate", 1, done("ok"));
+		flow.fire();
+		expect(moves(flow.store.state)).toEqual([]);
+	});
+
+	test("the full report shows the graph the references imply, including who answers a raise", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: {
+				work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question", "blocked"] },
+				answer: { agent: "task:mid", brief: "Answer {{raise}}", in: { raise: "work!question" }, out: OUT },
+				gate: { command: "check {{results}}", in: { results: "work" }, handle: { exit: 2 } },
+			},
+		});
+		expect(flow.store.everything().filter((line) => line.startsWith("wire "))).toEqual([
+			"wire answer ← work!question",
+			"wire gate ← work · fires again on exit ×2",
+			"wire work ← input.slices[] · raises question → answer · raises blocked → an answer from outside",
+		]);
 	});
 });
 

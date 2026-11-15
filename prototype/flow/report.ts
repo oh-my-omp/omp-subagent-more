@@ -1,7 +1,7 @@
 // The store's verdict in words: what a state holds and what changed since the caller last saw it.
 // It reports what the store concluded, never the values that were written into it.
 import { stableText } from "./defs.ts";
-import type { Survey } from "./plan.ts";
+import { handlerOf, type Survey } from "./plan.ts";
 import { type Item, markOf, type State } from "./state.ts";
 
 /** One line per box, input and item; two states differ exactly where their marks differ. */
@@ -53,6 +53,24 @@ export function marksOf(state: State, survey: Survey): Marks {
 		marks[`input.${name}`] = `supplied (${stableText(value).length} characters of JSON)`;
 	for (const item of Object.values(state.items)) marks[item.key] = itemLabel(state, survey, item);
 	return marks;
+}
+
+/** The graph the definitions imply: where each box's inputs come from and who answers what it raises. */
+export function wiring(state: State): string[] {
+	return Object.keys(state.boxes)
+		.sort()
+		.map((name) => {
+			const box = state.boxes[name];
+			if (!box) return `wire ${name}`;
+			const inputs = Object.values(box.inputs).map((ref) => ref.text);
+			const raises =
+				box.kind === "agent"
+					? box.raises.map((type) => `raises ${type} → ${handlerOf(state.boxes, name, type) ?? "an answer from outside"}`)
+					: [];
+			const handled = Object.entries(box.handle).map(([exception, times]) => `fires again on ${exception} ×${times}`);
+			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...handled];
+			return `wire ${name} ${parts.join(" · ")}`;
+		});
 }
 
 const ordered = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
