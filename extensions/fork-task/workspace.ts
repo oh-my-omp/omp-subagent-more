@@ -88,7 +88,7 @@ export function overlayFilePath(childFile: string): string {
  * The cwd in the `session` header of the transcript at `sessionFile`, if it exists. OMP may write
  * other records (a padded `title` line) before the header, so lines are read until it appears.
  */
-async function headerCwd(sessionFile: string): Promise<string | undefined> {
+export async function headerCwd(sessionFile: string): Promise<string | undefined> {
 	let handle: fs.FileHandle;
 	try {
 		handle = await fs.open(sessionFile);
@@ -201,6 +201,31 @@ export async function inheritSourceWorkspace(source: InheritSource, callerCwd: s
 	if (check.kind === "failed")
 		return rejected("overlay-conflict", `agent \`${source.id}\`'s changes do not apply to your checkout: ${check.message}`);
 	return { kind: "inherit", patch: delta.rootPatch };
+}
+
+/**
+ * What a session inherits from the patch OMP kept of an isolated run it released without
+ * handing its changes back: nothing when there is no such patch, the patch when it applies to
+ * the checkout at `callerCwd`, a rejection when it does not.
+ */
+export async function inheritReleasedPatch(patchFile: string, callerCwd: string): Promise<Inheritance | undefined> {
+	const patch = await readOptional(patchFile);
+	if (patch === undefined) return undefined;
+	if (!patch.trim()) return { kind: "inherit", patch: "" };
+	let callerRoot: string;
+	try {
+		callerRoot = await getRepoRoot(callerCwd);
+	} catch (error) {
+		return { kind: "rejected", code: "overlay-conflict", detail: `your workspace is not a git checkout: ${errorText(error)}` };
+	}
+	const check = await gitApply(callerRoot, patch, true);
+	return check.kind === "ok"
+		? { kind: "inherit", patch }
+		: {
+				kind: "rejected",
+				code: "overlay-conflict",
+				detail: `the changes kept in \`${patchFile}\` do not apply to your checkout: ${check.message}`,
+			};
 }
 
 export type OverlayResult =

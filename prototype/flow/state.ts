@@ -7,9 +7,9 @@
 // A value that changes takes the values computed from it with it: supplying an input again or
 // retracting an item removes every item that depends on it.
 //
-// What an agent box runs is its own definition plus the definition of the agent it names. The
-// second lives outside the flow, so the state holds a mark of it as last observed, and an item
-// records both under which it ran.
+// What an agent box runs is its own definition, the definition of the agent it names, and the
+// model setting it uses. The last two live outside the flow, so the state holds a mark of each
+// as last observed, and an item records all three under which it ran.
 import { type Box, type Json, parseBox } from "./defs.ts";
 
 export type Outcome =
@@ -17,6 +17,9 @@ export type Outcome =
 	| { readonly kind: "raise"; readonly type: string; readonly detail: string; readonly handoff: Json }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
+
+/** An ended session of an item: a later session of the same item starts from what it left. */
+export type Earlier = { readonly session: string; readonly yielded: boolean };
 
 /** What an attempt after an answered raise is given besides the box's inputs. */
 export type Continuation = { readonly answer: Json; readonly previous: Json };
@@ -73,6 +76,8 @@ export type Item = {
 	readonly answer: Json | undefined;
 	/** Id of the latest attempt's session, once it has one. */
 	readonly session: string | undefined;
+	/** The last session of this item that ran to an end, and whether it ended by yielding. */
+	readonly last: Earlier | undefined;
 };
 
 export type StopCause =
@@ -86,7 +91,7 @@ export type State = {
 	readonly raw: Readonly<Record<string, Json>>;
 	readonly boxes: Readonly<Record<string, Box>>;
 	readonly inputs: Readonly<Record<string, Json>>;
-	/** Agent name → mark of its definition and model binding, as last observed. */
+	/** Marks as last observed, under `definitionKey(agent)` and `modelKey(agent)`. */
 	readonly agents: Readonly<Record<string, string>>;
 	readonly items: Readonly<Record<string, Item>>;
 	readonly mode: Mode;
@@ -94,9 +99,16 @@ export type State = {
 
 export const EMPTY: State = { raw: {}, boxes: {}, inputs: {}, agents: {}, items: {}, mode: { kind: "idle" } };
 
+/** Where the mark of an agent's own definition (prompt, tools) is kept. */
+export const definitionKey = (agent: string): string => `definition ${agent}`;
+/** Where the mark of an agent's model setting is kept. */
+export const modelKey = (agent: string): string => `model ${agent}`;
+
 /** Identity of what a box runs now: an item produced under another mark is stale. */
 export const markOf = (state: State, box: Box): string =>
-	box.kind === "agent" ? `${box.fingerprint}+${state.agents[box.agent] ?? "unknown"}` : box.fingerprint;
+	box.kind === "agent"
+		? `${box.fingerprint}+${state.agents[definitionKey(box.agent)] ?? "unknown"}+${state.agents[modelKey(box.model ?? box.agent)] ?? "unknown"}`
+		: box.fingerprint;
 
 export type KeyParts = {
 	readonly box: string;
@@ -167,7 +179,9 @@ const without = <T>(record: Readonly<Record<string, T>>, keys: Iterable<string>)
 	return copy;
 };
 
-function settle(state: State, item: Item, outcome: Outcome): State {
+function settle(state: State, ended: Item, outcome: Outcome): State {
+	const yielded = outcome.kind === "done" || outcome.kind === "raise";
+	const item: Item = ended.session === undefined ? ended : { ...ended, last: { session: ended.session, yielded } };
 	const put = (phase: Phase, extra: Partial<Item> = {}): State => ({
 		...state,
 		items: { ...state.items, [item.key]: { ...item, ...extra, phase } },
@@ -287,6 +301,7 @@ export function reduce(state: State, action: Action): State {
 				continuation: action.continuation,
 				answer: undefined,
 				session: undefined,
+				last: earlier?.last,
 			};
 			return { ...state, items: { ...state.items, [action.key]: item } };
 		}

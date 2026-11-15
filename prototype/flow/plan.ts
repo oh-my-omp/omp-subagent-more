@@ -2,7 +2,7 @@
 // expects, which of them can start now, which values no longer match their definition, and what
 // in the definitions cannot work.
 import { type Box, isArray, isObject, type Json, type Ref } from "./defs.ts";
-import { answerKey, type Continuation, type Item, itemKey, markOf, type State } from "./state.ts";
+import { answerKey, type Continuation, type Earlier, type Item, itemKey, markOf, type State } from "./state.ts";
 
 export type Firing = {
 	readonly key: string;
@@ -10,6 +10,8 @@ export type Firing = {
 	readonly attempt: number;
 	readonly inputs: Readonly<Record<string, Json>>;
 	readonly continuation: Continuation | null;
+	/** The last ended session of the same item, whose work this session starts from. */
+	readonly earlier: Earlier | undefined;
 };
 
 export type Raised = { readonly key: string; readonly type: string; readonly detail: string; readonly handler: string | undefined };
@@ -212,7 +214,7 @@ export function survey(state: State): Survey {
 			const item = state.items[expected.key];
 			let next: Firing | undefined;
 			if (!item) {
-				next = { key: expected.key, box: name, attempt: 1, inputs: expected.inputs, continuation: null };
+				next = { key: expected.key, box: name, attempt: 1, inputs: expected.inputs, continuation: null, earlier: undefined };
 			} else {
 				switch (item.phase.kind) {
 					case "running":
@@ -229,14 +231,21 @@ export function survey(state: State): Survey {
 							});
 						} else {
 							const continuation: Continuation = { answer, previous: item.phase.handoff };
-							next = { key: item.key, box: name, attempt: item.attempt + 1, inputs: expected.inputs, continuation };
+							next = { key: item.key, box: name, attempt: item.attempt + 1, inputs: expected.inputs, continuation, earlier: item.last };
 						}
 						break;
 					}
 					case "failed":
 					case "retry":
 					case "cancelled":
-						next = { key: item.key, box: name, attempt: item.attempt + 1, inputs: expected.inputs, continuation: item.continuation };
+						next = {
+							key: item.key,
+							box: name,
+							attempt: item.attempt + 1,
+							inputs: expected.inputs,
+							continuation: item.continuation,
+							earlier: item.last,
+						};
 						break;
 					default: {
 						const unreachable: never = item.phase;

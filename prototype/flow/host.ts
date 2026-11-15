@@ -9,13 +9,24 @@
 // once per session. The sessions themselves are spawned through the session's `task` tool,
 // one fresh subagent each; their own completion notices are acknowledged here, since the store
 // is what reads them.
+//
+// A session of an isolated box starts from what the last ended session of the same item left
+// and did not hand back: the patch OMP kept when it released that run, or the changes in its
+// still-open workspace. The changes travel the way fork_task's `workspace: "source"` does: an
+// overlay written at spawn and applied before the child's first turn. Every agent item also
+// has a notes file of its own beside the log, which only sessions of that item are told about.
+
 import { createHash, randomUUID } from "node:crypto";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
 	type AgentSession,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
+	type BeforeAgentStartEvent,
+	type BeforeSubagentSpawnEvent,
+	type BeforeSubagentSpawnEventResult,
 	type ExtensionAPI,
 	type ExtensionContext,
 	type TaskItem,
@@ -23,19 +34,34 @@ import {
 	z,
 } from "@oh-my-pi/pi-coding-agent";
 import type { AsyncJob } from "@oh-my-pi/pi-coding-agent/async/job-manager";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
-import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents } from "@oh-my-pi/pi-coding-agent/task/settings";
+import {
+	cfgTaskAgentModelOverrides,
+	cfgTaskDisabledAgents,
+	cfgTaskIsolationApply,
+	cfgTaskIsolationEnabled,
+} from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
 import { callerSession } from "../../extensions/fork-task/caller-session.ts";
 import { errorText } from "../../extensions/fork-task/errors.ts";
 import { tr } from "../../extensions/fork-task/i18n.ts";
+import {
+	applyOverlay,
+	headerCwd,
+	type Inheritance,
+	inheritReleasedPatch,
+	inheritSourceWorkspace,
+	recordStart,
+	writeOverlay,
+} from "../../extensions/fork-task/workspace.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics } from "./docs.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
 import { briefOf, interpret, yieldSchema } from "./session.ts";
-import type { Outcome } from "./state.ts";
+import { definitionKey, type Earlier, modelKey, type Outcome, partsOf } from "./state.ts";
 import { type Command, Store } from "./store.ts";
 
 const OPS = ["define", "supply", "run", "stop", "status", "value", "retract", "keep", "retry", "answer"] as const;
@@ -156,13 +182,27 @@ type Running = { readonly key: string; readonly attempt: number; readonly abort:
 
 type Flow = {
 	readonly store: Store;
+	/** The calling session's own directory: the log, the notes files and its subagents' transcripts live in it. */
+	readonly dir: string;
 	readonly running: Map<string, Running>;
 	/** Wakes the driver: something it should look at has changed. */
 	kick: () => void;
 	driving: boolean;
 };
 
-type Runtime = { readonly pi: ExtensionAPI; readonly flows: Map<string, Flow> };
+/** What the spawn hook does for one session the flow is about to start. */
+type Prepared = { readonly overlay: string | undefined; readonly model: string | string[] | undefined };
+
+type Runtime = {
+	readonly pi: ExtensionAPI;
+	readonly flows: Map<string, Flow>;
+	/** Sessions about to be spawned, by `spawnId(dir, name)`; the spawn hook takes its entry. */
+	readonly spawns: Map<string, Prepared>;
+	/** Subagent transcripts whose workspace start this module has handled. */
+	readonly started: Set<string>;
+};
+
+const spawnId = (dir: string, name: string): string => `${dir}\n${name}`;
 
 async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 	await parent.sessionManager.ensureOnDisk();
@@ -171,46 +211,88 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 	if (!sessionFile) throw new Error("a flow needs a persisted session");
 	const known = rt.flows.get(sessionFile);
 	if (known) return known;
-	const file = path.join(sessionFile.slice(0, -".jsonl".length), "flow.jsonl");
+	const dir = sessionFile.slice(0, -".jsonl".length);
+	const file = path.join(dir, "flow.jsonl");
 	const log = readLog(file);
 	const store = new Store(log, (action) => appendLog(file, action));
 	// A log that already has actions was written by an earlier process; none of its sessions is alive in this one.
 	if (log.length > 0) store.recover();
-	const flow: Flow = { store, running: new Map(), kick: () => {}, driving: false };
+	const flow: Flow = { store, dir, running: new Map(), kick: () => {}, driving: false };
 	rt.flows.set(sessionFile, flow);
 	return flow;
 }
 
-/** Marks of the named agents as the `task` tool would resolve them now; `null` for a name it would not run. */
-async function agentMarks(parent: AgentSession, names: readonly string[]): Promise<Record<string, string | null>> {
-	if (names.length === 0) return {};
+const markOfData = (data: unknown): string => createHash("sha256").update(JSON.stringify(data)).digest("hex").slice(0, 12);
+
+/** The named agents as the `task` tool would resolve them now. */
+type Agents = {
+	/** Under `definitionKey` and `modelKey`; `null` for an agent the task tool would not run. */
+	readonly marks: Record<string, string | null>;
+	/** The model setting of each agent that has one of its own: the user's override, else its definition's. */
+	readonly models: ReadonlyMap<string, string | string[]>;
+};
+
+async function lookUpAgents(parent: AgentSession, names: readonly string[]): Promise<Agents> {
+	const marks: Record<string, string | null> = {};
+	const models = new Map<string, string | string[]>();
+	if (names.length === 0) return { marks, models };
 	const { agents } = await discoverAgents(parent.sessionManager.getCwd(), os.homedir(), parent.effectiveExtensionRoots);
 	const definitions = [...agents, ...parent.getSessionAgents()];
 	const disabled = cfgTaskDisabledAgents.get(parent.settings);
 	const overrides = cfgTaskAgentModelOverrides.get(parent.settings);
-	const marks: Record<string, string | null> = {};
 	for (const name of names) {
 		const definition = disabled.includes(name) ? undefined : getAgent(definitions, name);
-		marks[name] = definition
-			? createHash("sha256")
-					.update(
-						JSON.stringify([
-							definition.systemPrompt,
-							overrides[name] ?? definition.model ?? null,
-							definition.tools ?? null,
-							definition.thinkingLevel ?? null,
-						]),
-					)
-					.digest("hex")
-					.slice(0, 12)
+		const model = definition ? (overrides[name] ?? definition.model) : undefined;
+		if (model !== undefined) models.set(name, model);
+		marks[definitionKey(name)] = definition
+			? markOfData([definition.systemPrompt, definition.tools ?? null, definition.thinkingLevel ?? null])
 			: null;
+		marks[modelKey(name)] = definition ? markOfData(model ?? null) : null;
 	}
-	return marks;
+	return { marks, models };
 }
 
 /** Agent names a `define` call mentions, so their marks are known before the call is judged. */
 const agentsIn = (boxes: Readonly<Record<string, Json>>): string[] =>
-	Object.values(boxes).flatMap((box) => (isObject(box) && typeof box.agent === "string" ? [box.agent] : []));
+	Object.values(boxes).flatMap((box) =>
+		isObject(box) ? [box.agent, box.model].flatMap((name) => (typeof name === "string" ? [name] : [])) : [],
+	);
+
+/** The notes file of an item: one per item, beside the flow's log. */
+const boardOf = (flow: Flow, key: string): string => path.join(flow.dir, "flow-boards", `${encodeURIComponent(key)}.md`);
+
+/** Removes the notes files of items that no longer exist, so an item produced again starts with empty notes. */
+function pruneBoards(flow: Flow): void {
+	const dir = path.join(flow.dir, "flow-boards");
+	if (!fs.existsSync(dir)) return;
+	for (const file of fs.readdirSync(dir)) {
+		const key = decodeURIComponent(file.slice(0, -".md".length));
+		if (!(key in flow.store.state.items)) fs.rmSync(path.join(dir, file), { force: true });
+	}
+}
+
+/**
+ * What a session of an isolated box starts from besides the caller's checkout: the changes
+ * the last ended session of the same item left without handing them back. `undefined` when
+ * there is nothing to carry over.
+ */
+async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): Promise<Inheritance | undefined> {
+	// A session that yielded has handed its changes to the caller's checkout, unless the user keeps them as patches.
+	if (earlier.yielded && cfgTaskIsolationApply.get(parent.settings)) return undefined;
+	const callerCwd = parent.sessionManager.getCwd();
+	const released = await inheritReleasedPatch(path.join(flow.dir, `${earlier.session}.patch`), callerCwd);
+	if (released) return released;
+	const ref = AgentRegistry.global().get(earlier.session);
+	const file = ref?.sessionFile ?? path.join(flow.dir, `${earlier.session}.jsonl`);
+	const cwd = await headerCwd(file);
+	if (cwd === undefined) return undefined;
+	const open = await inheritSourceWorkspace(
+		{ id: earlier.session, file, cwd, running: ref?.status === "running", handedBack: false },
+		callerCwd,
+	);
+	// A session that ran in the caller's own checkout left its changes there.
+	return open.kind === "rejected" && open.code === "source-not-isolated" ? undefined : open;
+}
 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
@@ -244,17 +326,49 @@ function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 	}
 }
 
-/** A subagent name the host accepts, telling the item and the session apart. */
-const sessionName = (firing: Firing): string => `Flow${firing.key.replace(/[^A-Za-z0-9]+/g, "_").slice(0, 22)}_s${firing.attempt}`;
+/** A subagent name no other session has: it is the last segment of the id OMP gives the session, which the spawn hook matches. */
+const sessionName = (firing: Firing): string =>
+	`Flow${firing.key.replace(/[^A-Za-z0-9]+/g, "_").slice(0, 20)}_s${firing.attempt}_${randomUUID().slice(0, 4)}`;
 
-async function runAgent(parent: AgentSession, flow: Flow, box: AgentBox, firing: Firing, signal: AbortSignal): Promise<Outcome> {
+async function runAgent(
+	rt: Runtime,
+	parent: AgentSession,
+	flow: Flow,
+	box: AgentBox,
+	firing: Firing,
+	signal: AbortSignal,
+): Promise<Outcome> {
 	const taskTool = parent.getToolByName("task");
 	const manager = parent.asyncJobManager;
 	if (!taskTool || !manager) return failed("spawn", "the `task` tool or background jobs are unavailable in this session");
+	if (box.isolated === true && !cfgTaskIsolationEnabled.get(parent.settings)) {
+		return failed("spawn", "the box is `isolated`, and this session does not allow isolated subagents (`task.isolation.enabled`)");
+	}
+	let model: string | string[] | undefined;
+	if (box.model !== undefined) {
+		model = (await lookUpAgents(parent, [box.model])).models.get(box.model);
+		if (model === undefined) return failed("spawn", `agent \`${box.model}\` has no model setting of its own to use`);
+	}
+	let overlay: string | undefined;
+	if (box.isolated === true && firing.earlier) {
+		const inherited = await inheritFrom(parent, flow, firing.earlier);
+		if (inherited?.kind === "rejected") {
+			return failed(
+				"workspace",
+				`the work of the earlier session ${firing.earlier.session} cannot be carried over (${inherited.code}): ${inherited.detail}`,
+			);
+		}
+		if (inherited?.patch) overlay = inherited.patch;
+	}
+	const board = boardOf(flow, firing.key);
+	fs.mkdirSync(path.dirname(board), { recursive: true });
+	if (!fs.existsSync(board)) fs.writeFileSync(board, "");
+
+	const name = sessionName(firing);
 	const item: TaskItem = {
-		name: sessionName(firing),
+		name,
 		agent: box.agent,
-		task: briefOf(box, firing),
+		task: briefOf(box, firing, { board, inherited: overlay !== undefined }),
 		solutionSpace: "as the assignment states",
 		outputSchema: yieldSchema(box),
 		schemaMode: "strict",
@@ -262,12 +376,15 @@ async function runAgent(parent: AgentSession, flow: Flow, box: AgentBox, firing:
 	};
 	// The id belongs to no model tool call: the task tool only looks up launches a streamed call of that id prepared.
 	// The tool, or a hook around it, may refuse the dispatch by throwing; that is the session not starting.
+	const prepared = spawnId(flow.dir, name);
+	rt.spawns.set(prepared, { overlay, model });
 	const result = await taskTool
 		.execute(`flow-${randomUUID()}`, {
 			context: "One session of a flow of small assignments. The assignment is complete in itself.",
 			tasks: [item],
 		})
-		.catch((error: unknown) => errorText(error));
+		.catch((error: unknown) => errorText(error))
+		.finally(() => rt.spawns.delete(prepared));
 	if (typeof result === "string") return failed("spawn", clip(result));
 	const progress = progressSchema.safeParse(result.details);
 	const id = progress.success ? progress.data.progress[0]?.id : undefined;
@@ -304,6 +421,65 @@ async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing,
 	return { kind: "done", value: output.trimEnd(), handoff: null };
 }
 
+/** A session that answers a raise is also told where the raising item keeps its notes. */
+function withBoard(flow: Flow, box: AgentBox, firing: Firing): Firing {
+	const source = partsOf(firing.key).source;
+	if (!source) return firing;
+	const inputs: Record<string, Json> = { ...firing.inputs };
+	for (const [input, ref] of Object.entries(box.inputs)) {
+		const raise = inputs[input];
+		if (ref.source.kind === "raise" && raise !== undefined && isObject(raise))
+			inputs[input] = { ...raise, board: boardOf(flow, source.key) };
+	}
+	return { ...firing, inputs };
+}
+
+/**
+ * Hands a session the flow is starting what was prepared for it: the changes it inherits,
+ * written where the child applies them before its first turn, and the model setting its box names.
+ */
+async function beforeSubagentSpawn(
+	rt: Runtime,
+	event: BeforeSubagentSpawnEvent,
+	ctx: ExtensionContext,
+): Promise<BeforeSubagentSpawnEventResult | undefined> {
+	const parentFile = ctx.sessionManager.getSessionFile();
+	if (event.invocationKind !== "task" || !event.spawnKey || !parentFile) return;
+	const dir = parentFile.slice(0, -".jsonl".length);
+	const id = spawnId(dir, event.spawnKey.slice(event.spawnKey.lastIndexOf(".") + 1));
+	const prepared = rt.spawns.get(id);
+	if (!prepared) return;
+	rt.spawns.delete(id);
+	try {
+		if (prepared.overlay !== undefined) await writeOverlay(path.join(dir, `${event.spawnKey}.jsonl`), prepared.overlay);
+	} catch (error) {
+		return { block: true, reason: `flow: handing the earlier session's changes to the new one failed: ${errorText(error)}` };
+	}
+	return prepared.model === undefined ? undefined : { model: prepared.model };
+}
+
+/**
+ * In every subagent, once per transcript: record where its isolated workspace starts, so a later
+ * session can tell what it changed, then apply the changes it inherits. A session whose
+ * inherited changes do not apply does not run: its assignment assumes them.
+ */
+async function beforeAgentStart(rt: Runtime, _event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<undefined> {
+	const file = ctx.sessionManager.getSessionFile();
+	if (ctx.agent.kind !== "sub" || !file || rt.started.has(file)) return;
+	rt.started.add(file);
+	const cwd = ctx.sessionManager.getCwd();
+	await recordStart(file, cwd, ctx.agent.id).catch((error: unknown) =>
+		rt.pi.logger.warn("flow: recording the workspace start failed", { error: errorText(error) }),
+	);
+	const applied = await applyOverlay(file, cwd).catch((error: unknown) => ({ kind: "failed" as const, message: errorText(error) }));
+	if (applied.kind !== "failed") return;
+	const reason = `flow: the changes of the earlier session did not apply to this workspace: ${applied.message}`;
+	rt.pi.logger.warn(reason);
+	callerSession(ctx)?.agent.addBeforeModelCallHook(() => {
+		throw new Error(reason);
+	});
+}
+
 async function fire(rt: Runtime, parent: AgentSession, flow: Flow, firing: Firing): Promise<void> {
 	const id = `${firing.key}@${firing.attempt}`;
 	const abort = new AbortController();
@@ -312,7 +488,7 @@ async function fire(rt: Runtime, parent: AgentSession, flow: Flow, firing: Firin
 	try {
 		const box = flow.store.state.boxes[firing.box];
 		if (!box) outcome = { kind: "cancelled" };
-		else if (box.kind === "agent") outcome = await runAgent(parent, flow, box, firing, abort.signal);
+		else if (box.kind === "agent") outcome = await runAgent(rt, parent, flow, box, withBoard(flow, box, firing), abort.signal);
 		else outcome = await runCommand(parent, box, firing, abort.signal);
 	} catch (error) {
 		rt.pi.logger.warn("flow: a firing threw", { key: firing.key, error: errorText(error) });
@@ -397,7 +573,7 @@ async function executeFlow(
 		const store = flow.store;
 		const mentioned =
 			request.value.kind === "command" && request.value.command.kind === "define" ? agentsIn(request.value.command.boxes) : [];
-		store.observe(await agentMarks(parent, [...new Set([...store.agentNames(), ...mentioned])]));
+		store.observe((await lookUpAgents(parent, [...new Set([...store.agentNames(), ...mentioned])])).marks);
 
 		switch (request.value.kind) {
 			case "status":
@@ -420,6 +596,7 @@ async function executeFlow(
 				}
 				const verdict = store.submit(command);
 				if (!verdict.accepted) return refuse(verdict.refusals, verdict.lines);
+				pruneBoards(flow);
 				const lines = [...verdict.lines];
 				if (command.kind === "run") {
 					const job = ensureDriver(rt, parent, flow);
@@ -445,7 +622,9 @@ async function executeFlow(
 }
 
 export default function flow(pi: ExtensionAPI): void {
-	const rt: Runtime = { pi, flows: new Map() };
+	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), started: new Set() };
+	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
+	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
 	// `docTopics` serves xd://flow/<topic>; OMP keeps it on the tool object, though ToolDefinition does not declare it.
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "flow",

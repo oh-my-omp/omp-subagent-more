@@ -8,7 +8,7 @@ import { fill, type Json, shellWord } from "../prototype/flow/defs.ts";
 import { appendLog, readLog } from "../prototype/flow/journal.ts";
 import type { Firing } from "../prototype/flow/plan.ts";
 import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
-import { type Action, type Outcome, replay } from "../prototype/flow/state.ts";
+import { type Action, definitionKey, modelKey, type Outcome, replay } from "../prototype/flow/state.ts";
 import { moves, Store } from "../prototype/flow/store.ts";
 
 const HANDOFF: Json = { did: "work", decided: [], unverified: [] };
@@ -20,9 +20,15 @@ const SCOUT: Json = { agent: "task:low", brief: "Slice {{issue}}", in: { issue: 
 const WORK: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "scout.slices[]" }, out: OUT };
 const GATE: Json = { command: "check {{results}}", in: { results: "work" } };
 
+/** An agent as observed outside the flow: the mark of its definition and the mark of its model setting. */
+const agent = (name: string, definition: string, model: string): Record<string, string> => ({
+	[definitionKey(name)]: definition,
+	[modelKey(name)]: model,
+});
+
 function open(log: Action[] = []) {
 	const store = new Store(log, (action) => log.push(action));
-	store.observe({ "task:low": "low-1", "task:mid": "mid-1" });
+	store.observe({ ...agent("task:low", "low-1", "cheap"), ...agent("task:mid", "mid-1", "middle") });
 	const keys = (firings: readonly Firing[]): string[] => firings.map((firing) => `${firing.key}@${firing.attempt}`);
 	return { store, log, keys, fire: () => keys(store.advance()) };
 }
@@ -99,6 +105,45 @@ describe("scheduling", () => {
 		expect(next.store.state.mode.kind).toBe("stopped");
 		expect(next.store.submit({ kind: "run" }).accepted).toBe(true);
 		expect(next.fire()).toEqual(["work#0@2", "work#1@2"]);
+	});
+});
+
+describe("sessions of one item", () => {
+	test("a new session of an item is told which session of that item ended last, and whether it ended by yielding", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: { work: { agent: "task:low", brief: "x", out: OUT, raises: ["question"], handle: { session: 1, spawn: 1 } } },
+		});
+		flow.store.submit({ kind: "run" });
+		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([undefined]);
+
+		// Session A ran and died without yielding.
+		flow.store.spawned("work", 1, "A");
+		flow.store.settle("work", 1, failed("session"));
+		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([{ session: "A", yielded: false }]);
+
+		// The second attempt never became a session: what A left is still what the item has.
+		flow.store.settle("work", 2, failed("spawn"));
+		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([{ session: "A", yielded: false }]);
+
+		// Session C yields a raise; the session that continues after the answer follows C.
+		flow.store.spawned("work", 3, "C");
+		flow.store.settle("work", 3, { kind: "raise", type: "question", detail: "?", handoff: HANDOFF });
+		flow.store.submit({ kind: "answer", key: "work", value: "yes" });
+		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([{ session: "C", yielded: true }]);
+	});
+
+	test("an item produced again after a retract starts from nothing", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: { agent: "task:low", brief: "x", out: OUT } } });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.spawned("work", 1, "A");
+		flow.store.settle("work", 1, failed("session"));
+		flow.store.submit({ kind: "retract", keys: ["work"] });
+		flow.store.submit({ kind: "run" });
+		expect(flow.store.advance().map((firing) => [firing.attempt, firing.earlier])).toEqual([[1, undefined]]);
 	});
 });
 
@@ -220,15 +265,49 @@ describe("definitions and values", () => {
 		flow.store.settle("work#0", 1, done(0));
 		flow.store.settle("work#1", 1, done(1));
 		flow.fire();
-		flow.store.observe({ "task:low": "low-2" });
+		flow.store.observe(agent("task:low", "low-2", "cheap"));
 		expect(flow.store.survey().stale).toEqual(["scout", "work#0", "work#1"]);
 		expect(flow.store.everything().join("\n")).toContain("work#0: done in session 1 · stale: produced under definition");
+	});
+
+	test("a box runs its agent's definition under another agent's model setting; a change of either makes its values stale", () => {
+		const flow = open();
+		flow.store.observe(agent("worker", "prompt-1", "own"));
+		flow.store.submit({
+			kind: "define",
+			boxes: { a: { agent: "worker", model: "task:low", brief: "x", out: OUT }, b: { agent: "worker", brief: "x", out: OUT } },
+		});
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("a", 1, done(1));
+		flow.store.settle("b", 1, done(1));
+		flow.fire();
+
+		// The tier is bound to another model: only the box that uses the tier's setting is affected.
+		flow.store.observe(agent("task:low", "low-1", "cheaper"));
+		expect(flow.store.survey().stale).toEqual(["a"]);
+		// The worker's own model setting changes: only the box that uses it is affected.
+		flow.store.submit({ kind: "keep", keys: ["a"] });
+		flow.store.observe(agent("worker", "prompt-1", "own-2"));
+		expect(flow.store.survey().stale).toEqual(["b"]);
+		// The worker's prompt changes: both ran it.
+		flow.store.observe(agent("worker", "prompt-2", "own-2"));
+		expect(flow.store.survey().stale).toEqual(["a", "b"]);
+	});
+
+	test("a box whose `model` names an agent that does not exist keeps the flow from starting", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { a: { agent: "task:low", model: "nobody", brief: "x", out: OUT } } });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["a: agent `nobody` has no model setting to use"]);
 	});
 
 	test("a box naming an agent that does not exist keeps the flow from starting", () => {
 		const flow = open();
 		flow.store.submit({ kind: "define", boxes: { scout: { agent: "nobody", brief: "x", out: OUT } } });
-		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["scout: there is no agent named `nobody`"]);
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual([
+			"scout: there is no agent named `nobody`",
+			"scout: agent `nobody` has no model setting to use",
+		]);
 	});
 
 	test("an item of a box that was dropped is illegal until retracted", () => {
@@ -430,7 +509,7 @@ describe("the log on disk", () => {
 			log.push(action);
 			appendLog(file, action);
 		});
-		store.observe({ "task:low": "low-1" });
+		store.observe(agent("task:low", "low-1", "cheap"));
 		store.submit({
 			kind: "define",
 			boxes: {
@@ -456,7 +535,7 @@ describe("the log on disk", () => {
 		store.submit({ kind: "run" });
 		store.advance();
 		store.submit({ kind: "stop", reason: "enough" });
-		store.observe({ "task:low": "low-2" });
+		store.observe(agent("task:low", "low-2", "cheap"));
 		store.submit({ kind: "define", boxes: { work: null, gate: null, solo: { command: "false" } } });
 		store.submit({ kind: "retract", keys: Object.keys(store.state.items).filter((key) => key !== "solo") });
 		store.submit({ kind: "keep", keys: ["solo"] });
@@ -510,16 +589,22 @@ describe("what a session is told and hands back", () => {
 	if (box?.kind !== "agent") throw new Error("work is an agent box");
 
 	test("a continuation carries the earlier handoff and the answer, since the session itself is new", () => {
-		const brief = briefOf(box, {
-			key: "work",
-			box: "work",
-			attempt: 2,
-			inputs: { slice: "a" },
-			continuation: { answer: "the second", previous: HANDOFF },
-		});
-		expect(brief).toStartWith("Do a\n\n## Continuation");
+		const brief = briefOf(
+			box,
+			{
+				key: "work",
+				box: "work",
+				attempt: 2,
+				inputs: { slice: "a" },
+				continuation: { answer: "the second", previous: HANDOFF },
+				earlier: { session: "S1", yielded: true },
+			},
+			{ board: "/notes/work.md", inherited: false },
+		);
+		expect(brief).toStartWith("Do a\n\n## Notes file\n`/notes/work.md`");
 		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
 		expect(brief).toContain("the second");
+		expect(brief).not.toContain("## Earlier work");
 	});
 
 	test("the result schema requires a handoff and offers only the declared raise types", () => {

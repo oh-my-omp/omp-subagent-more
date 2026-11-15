@@ -34,9 +34,31 @@ export function yieldSchema(box: AgentBox): JsonObject {
 	};
 }
 
+/** What the host arranged for one session besides the box's inputs. */
+export type Surroundings = {
+	/** The notes file of the session's item. */
+	readonly board: string;
+	/** An earlier session of the item ended without handing its work back, and its changes are in this session's workspace. */
+	readonly inherited: boolean;
+};
+
 /** The assignment of one session: the box's brief with its inputs, what came before, and how to finish. */
-export function briefOf(box: AgentBox, firing: Firing): string {
+export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
 	const parts = [fill(box.brief, firing.inputs).trim()];
+	if (around.inherited) {
+		parts.push(
+			[
+				"## Earlier work",
+				"An earlier session of this same assignment ended before it could hand its work back. Its uncommitted changes are already in your workspace. Inspect them first (`git status`, `git diff`), keep what is right, and continue from there instead of starting over.",
+			].join("\n"),
+		);
+	}
+	parts.push(
+		[
+			"## Notes file",
+			`\`${around.board}\` belongs to this assignment alone. Read it before you start: earlier sessions of this assignment may have left notes. Append short notes a later session would need (what you tried, what you found). It is scratch: your result and handoff go through \`yield\`, and nothing reads the notes for you.`,
+		].join("\n"),
+	);
 	if (firing.continuation) {
 		parts.push(
 			[

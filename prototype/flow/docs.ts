@@ -36,7 +36,8 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 
 | Field | Box | Meaning |
 |---|---|---|
-| \`agent\` | agent | Name of the agent definition the sessions run as. |
+| \`agent\` | agent | Name of the agent definition the sessions run as: its system prompt and tools. |
+| \`model\` | agent | Name of an agent whose model setting the sessions use instead of \`agent\`'s own, for example \`"task:low"\`: your override for that agent, else the model in its definition. |
 | \`brief\` | agent | The assignment. \`{{name}}\` is replaced by the input's text: a string as it is, anything else as JSON. |
 | \`command\` | command | The command line. \`{{name}}\` is replaced by the input's text as one quoted shell word. |
 | \`in\` | both | Input name → reference (below). |
@@ -45,7 +46,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
 | \`bound\` | agent | Most sessions one item may take through answered raises: the first, and one per answer. 3 when absent. |
-| \`isolated\` | agent | \`true\`: each session runs in its own worktree. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
+| \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
 
 ## References
 
@@ -55,19 +56,24 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`scout\` | The result of box \`scout\`: one value, or the array of its items' results when \`scout\` has many items. |
 | \`scout.files\` | A field of that result; more names go deeper. |
 | \`scout.files[]\` | One item of this box per element of that array. Items are named \`box#0\`, \`box#1\`, … |
-| \`work!question\` | One item of this box per item of \`work\` that raised \`question\`. The input is \`{item, type, detail, handoff}\`. This box's result is the answer, and the raising item continues in a new session that is given the answer. |
+| \`work!question\` | One item of this box per item of \`work\` that raised \`question\`. The input is \`{item, type, detail, handoff, board}\`; \`board\` is the path of the raising item's notes file. This box's result is the answer, and the raising item continues in a new session that is given the answer. |
 
 A box takes at most one reference of the last two kinds. References are resolved by name when the flow runs, so boxes may be defined in any order and redefined one at a time.
 
 ## Sessions
 
-Every session is new: none continues an earlier one. A session ends by yielding its result or one of its box's \`raises\` types, and a handoff with it; the handoff is all a later session of the same item receives from it.
+Every session is new: none continues an earlier one. A session ends by yielding its result or one of its box's \`raises\` types, and a handoff with it. What a later session of the same item has of an earlier one:
+
+- the handoff the earlier session yielded, when it raised and the raise was answered;
+- the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
+- for an \`isolated\` box, the changes the earlier session left in its worktree. A session that yields hands its changes to your checkout, where the next worktree starts from them; when \`task.isolation.apply\` is off they stay a patch, which the next session of the item receives. A session that failed or was cancelled hands nothing back, and the next session of the item starts with its uncommitted changes applied, whatever model it runs on.
 
 ## Runtime exceptions
 
 | Name | Raised when |
 |---|---|
 | \`spawn\` | The session could not be started. |
+| \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session. |
 | \`session\` | The session failed, aborted itself, or ended without yielding. |
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |
@@ -97,7 +103,7 @@ One flow belongs to one session. Its state is an append-only log of actions kept
 
 ## Verdicts
 
-Every call answers with the store's verdict: one headline (\`flow running\`, \`flow complete\`, \`flow not running\`, \`flow STOPPED\`), what holds the flow back (\`problem\`, \`needs\`, \`stale\`, \`illegal\`, \`raised and unanswered\`), and one line per box, input or item that changed since the previous verdict (\`+\` new, \`~\` changed, \`-\` removed). A refused call changes nothing; its reasons come first, each prefixed \`refused:\`.
+Every call answers with the store's verdict: one headline (\`flow running\`, \`flow complete\`, \`flow not running\`, \`flow STOPPED\`), what holds the flow back (\`problem\`, \`needs\`, \`stale\`, \`illegal\`, \`raised and unanswered\`), a \`next:\` line with the operations open to you now, and one line per box, input or item that changed since the previous verdict (\`+\` new, \`~\` changed, \`-\` removed). \`status\` adds one \`wire\` line per box: where its inputs come from, who answers what it raises, and which exceptions make it fire again. A refused call changes nothing; its reasons come first, each prefixed \`refused:\`.
 
 ## When the flow stops
 
@@ -111,7 +117,7 @@ Cancelled items fire again on \`run\` without further action.
 
 ## Stale and illegal values
 
-An item records the definition it ran under: its box, and the definition and model binding of the agent the box names. When either changes, results produced under the earlier one are \`stale\`; when a box is dropped, its items are \`illegal\`. \`run\` is refused while there are any. For each stale item, \`keep\` it or \`retract\` it; for each illegal one, \`retract\` it or define the box again.
+An item records what it ran under: its box, the definition of the box's \`agent\`, and the model setting its sessions used. When any of them changes, results produced under the earlier one are \`stale\`: rebinding a tier's model makes every result produced under that tier stale. When a box is dropped, its items are \`illegal\`. \`run\` is refused while there are any. For each stale item, \`keep\` it or \`retract\` it; for each illegal one, \`retract\` it or define the box again.
 
 ## Raises
 

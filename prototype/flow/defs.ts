@@ -40,7 +40,10 @@ type Common = {
 
 export type AgentBox = Common & {
 	readonly kind: "agent";
+	/** The agent definition whose system prompt and tools the sessions run with. */
 	readonly agent: string;
+	/** The agent whose model setting the sessions use; absent: that of `agent`. */
+	readonly model: string | undefined;
 	readonly brief: string;
 	/** JSON Schema of the box's result. */
 	readonly out: JsonObject;
@@ -114,6 +117,7 @@ export function parseRef(text: string): Result<Ref> {
 
 const AGENT_KEYS: Record<string, true> = {
 	agent: true,
+	model: true,
 	brief: true,
 	in: true,
 	out: true,
@@ -202,6 +206,8 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	}
 
 	const agent = text("agent");
+	const modelRaw = raw.model;
+	if (modelRaw !== undefined && (typeof modelRaw !== "string" || modelRaw.trim().length === 0)) say("`model` names an agent");
 	const out = raw.out;
 	if (out === undefined || !isObject(out)) say("`out` is the JSON Schema of the result");
 	const raisesRaw = raw.raises;
@@ -223,6 +229,7 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 		value: {
 			kind: "agent",
 			agent,
+			model: typeof modelRaw === "string" ? modelRaw : undefined,
 			brief: template,
 			out,
 			raises,

@@ -7,7 +7,7 @@
 import { isName, type Json, parseBox, stableText } from "./defs.ts";
 import { type Firing, lint, type Survey, survey } from "./plan.ts";
 import { delta, headline, type Marks, marksOf, wiring } from "./report.ts";
-import { type Action, EMPTY, markOf, type Outcome, reduce, type State } from "./state.ts";
+import { type Action, definitionKey, EMPTY, markOf, modelKey, type Outcome, reduce, type State } from "./state.ts";
 
 export type Command =
 	/** Boxes in plain-data form; `null` drops a box. */
@@ -87,7 +87,10 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 			if (Object.keys(state.boxes).length === 0) refusals.push("no box is defined");
 			refusals.push(...lint(state.boxes));
 			for (const [name, box] of Object.entries(state.boxes)) {
-				if (box.kind === "agent" && !(box.agent in state.agents)) refusals.push(`${name}: there is no agent named \`${box.agent}\``);
+				if (box.kind !== "agent") continue;
+				if (!(definitionKey(box.agent) in state.agents)) refusals.push(`${name}: there is no agent named \`${box.agent}\``);
+				const model = box.model ?? box.agent;
+				if (!(modelKey(model) in state.agents)) refusals.push(`${name}: agent \`${model}\` has no model setting to use`);
 			}
 			const found = survey(state);
 			for (const key of found.illegal) refusals.push(`${key}: its box is no longer defined; retract it or define the box again`);
@@ -163,12 +166,14 @@ export class Store {
 		this.#state = reduce(this.#state, action);
 	}
 
-	/** Agent names the definitions use, for the caller to look up outside the flow. */
+	/** Agent names the definitions use, as a definition or for a model setting, for the caller to look up outside the flow. */
 	agentNames(): string[] {
-		return [...new Set(Object.values(this.#state.boxes).flatMap((box) => (box.kind === "agent" ? [box.agent] : [])))].sort();
+		return [
+			...new Set(Object.values(this.#state.boxes).flatMap((box) => (box.kind === "agent" ? [box.agent, box.model ?? box.agent] : []))),
+		].sort();
 	}
 
-	/** Records the marks of agent definitions as they are now; `null` for a name with no definition. */
+	/** Records marks as they are now, under `definitionKey` and `modelKey`; `null` for one that does not exist. */
 	observe(agents: Readonly<Record<string, string | null>>): void {
 		const changed: Record<string, string | null> = {};
 		for (const [name, mark] of Object.entries(agents)) {
