@@ -46,7 +46,8 @@ export type AgentBox = Common & {
 	readonly out: JsonObject;
 	/** Exception types the agent may raise instead of returning a result. */
 	readonly raises: readonly string[];
-	readonly isolated: boolean;
+	/** `true`: each session in its own worktree; `false`: sessions share the caller's workspace on purpose; absent: the host decides. */
+	readonly isolated: boolean | undefined;
 	/** Most sessions one item may take through answered raises: the first, and one per answer. */
 	readonly bound: number;
 };
@@ -225,7 +226,7 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 			brief: template,
 			out,
 			raises,
-			isolated: isolatedRaw === true,
+			isolated: typeof isolatedRaw === "boolean" ? isolatedRaw : undefined,
 			bound,
 			inputs,
 			handle,

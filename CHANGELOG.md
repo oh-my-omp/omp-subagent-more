@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Changed box `isolated` to a tri-state setting: `false` shares the caller's workspace on purpose and an absent value leaves isolation to the host's default for the agent
 - Changed raise session bounds to count only sessions chained through answered raises, so failed attempts no longer consume the budget
 - Changed exception refire budgets to count separately per handled exception name
 - Changed flow output to truncate stopped-flow reasons and show session history links on running task labels

@@ -24,7 +24,7 @@ An agent box runs one fresh subagent session per item:
   "handle": { "session": 1 },
   "limit": 2,
   "bound": 3,
-  "isolated": false
+  "isolated": true
 }
 \`\`\`
 
@@ -45,7 +45,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
 | \`bound\` | agent | Most sessions one item may take through answered raises: the first, and one per answer. 3 when absent. |
-| \`isolated\` | agent | Run each session in its own worktree. |
+| \`isolated\` | agent | \`true\`: each session runs in its own worktree. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
 
 ## References
 

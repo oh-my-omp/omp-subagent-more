@@ -258,7 +258,7 @@ async function runAgent(parent: AgentSession, flow: Flow, box: AgentBox, firing:
 		solutionSpace: "as the assignment states",
 		outputSchema: yieldSchema(box),
 		schemaMode: "strict",
-		...(box.isolated ? { isolated: true } : {}),
+		...(box.isolated === undefined ? {} : { isolated: box.isolated }),
 	};
 	// The id belongs to no model tool call: the task tool only looks up launches a streamed call of that id prepared.
 	// The tool, or a hook around it, may refuse the dispatch by throwing; that is the session not starting.
