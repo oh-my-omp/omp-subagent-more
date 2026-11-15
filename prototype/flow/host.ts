@@ -338,9 +338,6 @@ async function runAgent(
 	firing: Firing,
 	signal: AbortSignal,
 ): Promise<Outcome> {
-	const taskTool = parent.getToolByName("task");
-	const manager = parent.asyncJobManager;
-	if (!taskTool || !manager) return failed("spawn", "the `task` tool or background jobs are unavailable in this session");
 	if (box.isolated === true && !cfgTaskIsolationEnabled.get(parent.settings)) {
 		return failed("spawn", "the box is `isolated`, and this session does not allow isolated subagents (`task.isolation.enabled`)");
 	}
@@ -374,17 +371,36 @@ async function runAgent(
 		schemaMode: "strict",
 		...(box.isolated === undefined ? {} : { isolated: box.isolated }),
 	};
-	// The id belongs to no model tool call: the task tool only looks up launches a streamed call of that id prepared.
-	// The tool, or a hook around it, may refuse the dispatch by throwing; that is the session not starting.
+	// The task tool returns once the session's job is registered; the spawn hook runs later, inside that job.
+	// So what was prepared for the session stays until the session has ended.
 	const prepared = spawnId(flow.dir, name);
 	rt.spawns.set(prepared, { overlay, model });
+	try {
+		return await spawnAndWait(parent, flow, box, firing, item, signal);
+	} finally {
+		rt.spawns.delete(prepared);
+	}
+}
+
+async function spawnAndWait(
+	parent: AgentSession,
+	flow: Flow,
+	box: AgentBox,
+	firing: Firing,
+	item: TaskItem,
+	signal: AbortSignal,
+): Promise<Outcome> {
+	const taskTool = parent.getToolByName("task");
+	const manager = parent.asyncJobManager;
+	if (!taskTool || !manager) return failed("spawn", "the `task` tool or background jobs are unavailable in this session");
+	// The id belongs to no model tool call: the task tool only looks up launches a streamed call of that id prepared.
+	// The tool, or a hook around it, may refuse the dispatch by throwing; that is the session not starting.
 	const result = await taskTool
 		.execute(`flow-${randomUUID()}`, {
 			context: "One session of a flow of small assignments. The assignment is complete in itself.",
 			tasks: [item],
 		})
-		.catch((error: unknown) => errorText(error))
-		.finally(() => rt.spawns.delete(prepared));
+		.catch((error: unknown) => errorText(error));
 	if (typeof result === "string") return failed("spawn", clip(result));
 	const progress = progressSchema.safeParse(result.details);
 	const id = progress.success ? progress.data.progress[0]?.id : undefined;
