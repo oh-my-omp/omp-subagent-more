@@ -1,0 +1,87 @@
+{
+ "ref": "oh-my-omp/omp-config#336",
+ "agent": "scoutoh-my-omp-omp-config-336-2",
+ "seconds": 461,
+ "slices": [
+  {
+   "id": "template-host-fragments",
+   "title": "Add the three 18.20.0 host fragments to the repo's system-prompt template (encourageEdits critical, resultShaping slot, xd://read/urls pointer)",
+   "files": [
+    "agent/SYSTEM_TEMPLATE.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "6",
+    "9"
+   ],
+   "done_when": "With the branch checked out and node_modules refreshed from the then-current release, the contract's /tmp/omp-template-render.ts prints {\"editCritical\":true,\"shapeNotice\":true,\"readUrlsPointer\":true,\"editCriticalOff\":false,\"shapeNoticeOff\":false,\"readUrlsPointerOff\":false} and exits 0, and row 5's sandbox session run with spotlight.experiment.enabled true and encourageEdits false shows Long results are shaped: once, File edits: MUST use zero times and xd://read/urls once in the dumped request."
+  },
+  {
+   "id": "device-rule-forms",
+   "title": "Widen REPLACE-SYSTEM-default.yml's xd:// device rule to match the device sentence with and without backticks around xd://<tool>",
+   "files": [
+    "agent/extensions-last/system-prompt-replace/REPLACE-SYSTEM-default.yml"
+   ],
+   "depends_on": [
+    "template-host-fragments"
+   ],
+   "rows": [
+    "4",
+    "5",
+    "7",
+    "8"
+   ],
+   "done_when": "With OMOMP_MODE unset and node_modules refreshed from the then-current release, the contract's /tmp/omp-device-rule.ts prints {\"devicesEdits\":2,\"toolRefCaptured\":true,\"userReportedReplaced\":true,\"compiledCodeReplaced\":true,\"evalFileRuleApplied\":true} and exits 0, where the same script prints devicesEdits:1 at the base commit."
+  }
+ ],
+ "open_points": [],
+ "gate_gaps": [
+  {
+   "row": "预期结果 1 / 预期结果 2 — 『在 `# Tool I/O` 下渲染』的定位",
+   "input": "Render the branch template with the contract's data set (read+edit present, encourageEdits true, resultShaping \"SHAPE-NOTICE\") but place both new fragments under `# General` instead of `# Tool I/O`: I verified all six readings still come out true/false as required (both scripts use only `includes`), so a wrong section is indistinguishable. Observe it by asserting each fragment's first line lies between the `# Tool I/O` heading and the next `#`/`§` heading (or by grepping the row-5 dump with -A/-B line context)."
+  },
+  {
+   "row": "预期结果 1 / 预期结果 2 — 两段在 `read` 缺席时仍渲染（决策表『resultShaping 槽的形式』与『encourageEdits 块的位置与守卫』的要求）",
+   "input": "Render with `read` removed from tools, encourageEdits true and resultShaping \"SHAPE-NOTICE\": a draft that nests both new fragments inside the `{{#has tools \"read\"}}` Topics guard renders neither, yet my probe shows every row 1–3 reading still passes (the `off` render turns encourageEdits off, empties resultShaping and drops read at once, hiding it). Observe with the read-absent render: Shape text and critical must still appear."
+  },
+  {
+   "row": "决策表『encourageEdits 块的位置与守卫』— `{{#if encourageEdits}}` 守卫",
+   "input": "Render with encourageEdits false and `edit` still in tools: a template that keeps only `{{#has tools \"edit\"}}` renders the critical there and still passes all six row 1–3 readings, because the `off` render also removes `edit` from tools. Observe with encourageEdits false + edit present → no `File edits: MUST use`."
+  },
+  {
+   "row": "决策表『encourageEdits 块的位置与守卫』— `{{#has tools \"edit\"}}` 守卫",
+   "input": "Render with encourageEdits true and tools without `edit` (bash and eval still present): a template that keeps only `{{#if encourageEdits}}` renders the critical and still passes rows 1–3 — verified in my probe (NO-EDIT-GUARD variant). Observe with encourageEdits true + edit absent → no `<critical>File edits: MUST use`."
+  },
+  {
+   "row": "决策表『encourageEdits 块的位置与守卫』— `{{#ifAny (includes tools \"bash\") (includes tools \"eval\")}}` 的 sed/perl 子句",
+   "input": "Render with encourageEdits true, `edit` present, and tools lacking both `bash` and `eval`: expected ``File edits: MUST use `edit`.`` with no `; NEVER sed/perl/python edits`. My probe shows a template without the `ifAny` guard passes rows 1–3 unchanged (NO-IFANY variant), and no acceptance row feeds a tool set where edit is present without bash/eval (rows 1–3, 5, 6 all carry both), so the clause is never observed either way."
+  },
+  {
+   "row": "预期结果 4 + 验收表第 4 行 — 两写法各自的 `$1` 捕获与『同一句不产生重复条目』",
+   "input": "Run the row-4 script with a single-sentence baseline prompt three times: only ``Write JSON args as `content` to `xd://<tool>` via `write`.``, only ``… to xd://<tool> via `write`.``, and the same backticked sentence twice. Expect devicesEdits:1 and toolRefCaptured:true each time (my probe on the widened rule gives 1/1/1). Row 4 always feeds both sentences in one prompt, so a `$1` that breaks in one form is masked by the other entry's captured text, and a duplicate-entry defect is never fed."
+  },
+  {
+   "row": "预期结果 5 [保持] — Topics 段落照旧渲染",
+   "input": "Row 5's five greps are `File edits: MUST use`, `Further sub-paths, queries, limits: xd://read/urls`, `Devices are not functions`, `# Code by Syntax Shape`, `§ Delivery`; none names the Topics paragraph. Observe by adding to the same dump command: grep -c \"A tool description ending in \\`Topics\\`\" \"$f\" (read is present in that session, so it must be 1)."
+  },
+  {
+   "row": "预期结果 5 [保持] — Delegation / Workflow 段落与 `§` 标记",
+   "input": "Row 5 counts only `§ Delivery`; `§ Role`, `§ Runtime`, `§ Tool Policy`, `# Delegation`, `# 3. Implement` and `# 4. Verify` are never grepped, so an edit that clobbers them passes. Observe with additional greps on the same dumped request: `# Delegation`, `# 3. Implement`, `# 4. Verify`, `§ Role` each 1."
+  },
+  {
+   "row": "范围边界 不应残留 — 『SHAPE_RULE 文本的副本（Long results are shaped: 不应出现在仓库里）』/ 验收表第 9 行",
+   "input": "Row 9 greps only `agent` (`grep -rn \"Long results are shaped\" agent`), so a copy under docs/, ci/ or sandbox/ prints nothing and the row still passes; the 范围边界 wording is repo-wide. Observe by running it from the repo root: grep -rn \"Long results are shaped\" . --exclude-dir=node_modules --exclude-dir=.git."
+  },
+  {
+   "row": "验收表第 4 行的 Env（『PR 分支检出』）与 预期结果 4",
+   "input": "Run the row-4 command from a shell that has OMOMP_MODE=light (this omp-light session's environment, set at agent/omp-light.ts:57): every shipped rule carries `mode: \"full\"`, prompt-conditions.ts:147 resolves the mode as light, and my probe of the exact contract script printed {\"devicesEdits\":0,\"toolRefCaptured\":false,…} and exit 1 with no code defect. Observe the intended reading only with the variable unset (env -u OMOMP_MODE): devicesEdits 1 at the base commit, 2 after the widened regex."
+  },
+  {
+   "row": "使用场景第 1 条 / 上下文『子代理 prompt 由默认 blocks 加子系统模板组成，同样带这条』",
+   "input": "No acceptance row dumps a subagent request: row 5 dumps only the main session, and rows 1–3 render with subagent:false. Observe by delegating one task inside the same sandbox hold and reading the child's /tmp/omp-llm-request-*.json, then grepping `File edits: MUST use` (expected 1) and `Devices are not functions` (expected 1, since the template's device line is shared)."
+  }
+ ]
+}

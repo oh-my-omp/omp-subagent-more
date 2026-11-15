@@ -1,0 +1,80 @@
+{
+ "ref": "oh-my-omp/omp-config#323",
+ "agent": "ScoutDeepseek",
+ "slices": [
+  {
+   "id": "answers-shape",
+   "title": "Read the host `answers[]` ask details in `_shared/ask-answers.ts`: timedOut gating, note pairing, blank-answer skipping, schema tied to `AskToolDetails`",
+   "files": [
+    "agent/extensions/_shared/ask-answers.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "done_when": "`SRC=<PR checkout> bun /tmp/a4-ask.ts` exits 0 with `native` = \"Database → SQLite\\nBackfill → no\", `notes` = that first line plus \" [note: SQLite — only if backups stay] [note: SQLite — and WAL on]\", `timedOut`/`blankAnswer`/`emptyAnswers` null, `notTimedOut` = \"Backfill → no\", `persisted` = [native] and the legacy/other/error readings unchanged (rows 1–5), and `bun run check && bun run test` exits 0 with the `answers[]` schema annotated `zod.ZodLikeSchema<AskToolDetails>` from `@oh-my-pi/pi-tui/tools/ask` so a host shape change is a type error rather than another silent null (row 6)."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-whitespace-answer",
+   "point": "Whether a whitespace-only `answer` (\"   \") counts as 空白 and is skipped: the decision row 「原生答案为空时的表现」 says 空白答案按未作答跳过, while its evidence only fixes `answer: \"\"` as 未作答 (宿主 `formAnswers` 对没填的字段写 `answer: \"\"`), so both readings are allowed and they differ when it is the only entry.",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"   \"}]}}",
+   "outputs": [
+    "null — whitespace counts as blank, is skipped, and it is the only entry",
+    "\"Backfill →    \" — only the empty string counts as blank, so the spaces pass through as the answer text"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:245-247 (`answerText` returns `String(value)` untrimmed) for the text field built at node_modules/@oh-my-pi/pi-tui/src/html-form/parse.ts:553-558; the submitted value passes through `textValue` at node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:70-76 untrimmed, and the model authors the form (`params.html`, node_modules/@oh-my-pi/pi-coding-agent/src/tools/ask.ts:453)",
+   "searched": "Read `formAnswers` (data.ts:230-243), `answerText` (245-254), `textValue` (70-76), `fieldQuestions` (138-149) and the text-control branch (parse.ts:553-558); ran parseHtmlForm+formAnswers from the base checkout's host packages on `<label>Backfill <input type=\"text\" name=\"ticks\" value=\"no\"></label>` with data `{ticks:\"   \"}` → `[{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"   \"}]`."
+  },
+  {
+   "id": "op-duplicate-answers",
+   "point": "Two `answers[]` entries can carry the same `name` and `question` (two same-named text controls, neither labeled); 结果 1 says each answered question occupies one line of `formatAskAnswers`, which allows either one line per entry or one deduplicated line.",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"},{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"}]}}",
+   "outputs": [
+    "\"x → v\\nx → v\" — one line per `answers[]` entry",
+    "\"x → v\" — one line per distinct answered question"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:230-243 emits one `FormAnswer` per `form.fields` entry, and node_modules/@oh-my-pi/pi-tui/src/html-form/parse.ts:553-558 adds one text field per control without deduplicating the name (only radios/checkboxes group, parse.ts:530-551)",
+   "searched": "Read the control→field mapping and `formAnswers`; ran parseHtmlForm+formAnswers on `<input type=\"text\" name=\"x\">` twice, unlabeled → two fields and `[{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"},{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"}]`."
+  },
+  {
+   "id": "op-multiline-answer",
+   "point": "A `textarea` answer keeps its newlines, so `formatAskAnswers` would put one answered question on several physical lines although the contract fixes 每个作答问题一行 and only rules whitespace folding for note text.",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"notes\",\"question\":\"Notes\",\"answer\":\"line one\\nline two\"}]}}",
+   "outputs": [
+    "\"Notes → line one\\nline two\" — the answer text is passed through as the host wrote it",
+    "\"Notes → line one line two\" — the one-line-per-question rule collapses whitespace in the answer as it does in note text"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-tui/src/html-form/parse.ts:500-507 builds a `textarea` field with `multiline: true`, and node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:245-247 returns `String(value)` unchanged",
+   "searched": "Read the textarea branch and `answerText`, plus `fieldQuestions` (data.ts:138-149, which applies `oneLine` to questions only, so only answers can carry newlines); ran parseHtmlForm+formAnswers on `<label>Notes <textarea name=\"notes\">draft</textarea></label>` with `{notes:\"line one\\nline two\"}` → `[{\"name\":\"notes\",\"question\":\"Notes\",\"answer\":\"line one\\nline two\"}]`."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 3 — 没有 `notes`、备注全部配不上、或备注文本折叠后为空时，输出与结果 1 相同 (all-notes-unmatched branch)",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"},{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"no\"}],\"notes\":[{\"name\":\"gone\",\"question\":\"Removed\",\"option\":\"Other\",\"value\":\"other\",\"text\":\"orphan note\"}]}} — the script only mixes one orphan note with two matching ones, so it cannot show that an all-unmatched `notes` array leaves the output equal to `native`."
+  },
+  {
+   "row": "结果 3 / 决策表「宿主的 `notes`（选项备注）去向」— 备注文本折叠后为空的不并入",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[{\"name\":\"db\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\" \\n\\t \"}]}} — expect \"Database → SQLite\" with no bracket; neither fixture note collapses to empty. (The form dialog already drops such notes at node_modules/@oh-my-pi/pi-tui/src/html-form/dialog.ts:449, so this branch has no live host producer.)"
+  },
+  {
+   "row": "决策表「宿主的 `notes`（选项备注）去向」— 与回答按 `name` 和 `question` 同时相同配对",
+   "input": "{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[{\"name\":\"db\",\"question\":\"Something else\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\"near miss\"},{\"name\":\"other\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\"other near miss\"}]}} — expect \"Database → SQLite\" with neither note; the fixture's orphan differs in both fields, so pairing on only one of them would still pass row 3."
+  },
+  {
+   "row": "结果 4 [保持] — 两种形状都不成立的 `details` 仍返回 `null`",
+   "input": "`{\"toolName\":\"ask\",\"isError\":false,\"details\":{}}` and `{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"results\":\"nope\"}}` — the script feeds `otherTool`/`errorResult` only with the host shape and `legacyNoSelection` only with a legacy shape, so no reading observes a `details` that fits neither shape."
+  },
+  {
+   "row": "结果 1、结果 2 — turn-judge `before()` 的 `用户在ask中回答` 条目与 `livePrompts()` 的 `{{ask_answers}}` 渲染",
+   "input": "A session branch whose tool results are `{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}]}}` and `{\"toolName\":\"ask\",\"isError\":false,\"details\":{\"answers\":[{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"no\"}],\"timedOut\":true}}`, read through agent/extensions/turn-judge/index.ts:565 and agent/extensions/user-prompt-inject/index.ts:301 — no acceptance command calls either consumer (the driver only reads the persisted path, transcript.ts:308-315 and 349-359); the tree's overall acceptance issue #337 is what observes these two surfaces in a real session."
+  }
+ ]
+}

@@ -1,0 +1,107 @@
+{
+ "ref": "oh-my-omp/omp-config#328",
+ "agent": "scoutoh-my-omp-omp-config-328",
+ "seconds": 378,
+ "slices": [
+  {
+   "id": "s1-tool-topics-barrel",
+   "title": "把 tool-topics 的 `InternalUrlRouter` 与五个类型改成从 `@oh-my-pi/pi-coding-agent/internal-urls` barrel 取：`agent/extensions/tool-topics/registry.ts:3` 的 router 导入与 `:4-10` 的 `InternalUrl`/`InternalResource`/`ProtocolHandler`/`SchemeSpec`/`UrlCompletion` 类型导入合成一条 barrel 导入（inline `type` 写法，repo 已有先例 `agent/extensions/child-memory-warning/index.ts:24`、`agent/extensions/harness-restart/index.ts:31`），`agent/extensions/tool-topics/injection.ts:11` 同样改 barrel；两文件其余逻辑与 `registry.ts:1-2`、`injection.ts:1-7` 注释不动",
+   "files": [
+    "agent/extensions/tool-topics/registry.ts",
+    "agent/extensions/tool-topics/injection.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "3",
+    "4",
+    "5",
+    "7"
+   ],
+   "done_when": "沙箱里 `bun sandbox/sandbox.ts run /tmp/c1-tool-topics.json <模型>` 与 `run /tmp/c1-inject.json <模型>` 的 `<name>.driver.json` 都是 `pass`（`read tool://ast_grep` 列出 topic、`read tool://ast_grep/patterns` 返回正文、多一段的 URL 报 `Invalid tool:// URL`、`read-json` 注入标记出现在请求里），且 `agent/extensions/tool-topics/` 下再无 `internal-urls/router`、`internal-urls/types`，`bun run check && bun run test` exit 0"
+  },
+  {
+   "id": "s2-ast-top-level-root",
+   "title": "ast-top-level 的 pin 符号改从包根取：`agent/extensions/ast-top-level/index.ts:39-40` 合成一条 `import { type ExtensionAPI, isMountableUnderXdev, XDEV_KEEP_TOP_LEVEL } from \"@oh-my-pi/pi-coding-agent\"`（`XDEV_KEEP_TOP_LEVEL` 类型是 `Record<string, true>`，`pinTopLevel()` 的写入与自检、`session_start` 重排不动），并改写 `index.ts:30-32` 头注释与 `docs/extensions.md:275`、`docs/extensions.zh-CN.md:275` 里把导入面写成 `@oh-my-pi/pi-coding-agent/tools/xdev` 的措辞（两份 twin 同改，改为不点名宿主导入面的说法）",
+   "files": [
+    "agent/extensions/ast-top-level/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "s1-tool-topics-barrel"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "6",
+    "7",
+    "8"
+   ],
+   "done_when": "同一 held 沙箱里（第 6 行先于第 2 行跑）`omp config list --json` 读出 `tools.xdevDocs` 为 `inline`、`disabledExtensions` 为空数组，`omp plugin list --json` 列出启用中的 `omp-config`；`bun sandbox/sandbox.ts run /tmp/c1-xdev-pin.json <模型>` 的 `result` 为 `pass` 且请求 `tools` 同含 `ast_grep`、`ast_edit`；`RUN=<run> bash /tmp/c1-control.sh <模型>` 后 `c1-xdev-pin-control.driver.json` 的 `result` 为 `pass`；`bun run check && bun run test` exit 0；`rg -nF -e 'pi-coding-agent/tools/xdev' -e 'pi-coding-agent/internal-urls/router' -e 'pi-coding-agent/internal-urls/types' agent docs` 无输出"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-docs-wording",
+   "point": "范围边界要求两份 docs 里 ast-top-level 的「加载」条目「改为不点名宿主导入面的说法」，但没有写定句子；验收表第 8 行只排除三条 specifier 字符串，任何避免这三条字符串的改写都通过，包括仍然点名包根 `@oh-my-pi/pi-coding-agent` 这种同样点名宿主导入面的写法。",
+   "input": "打开 `docs/extensions.md:275` 与 `docs/extensions.zh-CN.md:275` 的 ast-top-level「加载」条目（读者与第 8 行 rg 看到的文本），确认改写后是否还出现任何宿主 specifier",
+   "outputs": [
+    "删掉括号里的 specifier，只写「把 `ast_grep` 与 `ast_edit` 加进 OMP 那张进程全局的 keep-top-level 表」，不再给出来源路径",
+    "改写为点名包根 `@oh-my-pi/pi-coding-agent`（不含子路径），仍属点名宿主导入面但 rg 通过"
+   ],
+   "producer": "docs/extensions.md:275（同 `docs/extensions.zh-CN.md:275`）",
+   "searched": "grep 三条子路径与 `internal-urls`、`xdev` 在 `docs/` 与 `agent/` 下的全部出现：docs 里只有这两行描述 ast-top-level 的导入面；tool-topics 段（`docs/extensions.md` 的 tool-topics 小节）不给任何 specifier"
+  },
+  {
+   "id": "op-header-internals",
+   "point": "`agent/extensions/ast-top-level/index.ts:30-32` 现写 “Relies on OMP internals (`@oh-my-pi/pi-coding-agent/tools/xdev`: `XDEV_KEEP_TOP_LEVEL`, `isMountableUnderXdev`); re-verify after every OMP upgrade.”；改用包根后这两个符号是 OMP 的包导出而非文档化的扩展 API，注释是否继续称 internals、re-verify 提示是否保留，契约只说「只换导入与描述导入面的文字，不改这些注释描述的行为」，两种写法都不违反。",
+   "input": "读 `agent/extensions/ast-top-level/index.ts:30-32`（AGENTS.md 规定扩展的 events/tools/failure policy 由 `index.ts` 头注释描述，读者与 review 看到的就是这段文本）",
+   "outputs": [
+    "保留 “Relies on OMP internals” 与 re-verify 提示，只把括号里的 specifier 换成包根",
+    "去掉 “internals” 说法与 specifier，写成两个符号来自 OMP 包导出并保留 re-verify 提示"
+   ],
+   "producer": "agent/extensions/ast-top-level/index.ts:30",
+   "searched": "读该文件 1-45 行全文；grep `internals` 在 `agent/`、`docs/` 下的同类措辞（`_shared/interactive-mode.ts:10`、`wt-tool/index.ts:56`、`docs/operations.md:188` 的升级清单都不含 ast-top-level）；AGENTS.md「Imports」只约束 specifier，不约束注释措辞"
+  },
+  {
+   "id": "op-control-evidence-append",
+   "point": "控制用例把 evidence 目录固定为 `/evidence/c1-control`，而 recorder 以 `appendFileSync` 写 `<name>.requests.jsonl`、driver 只把 sink 指过去不截断；在同一 held 沙箱里重跑 `c1-control.sh` 时该文件累积前几次会话的请求，控制用例的 `finalAssertion` 读的是这个固定路径。契约既没说重跑要清目录，也没说断言只看本次会话。",
+   "input": "在同一 held 沙箱连续两次 `RUN=<run> bash /tmp/c1-control.sh <模型>`：第一次在启用扩展时跑（请求里会有 `ast_grep`/`ast_edit`），第二次按脚本 `omp config set disabledExtensions '[\"extension-module:ast-top-level\"]'` 后跑",
+   "outputs": [
+    "控制用例按契约通过：判断只看新会话的请求，第一次追加的 `ast_grep` 行不参与",
+    "控制用例失败：`c1-xdev-pin-control.requests.jsonl` 里第一次会话追加的 `ast_grep` 行仍在，`grep -qxE 'ast_grep|ast_edit'` 命中，`result` 为 `fail`"
+   ],
+   "producer": "sandbox/recorder.ts:180（`appendFileSync(sinkPath(), …)`）+ sandbox/driver.ts:312（`writeFileSync(SINK_POINTER, evidence(\"requests.jsonl\"))`，driver.ts:292 只 `mkdirSync` 不截断）；`/tmp/c1-control.sh` 固定 `EVIDENCE_DIR=/evidence/c1-control`",
+   "searched": "读 `sandbox/README.md` 的「Model request recorder」「Scenarios and the RPC driver」，`sandbox/driver.ts:280-313`、`sandbox/recorder.ts:170-205`；driver 只覆盖写 `<name>.driver.json`，`requests.jsonl` 由 recorder 追加"
+  },
+  {
+   "id": "op-barrel-transitive-imports",
+   "point": "契约把 barrel 的副作用结论限定为「router 本来就会跑的注册 + 只含声明的模块（`./context`、`./omp-scope`、`./docs-index`）」，但没有覆盖这三个模块自己的 import 图：`./context` 带进 `../tools/context-notes.ts` 与 `../session/context-settings.ts`，后者模块层执行 31 次 `register(...)`。扩展加载时这些模块是否已经由 omp 自身载入（因而无新增效果），契约没说，也没有验收行区分。",
+   "input": "在一份真实 omp 进程里、扩展加载前与加载后各读一次 settings 注册表与 `InternalUrlRouter.instance().specs()`（或比较基准提交与改动提交上同一个 `c1-tool-topics` 会话的 `requests.jsonl` body/工具说明文本）",
+   "outputs": [
+    "这些模块已被 omp 自身载入，barrel 不新增任何模块层执行：读数与基准一致",
+    "barrel 新增了模块层执行（settings 注册重复或 scheme 顺序变化）：读数与基准不同，但仍可能过全部验收行"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-coding-agent/src/internal-urls/index.ts:16,23（`export * from \"./context\"`、`\"./omp-scope\"`）、src/internal-urls/context.ts:7,11、src/session/context-settings.ts:12 起的 31 个 `register({…})`",
+   "searched": "读源码 `src/internal-urls/index.ts`、`src/internal-urls/context.ts`、`src/internal-urls/omp-scope.ts`、`src/internal-urls/docs-index.ts`（模块层只有常量与函数声明）、`src/internal-urls/router.ts:1-30`（模块层调 `setInternalUrlCompletionHost`/`setInternalUrlSchemeHost`）；`src/session/context-settings.ts` 有 31 处 `register({`"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "验收标准第 4 行（结果 2 负例：非法 tool:// 路径仍由本 handler 拒绝）",
+   "input": "读 `read tool://ast_grep/patterns/extra` 的结果文本并匹配 `Use tool://<tool> or tool://<tool>/<topic>`（该提示语在 `agent/extensions/tool-topics/registry.ts:19` 生成）：第 4 行 Expect 要求结果含 `Invalid tool:// URL` 与提示语两段，而固定文件 `/tmp/c1-tool-topics.json` 的第三条 matcher 只写 `resultIncludes: \"Invalid tool:// URL\"`、`finalAssertion` 为 `true`，提示语消失也仍为 `pass`"
+  },
+  {
+   "row": "预期结果 3（inject 规则仍经同一个 router 解析并投递，请求带上 `rule=\"omp-config%2Ftool-topics/read-json\"`、`topic=\"tool://read/json\"`）",
+   "input": "读 `/evidence/*/c1-inject.requests.jsonl` 里 `<tool-topic-injection rule=\"omp-config%2Ftool-topics/read-json\" topic=\"tool://read/json\">` 的 `topic=` 属性（`agent/extensions/tool-topics/injection.ts:75` 用 `${entry.marker}topic=\"${entry.topic}\"` 拼出）：`c1-inject.json` 的 finalAssertion 只 `grep 'omp-config%2Ftool-topics/read-json'`，`topic` 属性缺失或被换掉也仍为 `pass`"
+  },
+  {
+   "row": "预期结果 4 [保持]（`omp config list --json`、`omp plugin list --json` 读数与改动前一致）",
+   "input": "在基准 `1f6244628ee3` 的 held 沙箱里跑同一对命令，与改动提交的输出逐字段对比：验收表第 6 行只断言 `tools.xdevDocs` 为 `inline`、`disabledExtensions` 为空数组、`omp-config` 在插件列表内且启用，不取基准读数，其他字段被这两个 child 的改动带偏也过"
+  },
+  {
+   "row": "责任与必要决策表第 1 行（tool-topics 的 router 与类型从 `./internal-urls` barrel 取）的依据：barrel 只多载入 `./context`、`./omp-scope`、`./docs-index`，模块层没有注册、文件读写或网络",
+   "input": "同一个 `c1-tool-topics` 会话在基准提交与改动提交上各跑一次，diff `requests.jsonl` 的 system prompt/工具说明文本，并在容器里比对扩展加载前后 `InternalUrlRouter.instance().specs()` 的 scheme 集合与顺序：没有验收行做这个对比，barrel 经 `src/internal-urls/context.ts:7,11` 额外带进的 `src/session/context-settings.ts` 那 31 个模块层 `register({…})` 调用也就无人观察"
+  }
+ ]
+}

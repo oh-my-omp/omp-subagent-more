@@ -1,0 +1,78 @@
+{
+ "ref": "oh-my-omp/omp-config#327",
+ "agent": "scoutoh-my-omp-omp-config-327",
+ "seconds": 396,
+ "slices": [
+  {
+   "id": "s1",
+   "title": "harness-restart：完成通知的 consumed 只在宿主受理后写入（写入前重读 pendingMarker），五处 sendUserMessage 共用一个入口并在拒绝时写 `harness-restart:` 日志；同步改写扩展头注释与两页 docs",
+   "files": [
+    "agent/extensions/harness-restart/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "done_when": "在 `bun sandbox/sandbox.ts hold --repo <PR 检出>` 的同一沙箱里，`--max-cost` 会话中被拒的完成通知使 `grep -c '\"consumed\":true'` 输出 0、`~/.omp/logs` 出现带 `Cost cap reached` 的 `harness-restart:` 行且 marker 仍在分支上，随后两次 `--restore` 使计数先到 1 再不增长，不带 `--max-cost` 的重启路径计数 1 且 `grep \"not delivered\"` 无输出，`bun install` 后 `bun run check && bun run test` 在当前发布版 `@oh-my-pi/*` 类型上 exit 0，且 `docs/extensions.md` 与 `docs/extensions.zh-CN.md` 的 harness-restart 节都写明受理后才写 `consumed`、拒绝写 `harness-restart:` 日志并保持待报重发，两页均不写任何数量。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op1",
+   "point": "结果 2 要求每条被拒绝的发送都写一条「带上原因」的 `harness-restart:` 日志，但宿主丢弃提示时并不总带 message：`sendUserMessage` 的丢弃路径有三处以不带 message 的 `PromptDroppedError` 抛出（只有 cost-gate 那条传 `O?.message`），扩展的 `errorText(error)` 取 `Error.message` 得到空串，日志行就没有原因。合同没写这种拒绝该写什么。",
+   "input": "扩展从 `session_start` 发送完成通知道，或从 `agent_end` 发送取消通知时，宿主在 setup 阶段以不带 message 的 `PromptDroppedError` 丢弃（generation 变化或 `sessionClaimed=false` 的竞态）。",
+   "outputs": [
+    "日志行以 `harness-restart:` 开头但原因为空（`{ error: \"\" }`），不满足结果 2 的「带上原因」",
+    "日志行用替代文本说明宿主未给出原因（合同未规定该文本）"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js:30877（三处 `throwOnDrop)throw new dk`，同处另有 `throw new dk(O?.message)` 的 cost-gate 路径）；被调用的扩展位置 agent/extensions/harness-restart/index.ts:166（完成通知）与 :230（取消通知）",
+   "searched": "在 cli.js 里检索 `throwOnDrop)throw new dk`、`throw new dk(O?.message)`、`PromptDroppedError` 构造与 `async sendUserMessage(e,t)`（:30885）；读 dist/CHANGELOG-bds36pgf.md 的 18.18.2 Fixed 条目「including the cost-cap reason when available」；读 agent/extensions/_shared/errors.ts 的 errorText 与本扩展 5 处 sendUserMessage（index.ts:115/124/142/166/230）"
+  },
+  {
+   "id": "op2",
+   "point": "结果 1 说被拒的请求仍待报、「下一次 activation 重发，直到受理后写一次」，但 `pendingMarker()` 只把分支上最后一个 marker 当作待报，且 `consumed` 条目会把此前所有 marker 清空；旧请求仍待报时又排入新请求，旧请求的完成通知就再也无法补报。结果 1 的重发承诺与决策表依据里承认的「以最后一个 marker 为准」对同一输入给出两种结果。",
+   "input": "M1 的完成通知被拒、marker 仍待报且当回合没有运行；同一进程的后续回合里 agent 再调一次 `harness_restart`（reason `b4 probe 2`），`execute()` 在旧 marker 之后追加 M2 并重启；新进程 activation 只读到 M2，M2 被受理写入 `consumed` 时把 M1 一并清空。",
+   "outputs": [
+    "M1 在 M2 之前不再重发，M1 的 `b4 probe` 完成通知永不出现（按 `pendingMarker` 的最后一 marker 语义）",
+    "activation 报 M2 之后 M1 也被视为已报，结果 1「每个请求直到受理后写一次」对 M1 不成立（同一输入下合同两处文字互相冲突）"
+   ],
+   "producer": "agent/extensions/harness-restart/index.ts:203（`restart()` 造 marker）、:118（`execute()` 追加 marker）、:166（activation 发送）、:88-104（`pendingMarker` 取最后一个 marker，`consumedSchema` 命中时清空此前，:96-99）；`blocker()`（:179-197）只挡住排队/武装/运行中的第二个请求，旧请求被拒后状态是 idle，可以再排新请求",
+   "searched": "读 agent/extensions/harness-restart/index.ts 全文的 pendingMarker/execute/arm/activate/blocker/restart/onAgentEnd；grep `consumed`、`pendingMarker`、`blocker`；核对 docs/extensions.md:256 与 index.ts:19-24 对「先发送后写 consumed」的现状描述"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 1「写入本身失败也只记日志，marker 同样保持待报」",
+   "input": "让写 `consumed` 的 `pi.appendEntry` 抛出（例如会话目录不可写或会话已进入关闭）后读 `grep -c '\"consumed\":true'` 与 marker 条目，并再 `--restore` 一次确认仍重发；四行验收命令都不产生这个输入"
+  },
+  {
+   "row": "结果 1「不出现旧的结算把更新的待报请求一起清掉」",
+   "input": "在完成通知触发的回合里再调一次 `harness_restart`（reason `b4 probe 2`），使旧结算落地时分支上已有更新的 marker；检查新 marker 未被 `consumed`、下一次 activation 报的是 `b4 probe 2`"
+  },
+  {
+   "row": "决策表「其余四处的拒绝怎么处理」（与完成通知共用一个入口、拒绝写 `harness-restart:` 日志）",
+   "input": "在行 1 的 `--max-cost` 会话里，模型首个回复调用 `harness_restart` 后由操作员按 Esc 中断回合，使 `onAgentEnd` 的取消通知（index.ts:230）在 `spent >= cap` 时被拒；检查 `~/.omp/logs` 里该调用点的一行"
+  },
+  {
+   "row": "结果 3「[保持] 五处通知的触发时机、文字与 `attribution: \"agent\"` 不变」中完成通知之外的四处",
+   "input": "不带 `--max-cost` 的会话里 Esc 中断一个已排队重启的回合，检查取消通知（index.ts:230）的文字、`attribution` 与触发时机与改动前相同；再让 `InteractiveMode.restart()` 返回而未重启，检查失败通知（index.ts:124）"
+  },
+  {
+   "row": "决策表「是否在 activate() 里 await 这次发送 → 不 await」",
+   "input": "让完成通知引发的回合超过 30 s（回合里跑一个慢工具），检查 `session_start` 处理函数没有撞上 handler timeout、`consumed` 仍只在该回合结束后写入"
+  },
+  {
+   "row": "行 1 Expect「`mouriya.omp.harness-restart.request` 的 marker 条目仍在分支上」",
+   "input": "对行 1 的会话文件再跑 `grep -c '\"reason\":\"b4 probe\"'`（应 1）；行 1 现有 Command 只数 `\"consumed\":true` 与日志，不观察 marker 条目本身"
+  },
+  {
+   "row": "结果 1「以任何原因被拒绝都不写」中的非 cost-cap 原因（结果 2「带上原因」同样只在 cap 原因上被喂过）",
+   "input": "用行 2 的形式 `omp --session <会话 id> --restore --model <沙箱里已删除凭据的 provider>` 让宿主以「no api key for …」（cli.js:7687）拒绝完成通知；检查计数仍 0、日志带该原因、marker 仍在"
+  }
+ ]
+}

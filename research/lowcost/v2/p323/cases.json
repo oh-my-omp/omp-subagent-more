@@ -1,0 +1,80 @@
+[
+ {
+  "name": "whitespace-only-answer-is-blank",
+  "input": "{\"answers\":[{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"   \"}]}",
+  "expect": "null",
+  "ruling": "op-whitespace-answer"
+ },
+ {
+  "name": "whitespace-only-skipped-next-to-real-answer",
+  "input": "{\"answers\":[{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\" \\n\\t \"},{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}]}",
+  "expect": "\"Database → SQLite\"",
+  "ruling": "op-whitespace-answer"
+ },
+ {
+  "name": "duplicate-entries-two-lines",
+  "input": "{\"answers\":[{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"},{\"name\":\"x\",\"question\":\"x\",\"answer\":\"v\"}]}",
+  "expect": "\"x → v\\nx → v\"",
+  "ruling": "op-duplicate-answers"
+ },
+ {
+  "name": "textarea-newline-folded",
+  "input": "{\"answers\":[{\"name\":\"notes\",\"question\":\"Notes\",\"answer\":\"line one\\nline two\"}]}",
+  "expect": "\"Notes → line one line two\"",
+  "ruling": "op-multiline-answer"
+ },
+ {
+  "name": "legacy-custom-input-not-folded",
+  "input": "{\"results\":[{\"question\":\"Database\",\"selectedOptions\":[\"SQLite\"],\"customInput\":\"in WAL\"}]}",
+  "expect": "\"Database → SQLite + \\\"in WAL\\\"\"",
+  "ruling": "op-multiline-answer"
+ },
+ {
+  "name": "all-notes-unmatched",
+  "input": "{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"},{\"name\":\"ticks\",\"question\":\"Backfill\",\"answer\":\"no\"}],\"notes\":[{\"name\":\"gone\",\"question\":\"Removed\",\"option\":\"Other\",\"value\":\"other\",\"text\":\"orphan note\"}]}",
+  "expect": "\"Database → SQLite\\nBackfill → no\"",
+  "ruling": "gap1"
+ },
+ {
+  "name": "empty-notes-array",
+  "input": "{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[]}",
+  "expect": "\"Database → SQLite\"",
+  "ruling": "gap1"
+ },
+ {
+  "name": "blank-note-not-merged",
+  "input": "{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[{\"name\":\"db\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\" \\n\\t \"}]}",
+  "expect": "\"Database → SQLite\"",
+  "ruling": "gap2"
+ },
+ {
+  "name": "blank-note-skipped-real-note-kept",
+  "input": "{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[{\"name\":\"db\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\" \\n \"},{\"name\":\"db\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\"WAL on\"}]}",
+  "expect": "\"Database → SQLite [note: SQLite — WAL on]\"",
+  "ruling": "gap2"
+ },
+ {
+  "name": "near-miss-notes-not-paired",
+  "input": "{\"answers\":[{\"name\":\"db\",\"question\":\"Database\",\"answer\":\"SQLite\"}],\"notes\":[{\"name\":\"db\",\"question\":\"Something else\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\"near miss\"},{\"name\":\"other\",\"question\":\"Database\",\"option\":\"SQLite\",\"value\":\"sqlite\",\"text\":\"other near miss\"}]}",
+  "expect": "\"Database → SQLite\"",
+  "ruling": "gap3"
+ },
+ {
+  "name": "empty-details",
+  "input": "{}",
+  "expect": "null",
+  "ruling": "gap4"
+ },
+ {
+  "name": "results-not-array",
+  "input": "{\"results\":\"nope\"}",
+  "expect": "null",
+  "ruling": "gap4"
+ },
+ {
+  "name": "answers-not-array",
+  "input": "{\"answers\":\"nope\"}",
+  "expect": "null",
+  "ruling": "gap4"
+ }
+]

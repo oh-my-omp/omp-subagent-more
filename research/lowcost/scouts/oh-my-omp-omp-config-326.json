@@ -1,0 +1,90 @@
+{
+ "ref": "oh-my-omp/omp-config#326",
+ "agent": "scoutoh-my-omp-omp-config-326",
+ "seconds": 279,
+ "slices": [
+  {
+   "id": "vibe-gate",
+   "title": "Reject `wt` and `wt_remove` at call time while vibe mode is active (queueBlocker reads ctx.sessionModes)",
+   "files": [
+    "agent/extensions/wt-tool/index.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+   ],
+   "done_when": "In the OrbStack sandbox running the PR checkout with `/work` a one-commit git repo, a `wt` or `wt_remove` call made while `/vibe` is active returns at call time an `isError` result that starts with the tool name, contains `vibe mode` and `exit vibe mode first` and contains neither `Queued` nor `Check only`, while the same calls with vibe inactive still queue and report `New worktree created; this session moved from` as before, and `bun run check && bun run test` exit 0 after `bun install` refreshes the `@oh-my-pi/*` dev dependencies to the release at PR time."
+  },
+  {
+   "id": "describe-vibe-gate",
+   "title": "Describe the call-time vibe rejection in the extension header comment and both wt-tool doc pages",
+   "files": [
+    "agent/extensions/wt-tool/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "vibe-gate"
+   ],
+   "rows": [
+    "5"
+   ],
+   "done_when": "`docs/extensions.md#wt-tool` and `docs/extensions.zh-CN.md#wt-tool` both state, in aligned sections and in their own language, that calling `wt` or `wt_remove` while vibe mode is active is rejected at the call with a request to exit vibe mode first, the `agent/extensions/wt-tool/index.ts` header comment says the same beside its queueing description instead of describing the vibe refusal only as a queued-run result, and `bun run check && bun run test` still exit 0."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-state-branch-order",
+   "point": "Putting the vibe rejection in `queueBlocker` leaves it unordered against the existing per-turn state branch, so a call that arrives while this turn already holds a queued/armed/running request returns one of two texts depending on where the check is inserted; the contract names the placement but never the precedence.",
+   "input": "One turn: the model calls `wt` (runtime.state becomes `queued`), the human types `/vibe` while the turn is still streaming, then the model calls `wt` again in the same turn.",
+   "outputs": [
+    "`wt: `/wt` is already queued for the end of this turn; end your turn.` — the verbatim state-branch text at agent/extensions/wt-tool/index.ts:284 — and the queued request is then host-rejected at turn end, so the sequence still ends in the wasted round the issue describes.",
+    "The 结果 1 rejection: `isError`, text starting `wt: `, containing `vibe mode` and `exit vibe mode first`, no `Queued`; the already queued request is still host-rejected at turn end."
+   ],
+   "producer": "agent/extensions/wt-tool/index.ts:422 and :439 register the `wt` / `wt_remove` tools the model calls; the `/vibe` half is the human entering the mode through the host, node_modules/@oh-my-pi/pi-coding-agent/src/modes/interactive-mode.ts:7135, which has no streaming rejection and leaves the extension's queued state untouched.",
+   "searched": "Read agent/extensions/wt-tool/index.ts:276-292 (branch order) and :422-456 (registration), plus host handleVibeModeCommand and #enterVibeMode (:7135-7312). Grepped the contract for any ordering statement between the state branch and the new check: 预期结果 1-4 and the decision table name the placement (`queueBlocker` vs the two queueing branches) but never an order."
+  },
+  {
+   "id": "op-vibe-activation-window",
+   "point": "`/vibe` sets `vibeModeEnabled` only after `await session.activateVibeTools(...)`, so a call landing in that window reads `vibe.status: \"inactive\"` and queues; the same user action can therefore end either in the immediate rejection of 结果 1 or in the queued-then-host-rejected shape of 结果 4, and the contract states both for it.",
+   "input": "A turn is streaming with the pre-vibe tool list; the human submits `/vibe` and the model calls `wt` before `/vibe`'s activation settles.",
+   "outputs": [
+    "`Queued: a new worktree … is created once this turn ends.` and then, after the turn, `No worktree was created; the session is still in …` plus `Warning: Exit vibe mode first.` (the call read the flag before it was set)",
+    "The 结果 1 rejection: `isError`, text starting `wt: `, containing `vibe mode` and `exit vibe mode first`, no `Queued` (the call read the flag after it was set)"
+   ],
+   "producer": "Host node_modules/@oh-my-pi/pi-coding-agent/src/modes/interactive-mode.ts:7135 `handleVibeModeCommand` → :7252 `#enterVibeMode`, which awaits `activateVibeTools` at :7291 and only then assigns `vibeModeEnabled = true` at :7294; `#getSessionModeState` (:3686) derives `vibe.status` from that flag at :3694. The tool call arrives through agent/extensions/wt-tool/index.ts:422.",
+   "searched": "Read `#enterVibeMode` (:7252-7312), `#getSessionModeState` (:3686-3700) and `#vibeSessionTransitionBlocked` (:9271-9275). The contract's 责任与必要决策 equates the extension's read with the host's `vibeModeEnabled`, but no 预期结果 covers a call made after `/vibe` was submitted and before the flag flips."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "预期结果 1「文本以工具名开头」",
+   "input": "Read the rejected result's first characters right after the call — acceptance row 1 asserts only `isError`, `vibe mode`, `exit vibe mode first` and the absence of `Queued`, never that the text begins with `wt: ` or `wt_remove: `."
+  },
+  {
+   "row": "预期结果 1「worktree 与工作目录不变」",
+   "input": "A `bash` call printing `pwd` in the same session after the rejection turn — row 1's Expect compares only `docker exec omp-sandbox-<run> git -C /work worktree list`, so the session cwd staying at `/work` is never observed."
+  },
+  {
+   "row": "决策表第 1 行的 `wt` 侧「拒绝放在 queueBlocker（两个工具的每次调用）」，落到 `wt` 的 linked-worktree 只读报告分支",
+   "input": "From `/work` run `/wt` to move the session into a worktree, then enter vibe and call `wt` without `confirm`: queueBlocker placement yields the vibe rejection, the rejected alternative yields the worktree report plus its `confirm`. No acceptance row enters a worktree before calling `wt` — row 2 enters one but calls `wt_remove`."
+  },
+  {
+   "row": "预期结果 2「同一判定作用于 `wt_remove` 的每次调用」中 `confirm` 不匹配的分支",
+   "input": "In vibe mode call `wt_remove` with `confirm=\"deadbeef\"` — row 2 feeds only a matching `confirm` and no `confirm`."
+  },
+  {
+   "row": "预期结果 3「失败仍在下一轮报告」",
+   "input": "Non-vibe session: `git branch taken` in `/work`, then `wt` with `branch: \"taken\"` — the next message must start `No worktree was created; the session is still in` and carry `Error: Worktree creation failed: Branch 'taken' already exists; pick another name.` (host src/session/session-worktree.ts:137); row 3 exercises only a successful creation."
+  },
+  {
+   "row": "预期结果 4 的 `wt_remove` 变体「Worktree removal stopped: `/move …` did not move the session」",
+   "input": "Session inside a worktree: call `wt_remove` with the `confirm` obtained from a check, then `/vibe` before the turn ends — the next message must start `Worktree removal stopped:` and contain `Warning: Exit vibe mode first.`; row 4 queues `wt` only."
+  }
+ ]
+}

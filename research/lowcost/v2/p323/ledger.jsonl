@@ -1,0 +1,20 @@
+{"t":"2026-11-14T20:28:24.314Z","type":"start","node":"n1","kind":"rule","agent":"loop:guardian","agentId":"p323rulen1"}
+{"t":"2026-11-14T20:29:07.970Z","type":"node_done","node":"n1","kind":"rule","yieldKind":"rulings"}
+{"t":"2026-11-14T20:29:07.981Z","type":"start","node":"n2","kind":"work","agent":"loop:worker-free","agentId":"p323workn2","lane":"swe2","slice":"answers-shape"}
+{"t":"2026-11-14T20:29:07.985Z","type":"start","node":"n3","kind":"work","agent":"loop:worker-low","agentId":"p323workn3","lane":"haiku","slice":"answers-shape"}
+{"t":"2026-11-14T20:29:08.027Z","type":"start","node":"n4","kind":"work","agent":"loop:worker-mid","agentId":"p323workn4","lane":"deepseek","slice":"answers-shape"}
+{"t":"2026-11-14T20:31:40.004Z","type":"gates","lane":"haiku","by":"worker","head":"0f79a46c85c82938f64c6c7f5fd39bd1ce90194c","pass":true,"failed":[]}
+{"t":"2026-11-14T20:31:56.574Z","type":"node_done","node":"n3","kind":"work","lane":"haiku","yieldKind":"done"}
+{"t":"2026-11-14T20:31:56.588Z","type":"done_check","lane":"haiku","head":"0f79a46c85c82938f64c6c7f5fd39bd1ce90194c","pass":true,"reused":true}
+{"t":"2026-11-14T20:32:34.713Z","type":"node_killed","node":"n4","reason":"killed by orchestrator: read sibling checkouts (mid/repo, free1/repo) for earlier attempts"}
+{"t":"2026-11-14T20:32:34.731Z","type":"start","node":"n5","kind":"work","agent":"loop:worker-mid","agentId":"p323workn5","lane":"deepseek","slice":"answers-shape"}
+{"t":"2026-11-14T20:33:46.059Z","type":"gates","lane":"swe2","by":"worker","head":"e04cd4e2c23ac47695fe4774099cd954762d93ab","pass":true,"failed":[]}
+{"t":"2026-11-14T20:33:57.334Z","type":"node_done","node":"n2","kind":"work","lane":"swe2","yieldKind":"done"}
+{"t":"2026-11-14T20:33:57.356Z","type":"done_check","lane":"swe2","head":"e04cd4e2c23ac47695fe4774099cd954762d93ab","pass":true,"reused":true}
+{"t":"2026-11-14T20:38:33.884Z","type":"gates","lane":"deepseek","by":"worker","head":"9b211825d3d5fad0f347ae295dc6b407b0ee4d30","pass":true,"failed":[]}
+{"t":"2026-11-14T20:38:56.115Z","type":"node_done","node":"n5","kind":"work","lane":"deepseek","yieldKind":"done"}
+{"t":"2026-11-14T20:38:56.135Z","type":"done_check","lane":"deepseek","head":"9b211825d3d5fad0f347ae295dc6b407b0ee4d30","pass":true,"reused":true}
+{"t":"2026-11-14T20:39:14.524Z","type":"start","node":"n6","kind":"signoff","agent":"loop:guardian","agentId":"p323rulen1","lane":"haiku"}
+{"t":"2026-11-14T20:39:49.318Z","type":"node_done","node":"n6","kind":"signoff","lane":"haiku","yieldKind":"signoff"}
+{"t":"2026-11-14T20:43:33.398Z","type":"start","node":"n7","kind":"signoff","agent":"loop:guardian","agentId":"p323rulen1","lane":"haiku","pr":349}
+{"t":"2026-11-14T20:44:09.254Z","type":"node_done","node":"n7","kind":"signoff","lane":"haiku","yieldKind":"signoff"}

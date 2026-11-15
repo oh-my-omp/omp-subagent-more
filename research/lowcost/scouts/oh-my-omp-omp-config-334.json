@@ -1,0 +1,106 @@
+{
+ "ref": "oh-my-omp/omp-config#334",
+ "agent": "scoutoh-my-omp-omp-config-334",
+ "seconds": 344,
+ "slices": [
+  {
+   "id": "cooldown",
+   "title": "Prompted-candidate rejection cooldown in judgeWithChat",
+   "files": [
+    "agent/extensions/_shared/judge.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "done_when": "In the OrbStack sandbox (`bun sandbox/sandbox.ts hold --repo <checkout>`, requests read from `/evidence/interactive.requests.jsonl`) with the c5 fixture, acceptance rows 1–5 hold — after a round against the 404 stub, later rounds add no stub line and the failure notice contains `did not serve the model recently` (rows 1, 2), the 400 stub gains a request every round (row 3), `sleep 305` makes the stub gain a request again (row 4), and with `modelRoles.turn-judge`/`retry.fallbackChains.turn-judge` cleared the notice stays an info answered through `modelRoles.judge` (row 5) — and `bun run check && bun run test` exits 0 in the checkout (row 6)."
+  },
+  {
+   "id": "docs",
+   "title": "Both docs pages state one cooldown rule for prompted and host-chain candidates",
+   "files": [
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "cooldown"
+   ],
+   "rows": [],
+   "done_when": "In `docs/extensions.md` and `docs/extensions.zh-CN.md` the JUDGE-backed items describe prompted candidates and the host judge-role chain as skipping a candidate for five minutes after 401/402/403/404, name neither the identity key, the table's location nor the expiry implementation, keep the unbound branch attributed to `resolveJudge`, and the two pages' item lists stay one-for-one aligned."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "mixed-skip-and-fresh-failure",
+   "point": "The contract fixes the failure wording only for the case where every prompted candidate was rejected or skipped; when the chain mixes a candidate that is already cooled with a candidate that fails in this judgment on a status outside 401/402/403/404, it says nothing about which of the two the thrown error names, and the existing error has room for one reason.",
+   "input": "`@turn-judge` resolves [A, B] where A answered 404 in an earlier round and B answers 400 in this round (fallback bound through `retry.fallbackChains.turn-judge`); the judgment fails and turn-judge renders the error.",
+   "outputs": [
+    "`judgment: every prompted candidate of @turn-judge failed: <B's ProviderResponseError message>` (the host's `lastFailure ?? lastUnavailable` precedence)",
+    "a message containing `A did not serve the model recently` instead of B's failure text"
+   ],
+   "producer": "agent/extensions/_shared/roles.ts:42-54 (chain = `modelRoles.<role>` then `retry.fallbackChains.<role>`), rendered at agent/extensions/turn-judge/index.ts:668",
+   "searched": "read agent/extensions/_shared/judge.ts:72-118 (single `lastFailure` slot at :80/:112/:117), agent/extensions/_shared/roles.ts, and 结果 2; grepped the acceptance table in the contract for a row with two candidates where the fallback fails (none — row 1's fallback answers, row 2 has one candidate)."
+  },
+  {
+   "id": "several-skipped-identities-in-one-message",
+   "point": "结果 2 says the thrown error writes `<身份> <原因> recently` for the candidate; with two or more cooled candidates the existing message carries one reason slot, so it is unstated whether every skipped identity appears or only the last one.",
+   "input": "`modelRoles.turn-judge` lists two candidates that each answered 404 in earlier rounds; the next judgment skips both and fails.",
+   "outputs": [
+    "the error names only the last skipped identity (`… failed: <id2> did not serve the model recently`)",
+    "the error names both skipped identities"
+   ],
+   "producer": "agent/extensions/_shared/roles.ts:42-54; notice rendered at agent/extensions/turn-judge/index.ts:668",
+   "searched": "read judge.ts:117 and node_modules/@oh-my-pi/pi-coding-agent/src/judgment/index.ts:548-570,655 (single `lastUnavailable` slot); the acceptance table's row 2 binds one candidate only."
+  },
+  {
+   "id": "concurrent-judgments-before-the-entry",
+   "point": "结果 1 speaks of `后续判定` (subsequent judgments) and does not state what a judgment that is already running, or started in the same turn, does while the entry is being written, so the number of requests a rejected candidate receives in that turn is unspecified.",
+   "input": "Two `TURN-JUDGE-*.md` specs match one turn of a session whose `@turn-judge` chain starts with the 404 candidate: turn-judge starts both judgments through `void Promise.all(...)` before either has failed, so both read the table as empty.",
+   "outputs": [
+    "both concurrent judgments send the rejected candidate a request, adding two lines to `/tmp/c5-stub.log` in that round",
+    "only the first sends it and the second already skips, adding one line"
+   ],
+   "producer": "agent/extensions/turn-judge/index.ts:910-913 (Promise.all over `prepareJudgments` of one turn); other purposes start their own judgments in the same turn at agent/extensions/lang-nag/index.ts:99, agent/extensions/tool-policy-nag/index.ts:460 and agent/extensions/watchdog-agent/review.ts:312",
+   "searched": "read turn-judge/index.ts:794-830 and 900-965, lang-nag/index.ts:99, tool-policy-nag/index.ts:460, watchdog-agent/review.ts:312; grepped `_shared` for WeakMap/lock/serialize state (none) and checked that the acceptance rows drive a single spec each."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 2 — 401/402/403 记为同一种原因（`rejected the account`），404 记为另一种（`did not serve the model`）",
+   "input": "Start the stub with 401 (`python3 /tmp/c5-stub.py 401 /tmp/c5-stub.log 9500`) and use row 2's binding (only `@turn-judge`=`c5-probe/probe`, no `retry.fallbackChains.turn-judge`): round 1 must fail with ≥1 stub line, round 2 must add 0 lines and its notice must contain `c5-probe/probe rejected the account recently`; repeat with 402 and 403. No acceptance row starts the stub with 401, 402 or 403, so the account-rejection wording and the write on those three codes are never observed."
+  },
+  {
+   "row": "结果 3 — 429、5xx、网络错误、回答解析失败同类不写冷却条目",
+   "input": "Row 3's binding (with fallback B) against the stub at 429 and at 500, and against a 200 endpoint whose body leaves the Noul answer unparsable: round 2 must add ≥1 stub line and still show B answering. Row 3 feeds only 400, so the rest of 结果 3's list is never exercised."
+  },
+  {
+   "row": "决策「冷却的状态从哪里取」— 没有 attempt 记录的失败（没有凭据、metadata 解析抛出）不写条目",
+   "input": "Bind `@turn-judge` to a models.yml provider that has no `apiKey` and no `auth_credentials` row, so `registry.getApiKey` returns false at agent/extensions/_shared/judge.ts:84-86: round 2 must report `no API key for …` again instead of skipping the candidate, and the `judgment prompted candidate failed` warn must carry no `skippedForMs`. No row feeds a failure that arrives without an attempt record."
+  },
+  {
+   "row": "决策「冷却条目的身份与存放范围」— 身份用 `formatModelStringWithRouting`（`provider/id`，带 upstream pin）而不是 `modelLabel`",
+   "input": "A candidate whose model carries a single upstream route (`compat.openRouterRouting.only` or `vercelGatewayRouting.only`, so `formatModelStringWithRouting` yields `provider/id@pin`, node_modules/@oh-my-pi/pi-coding-agent/src/config/model-resolver.ts:199-212) answers 404 while a second candidate of the same `provider/id` without the pin stays healthy: round 2 must skip only the pinned identity, name it as `provider/id@pin did not serve the model recently`, and still request the unpinned one. No row binds a routed model; the fixture's loopback `c5-probe` cannot carry a pin because `modelMatchesHost` matches provider name or `baseUrl` host (node_modules/@oh-my-pi/pi-catalog/src/hosts.ts:113-125)."
+  },
+  {
+   "row": "结果 1 — 同一 registry 上的后续判定不再向它发请求（registry 由主会话与子代理共享）",
+   "input": "After the main session cools the `@turn-judge` candidate with a 404, send a message in a subagent session of a turn-judge-scoped agent: subagent sessions reuse the parent's registry (node_modules/@oh-my-pi/pi-coding-agent/src/task/executor.ts:4705,4804-4819) and judge through agent/extensions/turn-judge/index.ts:794, so the stub log must not grow in the subagent's round. No row drives a second session."
+  },
+  {
+   "row": "决策「冷却条目的身份与存放范围」— 条目按 `deps.registry` 存（`WeakMap` 键为 registry），不挂在模块顶层",
+   "input": "Give a subagent agent an entry under `task.agentAccountPools` so its session's `modelRegistry` is the per-session wrapper returned by `SessionAccountPoolScope.registry` (node_modules/@oh-my-pi/pi-coding-agent/src/config/account-pools.ts:120-136, wired at sdk.ts:2195-2199): a 404 recorded in the main session's registry must not skip that agent's own judgment, so its round still adds a stub line. Every acceptance row runs a single registry object."
+  },
+  {
+   "row": "决策「单次尝试时限（`judgment.attemptTimeoutMs`）是否一并搬到提示式候选」— 不搬，也不加 30 秒超时冷却",
+   "input": "A stub that answers 200 with a valid Noul judgment body after 6 s, with row 2's binding: the judgment must be answered by that candidate, with no fallback and no timed-out skip. No row feeds a candidate slower than the host's 3-second attempt deadline, so neither the absence of the deadline nor the absence of `CANDIDATE_TIMEOUT_COOLDOWN_MS` is observed."
+  },
+  {
+   "row": "结果 1 — 同一 registry 上的后续判定不再向它发请求（跨 purpose，不限于原 purpose）",
+   "input": "After `turn-judge` cools `c5-probe/probe` in round 1, bind `@lang-nag` to the same `c5-probe/probe` with a fallback and trigger a lang-nag judgment in the same session (agent/extensions/lang-nag/index.ts:99): the stub must gain no line and the fallback must answer. Every acceptance row drives one purpose at a time, so the registry-wide, purpose-independent scope is never observed."
+  }
+ ]
+}

@@ -1,0 +1,81 @@
+{
+ "ref": "oh-my-omp/omp-config#335",
+ "agent": "scoutoh-my-omp-omp-config-335",
+ "seconds": 439,
+ "slices": [
+  {
+   "id": "s1",
+   "title": "Carry the host's out:// reply-channel contract and in-process-builtins facts in the read and bash surfaces",
+   "files": [
+    "agent/extensions/tool-topics/SURFACE-read.md",
+    "agent/extensions/tool-topics/SURFACE-bash.md",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "4",
+    "5",
+    "6",
+    "7"
+   ],
+   "done_when": "One `bun sandbox/sandbox.ts run --repo <PR checkout> /tmp/c10-surface.json <model>` exits 0 and the delta extracted from its c10-surface.requests.jsonl into /tmp/c10-read.txt and /tmp/c10-bash.txt holds the two prescribed sentences verbatim (no `out://` on the `Supported URLs:` line, no `b2sum` and no `In-process builtins, ahead of PATH:`), with every other line of both surfaces and both `tool://` index blocks unchanged and each `upstream:` header naming the published host version the facts were re-checked against at PR time (its lgit commit adds the `## [Unreleased]` CHANGELOG entry)."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op1",
+   "point": "Whether the two `upstream` headers take the newly compared host sources as well as the new version, or only the version: `docs/extensions.md:286` defines the field as the version *and* the sources the text was checked against, while 范围边界 says only that the header is 更新到实施时发布版 and names `out-protocol.ts` and the `shellBuiltins` chain as the sources compared.",
+   "input": "The two header lines after the change, `upstream: pi-coding-agent@<published> …`, in agent/extensions/tool-topics/SURFACE-read.md:3 and SURFACE-bash.md:3.",
+   "outputs": [
+    "`upstream: pi-coding-agent@18.20.x src/prompts/tools/read.md, src/tools/read.ts` — version bumped, source list untouched",
+    "`… src/prompts/tools/read.md, src/tools/read.ts, src/internal-urls/out-protocol.ts` — the checked `out://` source added",
+    "the bash header, with or without `crates/pi-natives/src/shell.rs shell_builtins` / `crates/pi-shell/src/tools/mod.rs builtins` / `crates/pi-builtins/src/extras.rs` appended to `src/prompts/tools/bash.md, src/tools/bash.ts`"
+   ],
+   "producer": "agent/extensions/tool-topics/SURFACE-read.md:3 and agent/extensions/tool-topics/SURFACE-bash.md:3 author the field; its contract is docs/extensions.md:286",
+   "searched": "grep `upstream` over docs/, agent/, ci/ (no CI or test asserts the value: ci/tool-topics-catalog.test.ts only requires a one-line non-empty field and catalog.problems empty); docs/extensions.md:286, docs/operations.md:191 (Upgrade and maintenance notes item 4), acceptance row 7"
+  },
+  {
+   "id": "op2",
+   "point": "The prescribed read sentence makes the reply channel's availability a property of the session kind ('in the interactive TUI only (print, RPC and ACP sessions, and subagents, refuse it)'), but the host decides it from `outEnabled`: an explicitly configured `out.enabled` wins over `tuiTranscript` in either direction, so the claim is only the unset default; subagents are refused unconditionally.",
+   "input": "An omp session with `out.enabled` configured true in print/RPC mode (or false in the interactive TUI), and a model call writing Markdown to `out://` through `write out://` or `cmd > out://`.",
+   "outputs": [
+    "the write is accepted (`Shown to the user.`) although the surface says print, RPC and ACP sessions refuse it",
+    "the write is refused (`out:// is off in this session …`) in the interactive TUI although the surface says that is where it works",
+    "the sentence as prescribed is correct because the setting is unset on the machines in scope"
+   ],
+   "producer": "node_modules/@oh-my-pi/pi-coding-agent/src/internal-urls/out-protocol.ts:41-47 (`outRepliesActive` returns `cfgOutEnabled` when configured, otherwise `tuiTranscript`) and :53-59 (`refusal` checks `taskDepth` first); the setting is registered at node_modules/@oh-my-pi/pi-coding-agent/src/tools/settings.ts:952-963, set by `omp config` or the settings files",
+   "searched": "grep -rn 'out\\.enabled|outReplies' over agent/, docs/, ci/, sandbox/ (no hit — omp-config neither sets nor documents the setting); host src/internal-urls/out-protocol.ts, src/tools/settings.ts, src/prompts/internal-urls/out.md"
+  },
+  {
+   "id": "op3",
+   "point": "Row 1's Expect accepts a `run` exit 0 that came from `untested`, while its command chain then needs a recorded model request: an untested run that made no request leaves c10-surface.requests.jsonl empty, so the extraction and both greps fail and the row exits 1 — the row states its acceptance two ways.",
+   "input": "`bun sandbox/sandbox.ts run --repo <PR checkout> /tmp/c10-surface.json <a model id omp does not know>` → driver.js `untested`, `run` exit 0, empty evidence.",
+   "outputs": [
+    "row 1 passes on the `run` exit alone (Expect read as pass-or-untested), leaving the read surface unobserved",
+    "row 1 exits 1 with an empty /tmp/c10-read.txt (command read literally), so the run must be repeated with another model"
+   ],
+   "producer": "sandbox/driver.ts:265-268 (`Model \"…\" not found` → `untested`), sandbox/driver.ts:311-312 (requests.jsonl written empty before the session starts), sandbox/sandbox.ts:274 (`run` exits 0 for pass or untested)",
+   "searched": "sandbox/driver.ts (classify, evidence writes), sandbox/sandbox.ts (matrix/resultKind), sandbox/README.md「Scenarios and the RPC driver」result table and recorder section"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "3 — 覆盖 结果 3 [保持]：两份说明的其余条款与 topic 索引仍在",
+   "input": "/tmp/c10-read.txt from the row-1 run: its first `grep -qF '[FILENAME#TAG] snapshot header'` can never match because the unchanged sentence reads `copy the returned `[FILENAME#TAG]` snapshot header` (a backtick sits between `]` and ` snapshot`), so the && chain stops there and row 3 exits 1 whatever the change is; measured on the untouched file: `grep -c -F '[FILENAME#TAG] snapshot header'` → 0, `grep -c -F '[FILENAME#TAG]` snapshot header'` → 1, and a full simulation of rows 1-5 against the prescribed text gives row 3 exit 1 with the other four greps matching. The clause would be observed by the pattern with the backtick."
+  },
+  {
+   "row": "预期结果 1 — the two write transports and the availability range (行 1 only observes the channel phrase and `up to 64 KiB`)",
+   "input": "/tmp/c10-read.txt grepped for `write out://`, `cmd > out://`, `in the interactive TUI only` and `subagents, refuse it`: no acceptance row runs any of these, so a sentence naming neither transport and no session range still passes rows 1 and 4."
+  },
+  {
+   "row": "预期结果 2 — 代表性名字 (行 2 observes the property phrase, the switch and `type -t <name>` only)",
+   "input": "/tmp/c10-bash.txt grepped for `awk`, `sed`, `rg`, `jq`, `sort`, `xargs`: no row greps a representative name, so a sentence that states the property but lists no name still passes rows 2 and 5."
+  },
+  {
+   "row": "7 — 卫生：两份文件的 `upstream` 已随本次核对更新",
+   "input": "The checkout as it stands (SURFACE-read.md `upstream: pi-coding-agent@18.13.2 …`, SURFACE-bash.md `…@18.14.0 …`) run through row 7's command as written in body.md: the `\\(13\\.2\\|14\\.0\\)` escape makes ripgrep match the literal `18.13.2|14.0`, which never occurs, so `! rg -q` exits 0 and the row passes without bumping anything (measured: exit 1 from `rg -q` on the unchanged files); with the pipe unescaped it would still accept any other value, e.g. an unpublished `@18.13.3` (measured: exit 1 from `rg -q`, row passes)."
+  }
+ ]
+}

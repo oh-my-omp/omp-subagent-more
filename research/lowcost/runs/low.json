@@ -1,0 +1,186 @@
+{
+ "id": "low",
+ "repo": "/tmp/delivering-issues/oh-my-omp-omp-config-323/low/repo",
+ "whiteboard": "<omomp>/omp-config/.tmp/lowcost/runs/323-low.md",
+ "ladder": [
+  "task:low"
+ ],
+ "adjudicatorTier": "loop:adjudicator",
+ "maxTurns": 8,
+ "maxGateBounces": 2,
+ "maxReviewBounces": 2,
+ "phase": "passed",
+ "tierIndex": 0,
+ "turns": 2,
+ "gateBounces": 0,
+ "reviewBounces": 0,
+ "envHelps": 1,
+ "workers": [
+  {
+   "id": "lowtasklow",
+   "tier": "task:low"
+  }
+ ],
+ "reviews": [
+  {
+   "tier": "task:mid",
+   "agent": "lowreview",
+   "head": "caf134edcbdcac8284cdf9550185b2b846cf49cf",
+   "pass": true,
+   "verdicts": [
+    {
+     "id": "R1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:81-93 hostAnswers pushes one {question, answer} per details.answers entry (folded to one line at :84), and :108-110 formatAskAnswers renders `question → answer` per entry, joined by newline; consumers consume exactly that: turn-judge/index.ts:565-566 pushes {类型:\"用户在ask中回答\", 内容:formatAskAnswers(answers)} when non-null, user-prompt-inject/index.ts:301-302 collects formatAskAnswers(answered), transcript.ts:312 classifies the record as \"answers\" via askAnswers(message) !== null and transcript.ts:355-356 renders the same lines. Message plumbing confirmed (transcript.ts:305-312 passes the toolResult record, whose details the host writes)."
+    },
+    {
+     "id": "R2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:103 `host.data.timedOut === true ? [] : hostAnswers(host.data)` then :104 `answers.length === 0 ? null : answers` → a timedOut:true submission returns null, so no timeline entry / no {{ask_answers}} / role \"other\" (all three consumers gate on null). Strict `=== true` means timedOut:false and an absent field go to hostAnswers and parse as answers. Host writes the flag only alongside answers[] (node_modules/@oh-my-pi/pi-coding-agent/src/tools/ask.ts:465-469), so the host branch is always the one taken."
+    },
+    {
+     "id": "R3",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:86-90 filters notes with `note.name === entry.name && note.question === entry.question` (both, matching host's own pairing at node_modules/@oh-my-pi/pi-coding-agent/src/tools/ask.ts:122-124), maps each to noteSuffix in notes order, and joins with a single space after the answer, so each note gets its own brackets. No notes / all unpaired / folded-empty note → `[answer]` alone, identical to R1. Driver's `notes` expectation is produced verbatim by :74."
+    },
+    {
+     "id": "R4",
+     "verdict": "pass",
+     "evidence": "legacyAnswers at ask-answers.ts:53-64 is the base logic moved verbatim (compare `git show 21d748d:agent/extensions/_shared/ask-answers.ts` :29-47): same two safeParse attempts in the same order, same answerOf formatting, only the empty-array→null moved to :104. :101-104 still returns null for toolName!==\"ask\", isError===true, and a details matching neither shape (e.g. answers entries missing fields). formatAskAnswers is byte-identical to base (not in the diff)."
+    },
+    {
+     "id": "D1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:87 pairs on name AND question; :86 preserves notes order (filter keeps array order); :74 emits exactly `[note: ${note.option} — ${text}]` (verified the separator is U+2014, matching the contract's en/em dash) and :90 `[answer, ...suffixes].join(\" \")` puts each note in its own pair of brackets after the answer; :68 collapses every whitespace run to one space and trims, and :74 drops the note when the folded text is \"\" (null filtered at :89); unpaired notes never reach an answer. The host does pair by the same name+question (describeAnswer → notesForAnswer), so the decision's basis holds."
+    },
+    {
+     "id": "D2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:84-85 folds the answer and `continue`s when it is \"\", so an empty or whitespace-only form field (host formAnswers writes answer:\"\" for unfilled fields, node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:230-243) is not an answer; :104 turns an empty result into null, covering both all-blank and `answers: []`."
+    },
+    {
+     "id": "X1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:3-12 no longer claims the native tool reports details.results[]; it now says the host reports `details.answers[]` (name, question, answer) with notes[] and timedOut:true, which matches node_modules/@oh-my-pi/pi-tui/src/tools/ask.ts:29-37 and the host's execute (src/tools/ask.ts:465-469). The remaining legacy sentence names history and omp-ask-more, which body.md:34 states is still details.results[] until its own migration, so it is accurate at this commit. Decision/format detail is truthful: every answered question is one line and timed-out submissions are excluded."
+    },
+    {
+     "id": "X2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:102-104 is the only reachable branch for host-shaped details, and it gates on `timedOut === true` before hostAnswers; the host always emits answers[] together with the flag (node_modules/@oh-my-pi/pi-coding-agent/src/tools/ask.ts:463-469 with formAnswers always returning an array of {name,question,answer} strings, pi-tui src/html-form/data.ts:230-243), so a timedOut submission cannot fall through to legacyAnswers. The legacy shapes have no timedOut field in any producer (repo-wide grep: timedOut appears only here and in tool-policy-nag, an unrelated exec trace)."
+    },
+    {
+     "id": "C1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:1 imports the host type as type-only from the package root (the repo's permitted host-root import), and the root re-exports the same declaration chain: dist/types/index.d.ts:41 `export * from \"./tools/index.js\"` → dist/types/tools/index.d.ts:1005 `export type { AskToolDetails } from \"@oh-my-pi/pi-tui/tools/ask\"` (single hoisted pi-tui 18.20.1, matching pi-coding-agent's own dependency). :32 defines the function-type identity trick and :33 `const _hostShapeLinked: Identical<z.infer<typeof hostDetails>, AskToolDetails> = true;` forces tsc to compare the parser's inferred type with the host type; the assignment makes any non-identity a TS2322 error at that line. Probe (/tmp/c1probe: copy of the module with the type imported from a structurally identical copy of the host interface, node_modules symlinked, tsc --noEmit): unchanged = exit 0; adding an optional `formId?: string` to AskToolDetails = `ask-answers.ts(34,7): error TS2322: Type 'true' is not assignable to type 'false'`; removing `timedOut?: boolean` = same error; adding a field to FormAnswer = same error; restored = exit 0. So it really would fail, including for an added optional field, rather than silently returning null."
+    },
+    {
+     "id": "C2",
+     "verdict": "pass",
+     "evidence": "Changed lines (ask-answers.ts:1-93) use no `any` (grep for `: any`/`<any>`: none) and no `as` casts (grep ` as ` matched only prose: `ask`, `as a runtime parser`, `as the suffix`; :89 uses a type predicate `suffix is string`, not a cast). External input is parsed once at the boundary: message.details (`unknown`, :99) through hostDetails.safeParse at :102 and the two legacy safeParses at :54-56, with inner helpers taking z.infer types (:72, :81) and no re-validation. Parsing uses `z` from the host package per AGENTS.md. Comments (:3-12, :15-16, :31, :35-37) give behavior/rationale, none restate the code; functions are far below 150 lines."
+    },
+    {
+     "id": "S1",
+     "verdict": "pass",
+     "evidence": "`git diff --name-only 21d748d caf134e` lists only agent/extensions/_shared/ask-answers.ts. formatAskAnswers is untouched and byte-identical to base (function not in the diff), so legacy output formatting is unchanged; turn-judge, user-prompt-inject (livePrompts/transcript.ts), TOPIC-ask-answers.md, docs and package.json are untouched (package.json already lists @oh-my-pi/* as \"latest\", no pin added)."
+    }
+   ],
+   "findings": []
+  }
+ ],
+ "rulings": [],
+ "base": "21d748d522fd47c6c08516c377295ca0d4b5ce81",
+ "worker": {
+  "id": "lowtasklow",
+  "tier": "task:low",
+  "since": 1794686045485,
+  "sawRunning": false
+ },
+ "passedHead": "caf134edcbdcac8284cdf9550185b2b846cf49cf",
+ "gateRuns": 1,
+ "handoff": {
+  "head": "caf134edcbdcac8284cdf9550185b2b846cf49cf",
+  "files_changed": [
+   "agent/extensions/_shared/ask-answers.ts"
+  ],
+  "results": [
+   {
+    "id": "结果 1",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:81-93 hostAnswers (answers[] mapped one line per question, folded) and :96-105 askAnswers; formatAskAnswers :108 unchanged; driver /tmp/a4-ask.ts native/persisted readings match"
+   },
+   {
+    "id": "结果 2",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:103 timedOut === true yields null before any answer is produced; blank answers skipped at :84-85; driver timedOut null, notTimedOut \"Backfill → no\", blankAnswer null"
+   },
+   {
+    "id": "结果 3",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:72-78 noteSuffix (foldLine, dropped when empty) and :81-93 pairing by entry.name and entry.question; driver notes reading matches"
+   },
+   {
+    "id": "结果 4",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:38-62 questionResult/batchDetails/answerOf/legacyAnswers unchanged in logic; driver legacyBatch, legacySingle, legacyNoSelection, otherTool, errorResult readings unchanged"
+   }
+  ],
+  "decisions": [
+   {
+    "point": "Compile-time link to host shape",
+    "choice": "Identical<z.infer<hostDetails>, AskToolDetails> assigned to _hostShapeLinked (line 33), with AskToolDetails imported from @oh-my-pi/pi-coding-agent root",
+    "basis": "Mutual assignability misses optional fields the host adds; a throwaway probe (deleted) showed the identity check rejects optional top-level additions, required additions and nested optional additions, and accepts the real parser"
+   },
+   {
+    "point": "Whitespace in note text",
+    "choice": "foldLine: replace /\\s+/g with one space, then trim; empty result drops the note",
+    "basis": "contract decision table (notes row); trim makes whitespace-only text count as folded-empty"
+   },
+   {
+    "point": "Answer text folding",
+    "choice": "native answer folded with the same foldLine as notes; blank after fold is unanswered and skipped",
+    "basis": "Main ruling on whiteboard (fold, reuse helper, pairing keeps original name/question)"
+   },
+   {
+    "point": "Notes pairing key",
+    "choice": "pair on the host's original name and question, not the folded answer",
+    "basis": "Main ruling; contract 决策表 pairs by name and question"
+   },
+   {
+    "point": "Legacy path",
+    "choice": "results[] and single questionResult parsing untouched; empty results still become null",
+    "basis": "contract 结果 4 and §1/§2 historical-shape exception"
+   },
+   {
+    "point": "foldLine as a named one-expression helper",
+    "choice": "kept as a named function shared by answers and notes",
+    "basis": "Main ruling requires the same helper reused, not duplicated; a named fold is the shared rule of both sites"
+   },
+   {
+    "point": "Dependency refresh",
+    "choice": "not performed; node_modules already has @oh-my-pi/pi-tui 18.20.1 and pi-coding-agent 18.20.1 installed",
+    "basis": "assignment says no bun install; body says refresh is per-#320 §1 and the dispatcher integrates"
+   }
+  ],
+  "compile_time_link": "_hostShapeLinked (ask-answers.ts:33) is a type-level identity between z.infer of the runtime parser hostDetails and the host's AskToolDetails. A host shape change, including an added optional field or a nested field, makes tsc report 'Type true is not assignable to type false' on that line; the parse itself also fails at runtime for changed required fields, so the parser cannot silently return null for a known shape.",
+  "deviations": [],
+  "risks": [
+   "Password-type form fields appear unmasked in turn-judge timeline and {{ask_answers}}: the host writes raw values into details.answers, and the module cannot see field types. Fixing it needs the host to mark secret fields in AskToolDetails; a separate item.",
+   "The identity-type trick depends on zod's inferred object type identity; a future zod upgrade that changes inference could fail the link without a host change (would show as a tsc error on line 33, not silently).",
+   "omp-ask-more still reports results[]; its migration is its own child, and legacy parsing stays until then.",
+   "gate_low earlier failed for environment reasons (kernel down); the recorded pass is on caf134e after the restart.",
+   "Not verified at runtime in an omp session: only the driver and local probes ran, not a real native ask in a session."
+  ]
+ },
+ "reviewer": {
+  "id": "lowreview",
+  "tier": "task:mid",
+  "head": "caf134edcbdcac8284cdf9550185b2b846cf49cf",
+  "since": 1794686081074,
+  "sawRunning": false,
+  "lastStatus": "1|# lowreview (running)\n2|\n3|No final output yet: `agent://lowreview` shows progress until the run publishes its output."
+ },
+ "result": {
+  "tier": "task:low",
+  "head": "caf134edcbdcac8284cdf9550185b2b846cf49cf"
+ }
+}

@@ -1,0 +1,200 @@
+{
+ "ref": "oh-my-omp/omp-config#333",
+ "agent": "scoutoh-my-omp-omp-config-333",
+ "seconds": 278,
+ "slices": [
+  {
+   "id": "S1",
+   "title": "按 18.20.0 的 `{ html }` 表单结果重写 `TOPIC-ask-answers.md`：结果文本、`details.answers[]`、`notes`/`timedOut`、取消与无命名控件，`when` 去掉 images 与 chat redirect",
+   "files": [
+    "agent/extensions/tool-topics/TOPIC-ask-answers.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3"
+   ],
+   "done_when": "在一个 hold 的沙箱里（`bun sandbox/sandbox.ts hold --repo <PR 检出>`），`matrix <run> /tmp/a7-ask-answers.json <模型>` 与 `matrix <run> /tmp/a7-ask-index.json <模型>` 都以 driver `result.kind` `pass` 结束：`tool://ask/answers` 服务到 `User answers:`、`No answer before the timeout`、`Option notes:`、`answers[]`、`timedOut`、`the form has no named controls`，且不含 `User selected:`、`details.results[]`、`(cancelled)`、`User chose to chat about this instead`、`attachment://`、`[Image #N]`、`must be unique`，同时 `tool://ask` 的索引行既无 `images` 也无 `chat redirect`。"
+  },
+  {
+   "id": "S2",
+   "title": "把三个 topic 的 `write proc://<id>/kill` 写成可照抄的 `content: \"\"`，并说明该目标忽略 `content`",
+   "files": [
+    "agent/extensions/tool-topics/TOPIC-write-urls.md",
+    "agent/extensions/tool-topics/TOPIC-bash-background.md",
+    "agent/extensions/tool-topics/TOPIC-task-results.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "4",
+    "5",
+    "6"
+   ],
+   "done_when": "在同一个 hold 的沙箱里 `a7-write-urls`、`a7-bash-background`、`a7-task-results` 三个场景都以 `result.kind` `pass` 结束：三处正文都含 `content: \"\"` 且说明 kill 目标忽略 `content`，同时不再出现 `is optional and ignored`、`(no content)`，也不声称 `content` 必需。"
+  },
+  {
+   "id": "S3",
+   "title": "在 `TOPIC-task-results.md` 补上 `wait`/kill 的四条 `Delivery:` 结算行，说明快照接手取代排队推送",
+   "files": [
+    "agent/extensions/tool-topics/TOPIC-task-results.md"
+   ],
+   "depends_on": [
+    "S2"
+   ],
+   "rows": [
+    "7"
+   ],
+   "done_when": "在 hold 的沙箱里 `a7-task-delivery` 以 `result.kind` `pass` 结束，且 `tool://task/results` 服务到宿主原文的四条结算行：`Delivery: delivered by this wait … it finished while you were waiting.`、`Delivery: delivered by this call … it finished as the call ran.`、`Delivery: handed over by this snapshot … this snapshot superseded its queued completion push.`、`Delivery: not auto-delivered; recovered by this snapshot … before this call`。"
+  },
+  {
+   "id": "S4",
+   "title": "让 `TOPIC-find-coverage.md` 区分两种超时结局：带已验证命中返回 `partial`，零命中才失败",
+   "files": [
+    "agent/extensions/tool-topics/TOPIC-find-coverage.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "8",
+    "9"
+   ],
+   "done_when": "在 hold 的沙箱里 `a7-find-partial` 与 `a7-find-fail` 都以 `result.kind` `pass` 结束，且 `tool://find/coverage` 服务到 `partial: timed out after 20.0s with N of M passages verified; unverified files may still match` 与 `find timed out after 20.0s at \"<phase>\", before any hit was verified`，同时不再出现 `on expiry it fails`。"
+  },
+  {
+   "id": "S5",
+   "title": "在 `TOPIC-grep-results.md` 写结果侧的二进制注记与 NUL/ANSI/控制字符清洗，`TOPIC-grep-scopes.md` 不动",
+   "files": [
+    "agent/extensions/tool-topics/TOPIC-grep-results.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "10",
+    "11"
+   ],
+   "done_when": "在 hold 的沙箱里 `a7-grep-binary` 与 `a7-grep-nul` 都以 `result.kind` `pass` 结束，且 `tool://grep/results` 服务到 `Binary files also match`、说明直接点名（含 NUL 字节）的文件按文本搜、返回行去掉 NUL/ANSI/控制字符，并保留既有的告警与计数条目。"
+  },
+  {
+   "id": "S6",
+   "title": "收口验证：在一个沙箱里跑完整验收表，并把 diff 限定在六个 topic 文件",
+   "files": [],
+   "depends_on": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+   ],
+   "rows": [
+    "12",
+    "13"
+   ],
+   "done_when": "在一个 hold 的沙箱里契约固定的 `/tmp/a7-tool-topics.json` 的每个场景（含 `a7-grep-scopes`）都以 `result.kind` `pass` 结束，`bun run check && bun run test` exit 0（`ci/tool-topics-catalog.test.ts:42` 的 `problems` 为空，六个头部仍是单行），且 `git diff --name-only <基准 1f6244628ee3>..HEAD` 只列出这六个 `TOPIC-*.md`。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "OP1",
+   "point": "`TOPIC-find-coverage.md` 改完后同一文件里会有两个 `partial`：第 13 行既有的覆盖状态 `partial`（`F of R` judge requests failed）与 结果 4 新增的超时 `partial: timed out after … N of M passages verified`。契约没有说两者并列表述还是合并成一句。",
+   "input": "read tool://find/coverage",
+   "outputs": [
+    "第 13 行覆盖条目原样保留 `F of R judge requests failed`，20 s 条目另写 `partial: timed out …` 一句",
+    "第 13 行改写为一处 `partial`，同时点明两种成因（judge requests 失败、预算超时但有 N of M 已验证）"
+   ],
+   "producer": "agent/extensions/tool-topics/TOPIC-find-coverage.md:13（由 agent/extensions/tool-topics/registry.ts:73 原样作 body 服务）",
+   "searched": "通读 TOPIC-find-coverage.md；grep 'partial' 于 agent/extensions/tool-topics/*.md（find 侧只有 :13）"
+  },
+  {
+   "id": "OP2",
+   "point": "结果 3 要求按宿主原文引用 `Delivery:` 行，但它在 预期结果 里写成带 `…` 的截断形式，在 上下文 第 45 行写成完整句子；契约没有裁定 topic 抄完整句子还是抄带 `…` 的缩写。",
+   "input": "read tool://task/results",
+   "outputs": [
+    "四条完整句子，如 `Delivery: delivered by this wait — it finished while you were waiting.`",
+    "按 结果 3 的缩写形式，如 `Delivery: delivered by this wait …`、`Delivery: handed over by this snapshot …`"
+   ],
+   "producer": "agent/extensions/tool-topics/TOPIC-task-results.md:10（由 registry.ts:73 服务）",
+   "searched": "通读 TOPIC-task-results.md；grep 'Delivery' 于 agent/extensions/tool-topics/*.md（仅该文件命中）"
+  },
+  {
+   "id": "OP3",
+   "point": "结果 1 把 ask 的 `when` 限定为「仍在的结果形态（超时提交、选项注释、未作答字段）」，但验收第 3 行只 forbid `images` 与 `chat redirect`；这个括号是穷举还是举例没有明说，而现行 `when` 里的 `a custom answer` / `no selection` 属于被退役的选项式说法。",
+   "input": "read tool://ask（索引行 `- [answers](tool://ask/answers) — Reading the user's answers. Read when: …`）",
+   "outputs": [
+    "`when` 只写三种仍在形态，如 `before acting on an `ask` result that timed out, carries option notes, or leaves a field unanswered`",
+    "`when` 只删 `images` 与 `chat redirect`，保留 `a custom answer` / `no selection`，如 `before acting on an `ask` result with notes, a custom answer, no selection, or a timeout submission`"
+   ],
+   "producer": "agent/extensions/tool-topics/registry.ts:65-71（把 `title` 与 `when` 渲染进 `tool://<tool>`）；现行 `when` 在 agent/extensions/tool-topics/TOPIC-ask-answers.md:5",
+   "searched": "读 registry.ts:45-95、prompt.ts:153-157（system prompt 索引只用 name+when）、TOPIC-ask-answers.md:1-7"
+  },
+  {
+   "id": "OP4",
+   "point": "结果 3 引入快照接手（取代排队中的完成推送）与事后恢复，但保留下来的 第 11 行仍写「已消费结果约 30 s、未消费约 5 min 过期」；契约没有说这两段是否要相互限定或交叉引用，模型可能把两者读成矛盾。",
+   "input": "read tool://task/results",
+   "outputs": [
+    "第 11 行保留期原样保留，新 `Delivery` 条目独立成行、不提保留期",
+    "在新 `Delivery` 条目或保留期条目里加限定，说明快照/恢复路径只在结果仍被保留时可用"
+   ],
+   "producer": "agent/extensions/tool-topics/TOPIC-task-results.md:11（由 registry.ts:73 服务）",
+   "searched": "通读 TOPIC-task-results.md；grep 'retention\\|expires' 于 agent/extensions/tool-topics/*.md"
+  },
+  {
+   "id": "OP5",
+   "point": "范围边界 要求 `upstream` 写明本次核对的发布版与来源，但 目标 把写作期固定为 `18.20.0`，继承决策 §1 又说「实施时在 PR 当时的发布版上重新核对锚点」；此外六个头部该列哪些来源（如 `src/tools/ask.ts`、`src/prompts/tools/ask-result.md`、`pi-tui src/html-form/data.ts`）也未指明。",
+   "input": "六个文件的 `upstream:` 行，例如 `grep -n '^upstream:' agent/extensions/tool-topics/TOPIC-ask-answers.md`",
+   "outputs": [
+    "`pi-coding-agent@18.20.0` + 上下文 第 41-47 行列出的来源（ask.ts、ask-result.md、pi-tui html-form/data.ts、write.ts + proc-protocol.ts、job-control.ts、jfind/index.ts、grep.ts + sanitize-text.ts）",
+    "`pi-coding-agent@<PR 当时的发布版>` + 同一组或按新版重核的来源"
+   ],
+   "producer": "none：`tool://` 只服务 body —— catalog.ts:62-71 校验 `upstream` 后在 catalog.ts:96-97 丢弃，registry.ts:73 返回 `topic.body`，prompt.ts:153-157 只用 name+when",
+   "searched": "grep 'upstream' 于 agent/extensions/tool-topics/*.ts、ci/*.ts、sandbox/*.ts；读 catalog.ts:62-102、registry.ts:58-95、prompt.ts:153-157"
+  },
+  {
+   "id": "OP6",
+   "point": "结果 5 说目录/glob 搜索给出 `Binary files also match` 注记，而保持不动的 `TOPIC-grep-scopes.md:19` 写归档包成员里的二进制被跳过；契约没有说新条目是否要说明「归档内成员仍跳过」这一例外。",
+   "input": "read tool://grep/results 与 tool://grep/scopes",
+   "outputs": [
+    "新条目只描述磁盘文件，不对归档包表态",
+    "新条目补一句归档包里的二进制成员仍按 `TOPIC-grep-scopes.md` 的规则跳过"
+   ],
+   "producer": "agent/extensions/tool-topics/TOPIC-grep-results.md:16（新条目插入处）与 TOPIC-grep-scopes.md:19（由 registry.ts:73 服务）",
+   "searched": "通读 TOPIC-grep-results.md、TOPIC-grep-scopes.md；grep 'Binary files\\|archives' 于 agent/extensions/tool-topics/*.md"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "范围边界 / 目标：`upstream` 改为本次核对的发布版与来源（不得仍写 `pi-coding-agent@18.13.2`、不得省略来源）",
+   "input": "`grep -n '^upstream:' agent/extensions/tool-topics/TOPIC-{ask-answers,write-urls,bash-background,task-results,find-coverage,grep-results}.md`：没有验收行跑它，而全部 matrix 行只读 `topic.body`（registry.ts:73），第 13 行的 `ci/tool-topics-catalog.test.ts:42` 也只要求该行能通过 `textSchema` 解析——残留 `@18.13.2` 会照样 pass。"
+  },
+  {
+   "row": "行 1-11 的 Expect 后半句「基准提交上 `fail`」（行 12「基准提交上同样 `pass`」）",
+   "input": "对基准检出另跑一次 `hold --repo <1f6244628ee3 检出>` 再执行同样的 `matrix`；所有行列出的命令只指向 PR 的 hold run，没有任何一行观察这些场景在基线上确实 fail（或行 12 在基线上 pass）。"
+  },
+  {
+   "row": "结果 1：结果文本 `User answers:` + 提交数据 JSON、超时行 `No answer before the timeout; submitted the form's current values:`、`Option notes:`、`answers[]` 的 `{ name, question, answer }`、`the form has no named controls`",
+   "input": "在 `tool://ask/answers` 场景加 `resultIncludes` `User answers:` 与 `Option notes:`（以及 `No answer before the timeout`）；第 1-3 行只 expect `timedOut` 并 forbid 旧串，这些新句缺失也 pass。"
+  },
+  {
+   "row": "结果 1 / 范围边界：文件不再出现 `[Image #N]`",
+   "input": "在 `tool://ask/answers` 的 `calls.forbid` 里加 `[Image #N]`；第 2 行只 forbid `attachment://`，残留 `[Image #N]` 不会被发现。"
+  },
+  {
+   "row": "结果 2：三处都说明该目标上 `content` 被忽略；决策表否决「写 `content` 必需」",
+   "input": "在 `tool://write/urls`、`tool://bash/background`、`tool://task/results` 上 `resultIncludes` `ignored` 并 forbid `is required`；第 4-6 行只 expect `content: \"\"` 与 forbid 可省略/无 content 写法，写成「`content` 必需」也 pass。"
+  },
+  {
+   "row": "结果 3：其余三条结算行（`delivered by this wait`、`delivered by this call`、`not auto-delivered; recovered by this snapshot`）",
+   "input": "在 `tool://task/results` 上分别 `resultIncludes` `Delivery: delivered by this wait`、`Delivery: delivered by this call`、`Delivery: not auto-delivered; recovered by this snapshot`；第 7 行只查 `Delivery: handed over by this snapshot`。"
+  },
+  {
+   "row": "结果 5：直接点名的二进制文件（含 NUL 字节）按文本搜索",
+   "input": "在 `tool://grep/results` 场景 expect 点名可文本搜索的那句（如 `as \\`path\\` to search it as text`）；第 10 行只查 `Binary files also match`，第 11 行只查裸 `NUL`，后者仅靠清洗条目即可满足。"
+  },
+  {
+   "row": "决策表「`grep` 的二进制与 NUL 事实放哪个 topic」：`TOPIC-grep-scopes.md` 不动",
+   "input": "在 `tool://grep/scopes` 上 `calls.forbid` `Binary files also match` 与 `NUL`；第 12 行只 expect `Only exclusions`，该串在基准提交上同样存在，因此把二进制事实写进 scopes 也照样 pass。"
+  },
+  {
+   "row": "范围边界 / 结果 6：只改六个文件，`catalog.ts`、`registry.ts`、`index.ts`、`injection.ts`、其余 topic 与全部 `SURFACE-*` 不变",
+   "input": "`git diff --name-only <基准>..HEAD`（应恰好是六个 `TOPIC-*.md`），并对被保留 topic 各跑一次（如 `tool://bash/output`、`tool://task/limits`、`tool://write/refusals`、`tool://read/runtime`）；第 13 行的 `bun run check && bun run test` 在改了那些 TS 文件时仍 exit 0，而 `SURFACE-*` 的改动根本不经过 `tool://`（它只替换 delta 里的工具说明，index.ts:39-45），这组验收完全观察不到。"
+  }
+ ]
+}

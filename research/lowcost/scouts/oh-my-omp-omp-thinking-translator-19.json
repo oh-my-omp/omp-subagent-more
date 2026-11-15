@@ -1,0 +1,93 @@
+{
+ "ref": "oh-my-omp/omp-thinking-translator#19",
+ "agent": "scoutoh-my-omp-omp-thinking-translator-19",
+ "seconds": 425,
+ "slices": [
+  {
+   "id": "deps-latest",
+   "title": "Bump the three @oh-my-pi dev dependencies to the release that dist-tags.latest names and regenerate pnpm-lock.yaml",
+   "files": [
+    "package.json",
+    "pnpm-lock.yaml"
+   ],
+   "depends_on": [],
+   "rows": [
+    "5"
+   ],
+   "done_when": "`pnpm install && pnpm ls --depth 0 @oh-my-pi/pi-ai @oh-my-pi/pi-coding-agent @oh-my-pi/pi-tui` prints one identical version for all three, equal to `npm view @oh-my-pi/pi-coding-agent dist-tags.latest` at that moment, `pnpm check` still exits 0, and the committed pnpm-lock.yaml resolves that same version."
+  },
+  {
+   "id": "host-exports",
+   "title": "Source the effort level list and AssistantThinkingRenderContext from the host package roots and delete the local copies",
+   "files": [
+    "extensions/thinking-translator.ts",
+    "AGENTS.md"
+   ],
+   "depends_on": [
+    "deps-latest"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "6",
+    "7"
+   ],
+   "done_when": "`cd /tmp/c4-probe && SRC=<PR 检出> bun run c4-effort.ts` and the same command with `MOCK=1` both exit 0, `grep -rn \"minimal: true\\|pi-tui/chat/extension-types\" extensions` prints nothing, and `pnpm check` exits 0."
+  },
+  {
+   "id": "sandbox-load",
+   "title": "Prove the changed plugin loads and enforces the host list in a real omp session inside the omp-config OrbStack sandbox",
+   "files": [],
+   "depends_on": [
+    "host-exports"
+   ],
+   "rows": [
+    "3",
+    "4"
+   ],
+   "done_when": "With the branch checkout linked at /work/omp-thinking-translator in the OrbStack sandbox session, `/thinking-translator status` prints a line containing `effort: max` and no `configuration error` line, and after the project config's effort becomes `Low` one sent message plus `/thinking-translator status` both show `translatorModels[0].effort must be one of: off, minimal, low, medium, high, xhigh, max` while status also shows `enabled: false`."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "reasoning-options-not-gated",
+   "point": "结果 1 confines the legal set to the config boundary and 结果 3 says only that a level sends `reasoning`; neither states whether `reasoningOptions` must itself refuse a string outside the host list. Row 1's driver calls `reasoningOptions(\"max\")` while `THINKING_EFFORTS` is mocked to [minimal, low, turbo] and requires `{\"reasoning\":\"max\"}`, so the gate requires pass-through, while the prose alone also allows a reading in which an unknown level is dropped or rejected.",
+   "input": "MOCK=1 with THINKING_EFFORTS mocked to [\"minimal\",\"low\",\"turbo\"], then `__testing.reasoningOptions(\"max\")` inside /tmp/c4-probe/c4-effort.ts.",
+   "outputs": [
+    "{\"reasoning\":\"max\"} — the pass-through the row-1 driver demands; a probe implementation that keeps reasoningOptions unchanged produces exactly this and the driver exits 0",
+    "{} or a thrown error if reasoningOptions validated against the live list; the driver's reasoningOk check would then exit 1"
+   ],
+   "producer": "/tmp/ghc/oh-my-omp-omp-thinking-translator-19/body.md:112-116 (the probe's `reasoning` readings) executed by body.md:143; the exported entry point is extensions/thinking-translator.ts:1314 (`reasoningOptions` in `__testing`), defined at extensions/thinking-translator.ts:846-851",
+   "searched": "Read reasoningOptions (extensions/thinking-translator.ts:846-851) and the __testing export block (:1298-1319). Ran the contract's driver verbatim against a probe implementation in a /tmp copy at 18.20.2: with and without MOCK=1 both exit 0 and `reasoning.max` prints {\"reasoning\":\"max\"} in both runs, i.e. the mocked-away `max` is still passed through."
+  },
+  {
+   "id": "zh-rejection-text",
+   "point": "结果 1 fixes only the English rejection text (`must be one of: off, …`); the same line builds a Chinese variant with `、` as separator, and neither 结果 1-4, the acceptance table, nor tests/thinking-translator.test.ts states what the Chinese text must be once the list comes from THINKING_EFFORTS. Every acceptance row runs with OMOMP_LANG=en.",
+   "input": "A config `{\"translatorModels\":[{\"provider\":\"p\",\"id\":\"m\",\"effort\":\"fast\"}]}` read by a process with `OMOMP_LANG=zh` (or `LANG=zh_CN.UTF-8`), observed through the config-error notify or `/thinking-translator status`.",
+   "outputs": [
+    "`translatorModels[0].effort 必须是以下值之一：off、minimal、low、medium、high、xhigh、max` (today's shape, host order)",
+    "Any other Chinese wording, or English, because the contract states no Chinese text and no acceptance row or test observes it"
+   ],
+   "producer": "extensions/i18n.ts:21-23 (`tr` re-reads OMOMP_LANG / LC_ALL / LC_MESSAGES / LANG on every call); the message is composed at extensions/thinking-translator.ts:1088-1091, whose Chinese half joins the same list with `、`",
+   "searched": "grep over tests/, scripts/, extensions/i18n.ts for `必须是以下值之一` and `EFFORT` (no hits, so no test pins the Chinese text); read parseEffortSetting and the acceptance table rows 1-7, all of which set OMOMP_LANG=en or check only the English string."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "验收标准 第 1 行 Expect 的后半句「基准提交同一命令 exit 1（`turbo` 被拒、文本是旧六级列表）」",
+   "input": "`cd /tmp/c4-probe && MOCK=1 SRC=<基准 80b67ac 的检出> OMOMP_LANG=en bun run c4-effort.ts` — the row's Command only ever sets SRC to the PR checkout, so the baseline half of its Expect is never fed. (Verified it does exit 1 with `must be one of: off, minimal, low, medium, high, xhigh, max` when run against the base revision on 18.20.2.)"
+  },
+  {
+   "row": "验收标准 第 5 行 Expect 的「`pnpm-lock.yaml` 在同一 PR 里更新」",
+   "input": "`pnpm install --frozen-lockfile` (or `git status --porcelain pnpm-lock.yaml`) on a clean checkout of the PR commit — the row's command only reaches the lockfile through pnpm's frozen-lockfile behaviour, which is on only when CI is set; nothing in the row asserts that the committed pnpm-lock.yaml carries the new versions. (In a CI=true shell pnpm 12.16.1 rejects the stale lock with ERR_PNPM_OUTDATED_LOCKFILE, so the row's `pnpm install` step fails before `pnpm ls` ever runs.)"
+  },
+  {
+   "row": "范围边界「不应残留」的 `type Effort = NonNullable<SimpleStreamOptions[\"reasoning\"]>` 与「插件解析不到 pi-catalog」的注释",
+   "input": "`grep -rn 'NonNullable<SimpleStreamOptions\\[\"reasoning\"\\]>\\|解析不到 pi-catalog' extensions` — row 7's pattern matches only `minimal: true` and `pi-tui/chat/extension-types`, so these two residues (base revision extensions/thinking-translator.ts:14-15) survive every acceptance row, and `tsc` accepts them because the local alias still compiles."
+  },
+  {
+   "row": "责任与必要决策「受影响的方」要求 AGENTS.md 讲 `EFFORT_LEVELS`、`SimpleStreamOptions[\"reasoning\"]`、pi-catalog 的段落随代码改写",
+   "input": "`grep -n 'EFFORT_LEVELS\\|SimpleStreamOptions\\[\"reasoning\"\\]\\|pi-catalog' AGENTS.md` — no acceptance row reads AGENTS.md, so the three statements (base revision AGENTS.md:40, :42, :97) and the level enumeration at AGENTS.md:81 stay stale after every row passes."
+  }
+ ]
+}

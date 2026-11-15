@@ -1,0 +1,108 @@
+{
+ "ref": "oh-my-omp/omp-unified-exec#117",
+ "agent": "scoutoh-my-omp-omp-unified-exec-117",
+ "seconds": 398,
+ "slices": [
+  {
+   "id": "s1",
+   "title": "让单视图判定逐项对上宿主 c308970263ae：新增 `findNonCompoundBashRestrictionRule`，让 `findBashApprovalPatternRule` 在命令含 shell 控制符时走它，并把非 compound 路径改成 deny → prompt → critical → allow（`approveCommand` 按宿主拆成 `resolveBashPatternDecision` 与合成尾段，`approveBoundCommand` 仍只读一份规则）",
+   "files": [
+    "fork-features/command-approval.ts",
+    "tests/command-approval.test.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "4",
+    "5"
+   ],
+   "done_when": "用验收脚本的固定 host 与固定字面量取读数时，`segmentDeny` 为 `{policy:\"deny\",reason:\"Blocked by bash pattern: rm -rf *\"}`、`promptBeforeCritical` 为 `{policy:\"prompt\",reason:\"Prompt required by bash pattern: git reset *\"}`，且 `bun test ./tests/command-approval.test.ts` exit 0。"
+  },
+  {
+   "id": "s2",
+   "title": "在 `approveBoundCommand` 里合成绑定视图与它的 `grantAuthority()` 视图（两视图 deny → 两视图 prompt → critical → allow，两个限制档都以操作员视图优先），给 `HostSettings` 加可选 `grantAuthority?()` 并与宿主 `grantAuthority?.()` 同形，合成前只用项目视图算一次 compoundSegments/shell，最后把文件头改指 `can1357/oh-my-pi@c308970263ae` 并列出所对照的成员",
+   "files": [
+    "fork-features/command-approval.ts",
+    "fork-features/session-binding.ts",
+    "tests/command-approval.test.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [
+    "s1"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "6",
+    "7"
+   ],
+   "done_when": "`SRC=<PR 检出> bun /tmp/b3-approval.ts` 打印的八项读数与验收表逐项一致并 exit 0，`npm test` exit 0，且 PR 检出的 `fork-features/command-approval.ts` 文件头点名 `can1357/oh-my-pi@c308970263ae` 与所对照成员、不再出现 `57b56631ee`。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-compound-setting-view",
+   "point": "两个视图对 `bash.allowCompoundCommands`（以及 `getShellConfig().shell`）取值不一致时，用哪一份视图选路径：契约只说结果 1 的性质在关闭与开启两条路径上都成立，并说「宿主在分路径之前就合成两视图」，没说不一致时以哪一视图为准；实现既可以用 `binding.session.settings` 判，也可以用 `grantAuthority()` 返回的视图判，两者都编译通过且都读契约的 结果 1 成立。",
+   "input": "bound 会话：项目视图 `bash.allowCompoundCommands: false` + `bash.patterns: [{match:\"cat f\",approval:\"allow\"},{match:\"ls\",approval:\"allow\"}]`，`grantAuthority()` 视图 `bash.allowCompoundCommands: true` + 同一套 patterns，shell `/bin/bash`，`cmd: \"cat f && ls\"`（compound 关闭时 shell 取 undefined，compoundSegments 为 null）。",
+   "outputs": [
+    "项目视图选路径 → 非 compound 路径：`findNonCompoundBashRestrictionRule` 跳过 allow 规则，结果为 `\"exec\"`",
+    "操作员视图选路径 → compound 路径：两段都命中 allow 且无未命中段，结果为 `{tier:\"write\",policy:\"allow\"}`"
+   ],
+   "producer": "fork-features/command-approval.ts:181（`host.allowCompoundCommands(settings)`，只接受一份视图、`settings` 由调用方决定）；两视图来自 fork-features/session-binding.ts:38-47 保留的宿主真实 `Settings`，其项目层可写 `bash.allowCompoundCommands`（can1357/oh-my-pi@c308970263ae `packages/coding-agent/src/config/settings.ts:299` 的 project 层合并、:849 `grantAuthority()` 去掉 project 层；`dropSettingsGroupShadows` 只拒非对象的组影子，不拒 `bash.allowCompoundCommands`）",
+   "searched": "grep 契约 body.md 的 `allowCompoundCommands`/「两视图」/「分路径」；读宿主 c308970263ae 的 `exec/settings.ts`（`cfgBashAllowCompoundCommands` default false，无 layer 限制）与 `config/settings.ts`（project 层合并、`grantAuthority`、`dropSettingsGroupShadows`）；grep 本 repo 里 `allowCompoundCommands` 的全部读取点（只有 fork-features/command-approval.ts:181 与测试）"
+  },
+  {
+   "id": "op-compound-on-nonliteral",
+   "point": "`bash.allowCompoundCommands` 开启但 `extractLiteralAndChainSegments` 返回 null（含 `cd` 这类 stateful 段的链）时，`;`/`|`/`||`/`&&` 行按哪种优先级判：结果 2 只写「`bash.allowCompoundCommands` 关闭时」按 segment 取更严的那条，开启但拿不到 literal segments 的情形没写；实现可以让它走 `findNonCompoundBashRestrictionRule`（宿主行为），也可以保留首匹配。",
+   "input": "host 的 `allowCompoundCommands` 为 true、`helpers.extractLiteralAndChainSegments` 返回 null（真实 tokenizer 对含 `cd` 的链就是这样），rules `[{match:\"cd *\",approval:\"prompt\"},{match:\"rm -rf *\",approval:\"deny\"}]`，`cmd: \"cd build && rm -rf dist\"`。",
+   "outputs": [
+    "走 `findNonCompoundBashRestrictionRule`：`{policy:\"deny\",reason:\"Blocked by bash pattern: rm -rf *\"}`",
+    "保留非 compound 首匹配（当前副本行为）：`{policy:\"prompt\",reason:\"Prompt required by bash pattern: cd *\"}`"
+   ],
+   "producer": "宿主 `extractLiteralAndChainSegments` 对含 `cd` 的链返回 null（can1357/oh-my-pi@c308970263ae `packages/coding-agent/src/tools/shell-tokenize.ts:243` 的推进逻辑拒绝 stateful 命令，`cd` 在 :153 的 `SHELL_STATEFUL_COMMANDS`）；该值经 fork-features/command-approval.ts:181 进入 `compoundSegments` 为 null 的分支；`cmd` 来自模型对 exec_command 的实际调用（src/index.ts:1483），并正是契约「使用场景」第二种形态里的那张命令。",
+   "searched": "读契约 结果 2 的措辞与决策表（只有「两视图的合成顺序」一行）；读宿主 shell-tokenize.ts:118-232 的 stateful/interpreter/assignment 名单确认 `cd` 必返回 null；读本 repo src/shell.ts:46 的 `isPosixShell` 确认 `/bin/bash` 走 POSIX 分支"
+  },
+  {
+   "id": "op-operator-allow-only",
+   "point": "项目视图算不出 allow、而操作员视图给出 allow 时，最终是否返回 `{tier:\"write\",policy:\"allow\"}`：结果 1 写「allow 只在两视图都不限制时生效」，字面上「操作员视图是 allow」也算不限制；宿主实际只拿项目视图的 decision 判 allow，所以两条读法给出相反结论。",
+   "input": "bound 会话：项目视图 `bash.patterns: []`，`grantAuthority()` 视图 `[{match:\"npm publish *\",approval:\"allow\"}]`，`cmd: \"npm publish pkg\"`（compound 关闭）。",
+   "outputs": [
+    "按宿主（只用项目视图的 `decision.kind === \"allow\"`）：`\"exec\"`",
+    "按结果 1 的字面读法（两视图都不限制）：`{tier:\"write\",policy:\"allow\"}`"
+   ],
+   "producer": "fork-features/command-approval.ts:177-183 同时读 `binding.session.settings` 与其 `grantAuthority()`；操作员只写 allow、项目不写 patterns 是 `~/.omp/agent/config.yml` 与项目 settings 文件的常规组合（宿主 project 层合并 c308970263ae `packages/coding-agent/src/config/settings.ts:299`、operator 视图 :849）",
+   "searched": "逐字读契约 结果 1 的「allow 只在两视图都不限制时生效」与验收表第 6 行；读宿主 c308970263ae bash.ts:610-670 的合成体（`decision.kind === \"allow\"` 是唯一 allow 出口）；grep 契约里是否另有一句说明「只取项目视图的 allow」"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "决策表「两视图的合成顺序：两视图的 deny（操作员优先）」",
+   "input": "项目视图 `[{match:\"npm publish p*\",approval:\"deny\"}]`、`grantAuthority()` 视图 `[{match:\"npm publish *\",approval:\"deny\"}]`、compound 关闭、`cmd: \"npm publish pkg\"`；期望理由取操作员那条：`Blocked by bash pattern: npm publish *`。验收表第 1 行两侧只有一侧受限，看不出「操作员优先」。"
+  },
+  {
+   "row": "决策表「两视图的合成顺序：两视图的 prompt（操作员优先）」",
+   "input": "项目视图 `[{match:\"npm publish p*\",approval:\"prompt\"}]`、`grantAuthority()` 视图 `[{match:\"npm publish *\",approval:\"prompt\"}]`、`cmd: \"npm publish pkg\"`；期望 `Prompt required by bash pattern: npm publish *`。"
+  },
+  {
+   "row": "决策表「exec_command 是否继承宿主的 `bash.interceptor`（`#interception`）→ 不继承」",
+   "input": "绑定的会话开启 `bash.interceptor` 并用宿主默认 `cat` → `read` 规则，`cmd: \"cat f\"`；期望结论只来自 patterns/critical/allow，不出现 interception 的 deny。驱动构造的 host 根本不带 interceptor，八项读数都不触及它。"
+  },
+  {
+   "row": "决策表「保留副本，`@upstream` 头改指 can1357/oh-my-pi@c308970263ae 并列出所对照的成员」",
+   "input": "`grep -n \"57b56631ee\\|@upstream\" fork-features/command-approval.ts` 在 PR 检出上取文件头；期望点名新 commit 与 `BashTool.approval`／`findNonCompoundBashRestrictionRule`／`resolveBashPatternDecision`／`Settings.grantAuthority`，且无旧 pin。没有任何验收命令读文件头。"
+  },
+  {
+   "row": "结果 1 的 compound 路径（prompt 变体，验收表第 3 行只测 deny）",
+   "input": "`approve(true, [{match:\"npm publish *\",approval:\"allow\"}], [{match:\"npm publish *\",approval:\"prompt\"}], \"cd x && npm publish pkg\")`；期望 `{policy:\"prompt\",reason:\"Prompt required by bash pattern: npm publish *\"}`。"
+  },
+  {
+   "row": "结果 2 的 `;`、`|`、`||`（验收表第 4 行只喂 `&&`）",
+   "input": "compound 关闭、rules `[{match:\"cd *\",approval:\"prompt\"},{match:\"rm -rf *\",approval:\"deny\"}]`，分别喂 `cd x; rm -rf y`、`cd x | rm -rf y`、`cd x || rm -rf y`；期望三者都是 `{policy:\"deny\",reason:\"Blocked by bash pattern: rm -rf *\"}`。"
+  },
+  {
+   "row": "结果 4「未绑定的 binding 返回 \\\"exec\\\" 且不读 settings」与 pending",
+   "input": "host 的 `approvalRules`／`allowCompoundCommands` 一调用就 throw，binding 分别取 `{kind:\"pending\"}` 与 `{kind:\"unbound\",reason:\"identity-mismatch\"}`，`cmd: \"rm -rf /\"`；期望两者都返回 `\"exec\"` 且不抛。驱动里 `unbound` 用的 host 不会 throw，`pending` 根本不在八项读数里。"
+  }
+ ]
+}

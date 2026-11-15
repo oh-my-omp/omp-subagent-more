@@ -1,0 +1,125 @@
+{
+ "ref": "oh-my-omp/omp-playbooks#44",
+ "agent": "scoutoh-my-omp-omp-playbooks-44",
+ "seconds": 405,
+ "slices": [
+  {
+   "id": "host-deps",
+   "title": "Refresh the `latest` @oh-my-pi dev dependencies to the current published host release (the specs at package.json:19-26 already say `latest`, so the change lands in bun.lock; 18.11.3 in bun.lock:100,118 is the reason `tsc` cannot see `ExtensionUIContext.formDialog` and the acceptance driver cannot import the host's form parser)",
+   "files": [
+    "bun.lock"
+   ],
+   "depends_on": [],
+   "rows": [],
+   "done_when": "Running `bun install` in the PR checkout leaves bun.lock and node_modules agreeing on the current published host release (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-tui` and `@oh-my-pi/omptype` at the same 18.20.x), `node_modules/@oh-my-pi/pi-tui/src/html-form/parse.ts` and `node_modules/@oh-my-pi/omptype/src/zod.ts` both exist, and `bun run check && bun test` still exit 0 with the command unchanged (verified in a throwaway copy at 18.20.2: `tsc --noEmit` exit 0, test/extension.test.ts 98 pass 0 fail)."
+  },
+  {
+   "id": "add-forms",
+   "title": "Replace the four `ctx.ui.select` menus of `playbook-add` (src/extension/index.ts:494-533) with two `ctx.ui.formDialog` forms: the first one `<fieldset>` holding the message `<select>` plus the log and record-kind radio groups (one field-bearing section, no tab split), then one `read` for the chosen log's scope, then a second `<select>`-only form for the block; map submitted `value`s back to candidates instead of labels, HTML-escape every label with the repo's existing `escapeXml` (src/service/draft/text.ts:38), notify one error and write nothing for an unknown or missing answer, notify one error and return when `ctx.ui.formDialog` is absent, and pass no `timeout`; `commandClient` and its Playbook `select` stay untouched",
+   "files": [
+    "src/extension/index.ts"
+   ],
+   "depends_on": [
+    "host-deps"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8"
+   ],
+   "done_when": "`SRC=<omomp> bun /tmp/playbook-add-form.ts <case>` exits 0 for `ok`, `cancel`, `cancel-block`, `bad`, `no-form`, `kind-log` and `keep`, with `ok` reporting `dialogs` 2, `firstFields` 3, `firstFieldSections` 1, `menus` [], `reads` [{run:\"r1\"}] and one post `{run:\"r1\",kind:\"result\",text:\"FULL <FIRST> & SECOND\",block:\"b1\",quote:\"assistant-1\",origin:\"human\"}` plus a `7` info notice."
+  },
+  {
+   "id": "tests-changelog",
+   "title": "Move the repo's own `playbook-add` coverage onto the form surface (test/extension.test.ts: give the harness at :121-182 a `formDialog` stub and an answer helper built on `@oh-my-pi/pi-tui/html-form/parse` + `html-form/data`, replace the four-stage `h.choices`/`h.menus` assertions at :377-389, :391-404, :406-416 and adapt the command-routing and reconnect/failure cases at :517-533, :547-575 that reach the seven stops through `selectHook`), then record the change under `## [Unreleased]` in CHANGELOG.md",
+   "files": [
+    "test/extension.test.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [
+    "add-forms"
+   ],
+   "rows": [
+    "9"
+   ],
+   "done_when": "test/extension.test.ts shows every `playbook-add` case answering through the `formDialog` stub with no `h.choices`/`h.menus` four-step selection assertions left, CHANGELOG.md `## [Unreleased]` carries a `### Changed` entry for the two-form command, and `bun run check && bun test` exit 0."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-block-default",
+   "point": "The second form's `<select>` preselects its first option (host 18.20.2 src/html-form/parse.ts:492-496; confirmed with a probe: `defaultFormData` of a block dropdown answers `{block:\"b1\"}`), so submitting the block form untouched writes an entry about the first block, while today's `ctx.ui.select([noBlock, ...blocks])` (src/extension/index.ts:525-526) opens on \"Not about a block\"; 结果 1 lists the two kinds of option but not the opening selection, and 结果 5 constrains only a submitted choice.",
+   "input": "The second form is submitted without touching the dropdown, after a `read` for run r1 that returned `[b1]`.",
+   "outputs": [
+    "post args `{run:\"r1\",kind:\"result\",text:\"FULL <FIRST> & SECOND\",block:\"b1\",quote:\"assistant-1\",origin:\"human\"}` (block option listed first, host default applies)",
+    "post args of the same entry with no `block` key (\"Not about a block\" listed first or preselected)",
+    "one error notice and no post (an untouched form treated as an unanswered question)"
+   ],
+   "producer": "/tmp/ghc/oh-my-omp-omp-playbooks-44/body.md:215-226 — `answerForm(html, [])` (the contract's own driver helper called with no markers) submits exactly the host's defaults; the host fills them at 18.20.2 `src/html-form/parse.ts:492-496` and submits through `src/html-form/data.ts:119-131`.",
+   "searched": "Every driver case (body.md:262-276) passes at least one marker or cancels, so none submits an untouched form; contract 结果 1, 结果 5 and the decision row 「控件类型」; probe run of parseHtmlForm/defaultFormData on candidate markup in /tmp/pb-probe.UV4fjj."
+  },
+  {
+   "id": "op-empty-blocks",
+   "point": "结果 1 says the second form asks about a block whose list comes from the chosen log's scope, but rules nothing on a scope with no blocks, and the service answers `blocks: []` for such a document (`read` at src/service/core.ts:1096 maps `doc.result.blocks`, empty for a document with none).",
+   "input": "`/playbook-add` where the chosen log's `read` answers `{title:\"Book\", blocks:[]}`.",
+   "outputs": [
+    "a second form whose only option is \"Not about a block\" (a one-option `<select>`; one field in one field-bearing section)",
+    "no second form at all, the entry written without a `block`",
+    "one error notice and no post (an empty list treated as an unusable block question)"
+   ],
+   "producer": "src/service/core.ts:1096 (`case \"read\"` answers `{ title: doc.result.title, blocks: doc.result.blocks.map(wireBlock) }`, so `blocks: []` for a document without blocks); the driver's own service writes `title: Book\\nblocks: []` at body.md:119 but its fake `read` always answers `[BLOCK]` at body.md:145.",
+   "searched": "Driver cases and fake service answers (body.md:142-147, 262-276) — all return BLOCK; contract 结果 1; src/service/core.ts read/post; `#docOf`/`#startRun` copy of the template's blocks."
+  },
+  {
+   "id": "op-formdialog-order",
+   "point": "结果 6 requires a host without `ui.formDialog` to get one error notice and no field-by-field fallback, while 结果 7 [保持] requires the no-path prompt to stay as today; on a host lacking `formDialog` the ordering of the `formDialog` check against `commandClient`'s \"Choose Playbook\" `select` (src/extension/index.ts:475-487) decides which of the two appears.",
+   "input": "`/playbook-add` with no argument, two connected Playbooks, and a `ctx.ui` without `formDialog`.",
+   "outputs": [
+    "a \"Choose Playbook\" select first (its first option auto-picked), then the formDialog error notice and no post",
+    "only the formDialog error notice and no menu, no post",
+    "only today's \"Please specify the Playbook file path\" error, no menu (the formDialog check deferred past the whole `commandClient` path)"
+   ],
+   "producer": "none — the command is registered only when TERN_PANE is set and the agent is a main session (src/extension/index.ts:443-446), print mode sets no command context, and the interactive TUI, the only host that registers commands, implements `formDialog`; the contract's stub harness can build the input (body.md:179-186) but no case does.",
+   "searched": "src/extension/index.ts:41-46 and :443-452 (factory and `session_start` gates), :475-487 (`commandClient`), :494-533 (handler); contract decision row 「宿主没有 formDialog 时」 and 结果 6/结果 7; all driver cases in body.md:239-332."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 1 / 验收行 1 — 第一张表单同屏列出消息、日志、记录类型三个问题",
+   "input": "Parse the first form and read its section text blocks / `fieldQuestions` (e.g. \"Choose session message\", \"Choose log\", \"Choose record kind\", and their zh forms): no case reads them, `firstLabels` only collects option labels, so a form whose three controls carry no question text still passes row 1."
+  },
+  {
+   "row": "结果 2 / 验收行 2 — 会话消息里的 `\"` 不被当成标记或实体",
+   "input": "A branch message whose text is `say \"hi\" instead` — `messageLabel` must read `assistant-1: say \"hi\" instead`; the driver's fixed message `FULL <FIRST> & SECOND` (body.md:169) contains no quote."
+  },
+  {
+   "row": "结果 2 — Run 名称与块标题按原文显示",
+   "input": "A run named `Run <A> & \"B\"` and a block titled `Block <x>` — `firstLabels` must contain `r1: Run <A> & \"B\" (Running)` and the second form `b1: Block <x>`; the driver's RUN/BLOCK names (body.md:112-113) are plain text, so only the message path exercises escaping."
+  },
+  {
+   "row": "结果 4 的后半句 — 该问题没有答案",
+   "input": "First-form data with the `kind` (or `log`) key absent, as the host produces for an untouched radio group (probe: `defaultFormData` returned only `{message:\"assistant-1\"}`): expect exactly one error notice and no post. The `bad` case only replaces an answer with a non-candidate string."
+  },
+  {
+   "row": "结果 1 / 结果 5 — 日志选「Playbook 本身」",
+   "input": "Selecting the `Playbook itself` option in the log radio: `reads` must be `[{}]` and the post must carry no `run` key. Every driver case selects `r1: Run (Running)` (body.md:266-275, 306)."
+  },
+  {
+   "row": "决策行「控件类型」（消息与块用一行下拉，日志与记录类型用单选组）",
+   "input": "Read `parseHtmlForm(first).fields[].select` and `.other` (expect message/block `select:true, other:false`; log/kind `select:false, other:true`) — no case inspects control type, and `answerForm` picks options identically for a dropdown and a radio group."
+  },
+  {
+   "row": "决策行「超时」（不传 `timeout`）",
+   "input": "The `formDialog` stub records its second argument for both calls and asserts it is `undefined` — the stub at body.md:180-185 ignores `dialogOptions`, so passing a `timeout` would change no reading."
+  },
+  {
+   "row": "验收行 9 — `CHANGELOG.md` 的 `## [Unreleased]` 条目与旧的四段选择断言已移除",
+   "input": "Read CHANGELOG.md's `## [Unreleased]` and test/extension.test.ts's `playbook-add` cases; `bun run check && bun test` reads neither the changelog nor whether the removed assertions are gone (a suite that keeps them fails only indirectly, and an empty `[Unreleased]` passes)."
+  }
+ ]
+}

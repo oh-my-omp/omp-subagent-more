@@ -1,0 +1,152 @@
+{
+ "ref": "oh-my-omp/omp-config#331",
+ "agent": "scoutoh-my-omp-omp-config-331",
+ "seconds": 391,
+ "slices": [
+  {
+   "id": "s1-py-sh",
+   "title": "py: recognise the host `sh` helper as a launch, judged by delete-guard in the embedded-bash dialect",
+   "files": [
+    "agent/extensions/_shared/eval-py-launches.ts",
+    "agent/extensions/delete-guard/eval-py.ts",
+    "agent/extensions/delete-guard/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md",
+    "ci/delete-guard-eval.test.ts",
+    "ci/delete-guard-interpreters.test.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "6",
+    "7"
+   ],
+   "done_when": "On the slice branch, `REPO=<checkout> bun /tmp/a1-sh.ts` prints `pyShDelete`, `pyShCommandKeyword`, `pyShAlias`, `pyWin32` and `interpreterLane` as `delete`, `pyShVariable` as `nonLiteral` and `pyShHarmless` as `allow` (row 6), and `bun sandbox/sandbox.ts run /tmp/a1-sh-eval.json <model>` reports `pass` with the eval call `isError` and its result carrying `delete-guard:` while `test -f d/f` still exits 0 (row 7)."
+  },
+  {
+   "id": "s2-js-sh",
+   "title": "js: recognise the host `sh` helper (bare name, `globalThis.sh`, alias plus session carry, templates) as a brush-dialect launch that reports its spelling through `via`",
+   "files": [
+    "agent/extensions/_shared/eval-js-launches.ts",
+    "agent/extensions/delete-guard/eval-js.ts",
+    "agent/extensions/delete-guard/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md",
+    "ci/delete-guard-eval.test.ts"
+   ],
+   "depends_on": [
+    "s1-py-sh"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "3"
+   ],
+   "done_when": "On the branch carrying s1 and s2, `REPO=<checkout> bun /tmp/a1-sh.ts` prints `jsShString`, `jsShOptions`, `jsShTemplate`, `jsGlobalThisSh` and `jsAliasCarry[1]` as `delete`, `jsShVariable` and `jsShTemplateInterpolated` as `nonLiteral`, `jsWin32` as `delete`, and its failure list then holds only the pty readings of row 4."
+  },
+  {
+   "id": "s3-pty-sh",
+   "title": "pty lane: judge directly spelled `sh` commands on both languages and refuse them by the existing categories",
+   "files": [
+    "agent/extensions/tool-policy-nag/pty.ts",
+    "ci/tool-policy-nag-pty.test.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "s1-py-sh",
+    "s2-js-sh"
+   ],
+   "rows": [
+    "4",
+    "5",
+    "8",
+    "9"
+   ],
+   "done_when": "On the branch carrying s1 to s3, `REPO=<checkout> bun /tmp/a1-sh.ts` exits 0 over rows 1-6, `bun sandbox/sandbox.ts run --target /tmp/a1-sh-pty.json <model>` reports `pass` with the eval call `isError` and `pty 路由` in its result (row 8), and `bun run check && bun run test` exits 0 (row 9)."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-globalthis-template-tag",
+   "point": "结果 1 counts the js template form and the `globalThis.sh` spelling separately, and 决策 5 writes the member spelling as `globalThis.sh(…)` (a call); a template tagged on that member expression is neither of the two enumerated forms, so it is unstated whether it is judged.",
+   "input": "`await globalThis.sh` followed by the template literal `rm -rf d` (no `${}`)",
+   "outputs": [
+    "`delete` — the js literal template is judged and `globalThis.sh` is a counted spelling",
+    "`allow` — only the call form of `globalThis.sh` is counted, so a member-expression tag starts no recognised launch"
+   ],
+   "producer": "none",
+   "searched": "grep of the base checkout for `globalThis.sh`, `await sh(` and `sh(command`: the only hits are the host prelude itself (node_modules/@oh-my-pi/pi-coding-agent/src/eval/js/shared/prelude.txt:806 binds `globalThis.sh`; :93-95 accepts a template array) — no doc, topic, test, sandbox scenario or script in the repo writes an eval cell using the helper."
+  },
+  {
+   "id": "op-globalthis-computed",
+   "point": "决策 5 lists `globalThis.sh(…)` as a counted spelling and rules attribute spellings out; the computed member form is in neither list, yet the shared scanner already resolves `a[\"b\"]` to property `b` (agent/extensions/_shared/eval-js-launches.ts:255-261), so reusing that reader judges the call.",
+   "input": "`await globalThis[\"sh\"](\"rm -rf d\")`",
+   "outputs": [
+    "`delete` — the callee is `globalThis`'s `sh` property, the same value the counted spelling names",
+    "`allow` — only the dot spelling is enumerated, and a computed key is a spelling the wiring list does not name"
+   ],
+   "producer": "none",
+   "searched": "grep of the base checkout for `globalThis[` and `globalThis.sh` across agent/, ci/, docs/, sandbox/ and the scenario JSONs: no cell in the repo uses either form; the only definition of the global is the host prelude above."
+  },
+  {
+   "id": "op-options-not-fixed",
+   "point": "结果 1 says a js string form with `cwd`/`timeout` options still counts and 不在范围 keeps only the command text in view, while the repo's standing policy for a launch argument object whose shape the source does not fix is `nonLiteral` (docs/extensions.md:208 with `propsOf`/`unknownLaunch`); a literal command passed with an options value the source cannot read sits between the two.",
+   "input": "`const o = { cwd: \"/tmp\" }` then `await sh(\"rm -rf d\", o)` (equivalently `await sh(\"rm -rf d\", { ...o })`)",
+   "outputs": [
+    "`delete` — the command argument is a literal string, and options are outside the deletion face",
+    "`nonLiteral` — the call's argument object is not fixed by the source, as for every other launch argument object"
+   ],
+   "producer": "none",
+   "searched": "grep of the base checkout for `sh(` in eval-cell text (ci/, sandbox/scenarios/, docs/, agent/): the only cells naming a `sh` call are the contract's own probe texts and ci/tool-policy-nag-pty.test.ts:159 (`from os import system as sh`), none of which passes an options argument."
+  },
+  {
+   "id": "op-import-sh-binding",
+   "point": "决策 5 accepts a same-name local definition fail closed and does not track shadowing, and rules only the PyPI library's attribute spelling (`sh.rm(…)`) out; a cell that binds the name with `import sh` resolves to the very same qualified name `sh` (agent/extensions/_shared/eval-py-launches.ts:745-758 resolves `import sh` to module `sh`, :818-823 yields names `[\"sh\"]`), so both readings remain open.",
+   "input": "`import sh` then `sh(\"rm -rf d\")`",
+   "outputs": [
+    "`delete` — the resolved qualified name is `sh`, and same-name definitions are judged as the helper fail closed",
+    "`allow` — the cell bound `sh` to a module, so the call is not the prelude helper (the reading the existing `from os import system as sh` fixture relies on)"
+   ],
+   "producer": "none",
+   "searched": "grep of the base checkout for `import sh` and `as sh`: the only binding of the name in cell text is ci/tool-policy-nag-pty.test.ts:159 (`from os import system as sh`), which resolves to `os.system` rather than `sh`; no doc, topic or sandbox scenario writes `import sh`."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "验收标准 第 3 行 (结果 2, whose forms are enumerated \"逐形态\")",
+   "input": "`d = \"d\"` then `sh(f\"rm -rf {d}\")`; `c = \"rm -rf d\"` then `sh(command=c)`; `sh(\"rm -rf d\", **{\"timeout\": 5})` — the driver feeds only the variable form `sh(cmd)`."
+  },
+  {
+   "row": "验收标准 第 6 行 (结果 5, which names `python3 -c`, `bun -e` and here-doc input)",
+   "input": "`bun -e 'await sh(\"rm -rf d\")'` and `python3 - <<'EOF'` + `sh(\"rm -rf d\")` + `EOF` through `guardToolCall(\"bash\", …)` — the driver feeds only `python3 -c`."
+  },
+  {
+   "row": "验收标准 第 4 行 (结果 3, second half: unreadable calls pass the pty lane)",
+   "input": "`h = \"x\"` then `sh(f\"ssh {h}\")` (py) and `const h = \"x\"` then `await sh(h)` (js) must read `no-hit`; the driver feeds only the js `${}` template."
+  },
+  {
+   "row": "决策表第 7 行 (pty judges only direct spellings, alias fails open) and 第 5 行 (`globalThis.sh` is a counted js spelling)",
+   "input": "`const s = sh` then `await s(\"ssh host\")`; `s = sh` then `s(\"ssh host\")`; and `await globalThis.sh(\"ssh host\")` which must read `passthrough` — none of the three is in the driver."
+  },
+  {
+   "row": "验收标准 第 4 行 / 结果 3 requirement that the refusal carries one `xd://exec_command` line",
+   "input": "`ptyRefusal(ptyEvalHit(\"py\", 'sh(\"ssh target uptime\")'), \"eval\")` — assert its two lines and that the second is exactly `xd://exec_command`; the driver reads only `hit.category` and scenario 8 asserts only `pty 路由`."
+  },
+  {
+   "row": "决策表第 5 行 (attribute spellings do not count; same-name local definitions are accepted fail closed)",
+   "input": "`self.sh(\"rm -rf d\")`, `obj.sh(\"rm -rf d\")`, `sh.rm(\"/tmp/x\")` must read `allow`, and `def sh(c): …` then `sh(\"rm -rf d\")` must read `delete`; no driver reading covers either direction."
+  },
+  {
+   "row": "决策表第 4 行 (js alias \"或赋值\")",
+   "input": "`s = sh` as a bare assignment in one js cell, then `await s(\"rm -rf d\")` in the next; `jsAliasCarry` only feeds the `const s = sh` declaration."
+  },
+  {
+   "row": "验收标准 第 5 行 / 结果 4 (\"`Bun.$` 的插值规则本身不改\")",
+   "input": "`const d = 'd'` then `` await Bun.$`rm -rf ${d}` `` must stay `nonLiteral`; the driver feeds only the non-interpolated `keepBunDollar`."
+  },
+  {
+   "row": "范围边界 不应残留 (coverage lists in `delete-guard/index.ts`, `tool-policy-nag/pty.ts` headers and both `docs/extensions*.md`, and no page calling `sh` commands a platform shell)",
+   "input": "read the EVAL paragraphs of those two headers and the two doc twins, and grep them for `sh`; `bun run check` (biome includes only `agent/**/*.ts`, `ci/**/*.ts`, `sandbox/**/*.ts` per biome.json) and `bun run test` observe none of that text."
+  }
+ ]
+}

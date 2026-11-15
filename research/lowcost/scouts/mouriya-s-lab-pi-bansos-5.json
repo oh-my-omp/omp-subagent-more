@@ -1,0 +1,122 @@
+{
+ "ref": "mouriya-s-lab/pi-bansos#5",
+ "agent": "scoutmouriya-s-lab-pi-bansos-5",
+ "seconds": 329,
+ "slices": [
+  {
+   "id": "s1",
+   "title": "令牌提示改传 `{ secret: true }`，并按宿主改述 doDeploy 注释",
+   "files": [
+    "extensions/index.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3"
+   ],
+   "done_when": "沙箱 PTY 里用 `-e` 加载改后的 extensions 执行 `/bansos deploy`：令牌输入行显示与 `vercel-probe-token` 等长的 `•` 串、该 PTY 从启动到结束的输出里 `vercel-probe-token` 出现 0 次、回车后出现 `Project name (empty = auto):`；另一次在令牌框按 Esc 出现 `Deploy cancelled — no token` 且不出现 `Uploading relay to Vercel…`；在 project name 框敲 `relay-probe` 时逐字符明文显示。"
+  },
+  {
+   "id": "s2",
+   "title": "README deploy 小节与 CHANGELOG Unreleased 段改为按宿主陈述",
+   "files": [
+    "README.md",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [
+    "s1"
+   ],
+   "rows": [
+    "4"
+   ],
+   "done_when": "仓库根执行 `bun build ./extensions/index.ts --target=bun --outdir /tmp/pb-bansos-build && ! grep -rnF -e \"pi's input has no secret mode\" -e \"The token input has no hidden/secret mode\" .` exit 0 且无命中，同时 README.md 的 `/bansos deploy` 小节写清 OMP 的 TUI 遮罩、pi 上仍随输入显示且不含宿主版本号，CHANGELOG.md 的 Unreleased 段出现对应条目。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-types",
+   "point": "取令牌调用的第三参数在仓库唯一的类型来源 `@earendil-works/pi-coding-agent` 1.5.2 的 `ExtensionUIDialogOptions` 里不存在（该接口只有 `signal`、`timeout`），`{ secret: true }` 作为对象字面量传入该类型是多余属性；契约（决策表第 2 行）只裁决了运行时（pi 忽略未知属性），没有裁决代码形状与类型层怎么处理。",
+   "input": "用 pi 1.5.2 的类型检查 `extensions/index.ts`，例如在含 `node_modules/@earendil-works/pi-coding-agent`（1.5.2）的目录里跑 `bunx tsc --noEmit --strict --skipLibCheck --moduleResolution bundler --module esnext --target esnext extensions/index.ts`",
+   "outputs": [
+    "直接写字面量 `{ secret: true }`，把 TS2353 多余属性错误留在类型层（仓库今日无 tsconfig、无 scripts、无 CI，行 4 的 `bun build` 不做类型检查，验收仍通过）",
+    "写成 `{ secret: true } as ExtensionUIDialogOptions`（复用 extensions/index.ts:15 已导入的 pi 宿主类型），类型检查通过且运行时仍把 host hint 传给宿主",
+    "先建 `const opts: Record<string, unknown> = { secret: true }` 再传入，绕过字面量检查但丢掉选项形状的说明"
+   ],
+   "producer": "extensions/index.ts:1407（`await ctx.ui.input(` 调用点，改动处）；拒绝该属性的类型定义在 ~/.omp/plugins/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts:40-46，签名在同文件 :89 `input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions)`",
+   "searched": "读 extensions/index.ts:1-16 找到唯一类型导入 `@earendil-works/pi-coding-agent`；读仓库根与 package.json 确认无 dependencies/devDependencies、无 scripts、无 tsconfig、无 .github、无测试；读 pi 1.5.2 的 `dist/core/extensions/types.d.ts` 中 `ExtensionUIDialogOptions` 与 `ExtensionUIContext.input`；核对契约约束段的 Pi 兼容要求与决策表第 2 行的依据"
+  },
+  {
+   "id": "op-acp-docs",
+   "point": "契约决策表第 3 行裁决了 ACP 上部署变成不可用、用户看到现有取消提示，第 4 行指定文档改成『OMP 的 TUI 里输入被遮罩，pi 上仍随输入显示』，但没有裁决用户文档是否要写明 ACP 宿主上 `/bansos deploy` 不再可用；两种写法都与决策表第 4 行相容。",
+   "input": "在 ACP 宿主（client 支持 elicitation form）执行 `/bansos deploy`，观察提示文案",
+   "outputs": [
+    "README/CHANGELOG 只写 OMP TUI 遮罩与 pi 明文两项，不提 ACP",
+    "除这两项外另写明 ACP 宿主上部署会直接走取消分支（`Deploy cancelled — no token`），并把原因归给宿主的 ACP `input`",
+    "README 保持两项，只在 CHANGELOG 的 Unreleased 条目里注明 ACP 上不可用"
+   ],
+   "producer": "host c308970263ae `packages/coding-agent/src/modes/acp/acp-agent.ts:857`（`if (!supportsForm || dialogOptions?.secret) return undefined;`）→ 仓库 extensions/index.ts:1412-1418 的取消分支；可写的文档位置 README.md:208、CHANGELOG.md:3-18",
+   "searched": "读契约使用场景、决策表第 3/4 行、范围边界与验收表；读 host 固定提交里 acp-agent.ts 的 `input` 实现与 rpc-mode.ts:1103-1104（RPC 只转发 hint、遮罩由 client 决定，故不另列）；读 README.md:193-210、CHANGELOG.md:1-19"
+  },
+  {
+   "id": "op-readme-sample",
+   "point": "README.md:201 的示例会话把令牌行写作 `  Vercel API token (vercel-…): <paste>`；契约只禁止 README.md:208 那句『没有隐藏模式、输入会显示』的断言，没有裁决示例里这一行是否要改成遮罩后的样子。",
+   "input": "改后打开 README 的 `/bansos deploy` 小节（README.md:195-206）读示例块",
+   "outputs": [
+    "保留 `<paste>`（范围边界只点名第 208 行的断言，行 4 的两条 grep 也不含该行）",
+    "改成 `••••` 之类，让示例与遮罩后的终端一致"
+   ],
+   "producer": "README.md:201（示例块 README.md:199-206）",
+   "searched": "读 README.md:193-210 全文、行 4 的两条 grep 模式与范围边界『不应残留』；全仓库 grep `Vercel API` 仅命中 README.md:197/201 与 extensions/index.ts:1408"
+  },
+  {
+   "id": "op-changelog-section",
+   "point": "必须先读第 4 条与 Conventions 要求 CHANGELOG 的 Unreleased 段随代码改，但契约没定条目落在哪个子段：Unreleased 下现有 `### Added`（CHANGELOG.md:5）、`### Changed`（:11）、`### Fixed`（:15）；遮罩既可读作行为变更，也可读作新增能力。",
+   "input": "改后读 CHANGELOG.md:3-18 的 Unreleased 段",
+   "outputs": [
+    "写在 `### Changed`：令牌提示改为隐藏输入",
+    "写在 `### Added`：`/bansos deploy` 的令牌提示现在遮蔽输入",
+    "拆成两句，同时出现在 Added（能力）与 Changed（隐含行为变化）"
+   ],
+   "producer": "CHANGELOG.md:3-18（Unreleased 段现有三个子段）",
+   "searched": "读 CHANGELOG.md:1-20 的子段结构与既有条目措辞；读契约必须先读第 4 条、Conventions 行、决策表第 4 行；确认验收表没有任何一行观察 CHANGELOG"
+  },
+  {
+   "id": "op-fork-features",
+   "point": "`fork-features/README.md` 记录本 fork 相对上游的 fork 专属行为（今天只有双语 UI 一条），而遮罩同样是 fork 侧对 `doDeploy` 的改动；契约把要改的文本限定为源码注释、README deploy 小节与 CHANGELOG Unreleased，没有裁决 `fork-features/README.md` 是否要新增一条。",
+   "input": "改后读 fork-features/README.md 的 fork-owned behaviour 清单",
+   "outputs": [
+    "不动它（契约只点名 README.md 与 CHANGELOG.md）",
+    "新增一节，记下 `/bansos deploy` 的令牌提示在 OMP TUI 上隐藏输入、pi 上不变"
+   ],
+   "producer": "fork-features/README.md:3-9（现有唯一一条 fork 行为记录）",
+   "searched": "读 fork-features/README.md 全文；读契约必须先读第 4 条的路径列表、Conventions 行、范围边界条目；全仓库 grep `secret`/`mask`/`hidden/secret` 仅命中 extensions/index.ts:1404 与 README.md:208"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "决策表第 2 行「是否按宿主能力或版本分支」——裁决『所有宿主都传该选项；pi 1.5.2 上行为与现在一致（未知属性被忽略）』",
+   "input": "在 pi 宿主（`@earendil-works/pi-coding-agent` 1.5.2）里 `-e` 加载改后的 extensions 执行 `/bansos deploy` 并敲 `vercel-probe-token`：验收表四行都在 OMP 沙箱里，没有 pi 宿主一行，'令牌仍随输入明文显示、部署照常继续'无人观察。"
+  },
+  {
+   "row": "决策表第 3 行「ACP 宿主上部署怎么办」——裁决『ACP 下部署不再可用，用户看到现有取消提示』",
+   "input": "在 ACP 模式（client 支持 elicitation form）执行 `/bansos deploy`：验收表没有 ACP 会话，'出现 `Deploy cancelled — no token`、不上传、不写状态文件'无人观察。"
+  },
+  {
+   "row": "结果 1 的 Expect「基准 `3cc336046c4a` 上同一路径的输入行显示 `vercel-probe-token`（不带 dialogOptions → `input.mask` 为 false）」",
+   "input": "在 `3cc336046c4a` 检出上跑行 1 的同一条 `docker exec … omp --no-extensions -e …` 命令并敲同一令牌：行 1 的 Command 只覆盖 PR head，基准对照没有对应命令。"
+  },
+  {
+   "row": "受影响方「`/bansos` 菜单里的『Deploy Vercel relay…』」（extensions/index.ts:1623 → 1669-1670 → doDeploy）",
+   "input": "在行 1 的会话里输入 `/bansos` 并在菜单里选 `Deploy Vercel relay…`：行 1-3 只喂 `/bansos deploy` 打字路径（index.ts:1611-1612），菜单入口到 `doDeploy` 的遮罩无人观察。"
+  },
+  {
+   "row": "决策表第 4 行「注释与 README 怎么改」——要求改成按宿主陈述，且把『删掉整句』列为被否",
+   "input": "把 extensions/index.ts:1404 的注释与 README.md:208 的那句直接删掉：行 4 的 `! grep -rnF -e \"pi's input has no secret mode\" -e \"The token input has no hidden/secret mode\" .` 照样 exit 0，替换后的陈述（OMP TUI 遮罩、pi 显示、不含宿主版本号）无人检查。"
+  },
+  {
+   "row": "必须先读第 4 条 / Conventions「用户可见的行为变更记在 `CHANGELOG.md` 的 Unreleased 段」",
+   "input": "只改 `extensions/index.ts` 与 `README.md`、`CHANGELOG.md` 一概不动：行 1-4 仍全部通过，Unreleased 条目是否存在无人观察（`git diff --stat` 不含 CHANGELOG.md 也判过）。"
+  }
+ ]
+}

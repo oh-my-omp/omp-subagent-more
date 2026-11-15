@@ -1,0 +1,88 @@
+{
+ "ref": "oh-my-omp/omp-subagent-more#9",
+ "agent": "scoutoh-my-omp-omp-subagent-more-9",
+ "seconds": 402,
+ "slices": [
+  {
+   "id": "S1",
+   "title": "Rewrite the fork_task `limits` field list and its source annotation for the host's `task.steps`",
+   "files": [
+    "extensions/fork-task/topics.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "done_when": "In one sandbox session (`task.steps: true`, `async.enabled: true`) text A prints one sentence that names `steps`, `solutionSpace`, `sourceSession`, `model` and `tools` and states there that `steps` is the host item's alternative to `task` and that a fork item carries a single `task`, text B still errors naming `tasks/0/task` with no new directory under `/tmp/omp-fork-task`, `bun run check && bun run test` exit 0, and `grep -n \"pi-coding-agent@18\" extensions/fork-task/topics.ts` prints nothing."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "OP-1",
+   "point": "How much the new sentence must say about a `steps`-only item is stated two ways: 预期结果 结果 1 asks for the list plus `steps` being the host item's mutually exclusive alternative and fork items carrying one `task`; 决策表 行 1 additionally asks the text to state that a steps-only item is refused for a missing `task`. A text meeting 结果 1 but not that third clause passes 验收第 1 行.",
+   "input": "Text A — `read xd://fork_task/limits` printed in the sandbox session — read for the third clause (a steps-only item is rejected because `task` is missing).",
+   "outputs": [
+    "one sentence carrying the refusal reason as well (决策表 行 1)",
+    "one sentence ending at the mutual exclusion and the single `task`, leaving the refusal unstated (结果 1 wording); 验收第 1 行 accepts both"
+   ],
+   "producer": "extensions/fork-task/topics.ts:21",
+   "searched": "read the whole `limits` body (topics.ts:16-36) and 预期结果/决策表 in body.md; `grep -rn \"steps\\|solutionSpace\\|Not fork fields\"` over omp-subagent-more@24f280c → only topics.ts:21, no test and no other doc states the fork item shape (skills/omp-subagent-more/SKILL.md's `task` is the orchestrate stage field, not the host item)"
+  },
+  {
+   "id": "OP-2",
+   "point": "A fork item carrying both `task` and `steps` has its behavior ruled (决策表 行 2: `steps` dropped, `task` runs) but no statement is required about it in the topic, so a caller who read the fixed topic cannot tell whether a stray `steps` sent beside `task` is dropped or refused; 验收第 2 行 only feeds a steps-only item.",
+   "input": "`tool.fork_task({ context: \"probe\", tasks: [{ task: \"print one line\", steps: [\"one\"] }] })` in the same sandbox session.",
+   "outputs": [
+    "the topic stays silent and the call dispatches with `steps` dropped and `task` running (today's behavior)",
+    "the topic states the stray `steps` is ignored and the `task` runs; 验收第 1 行 cannot tell the two apart"
+   ],
+   "producer": "extensions/fork-task/topics.ts:21 writes the text; the item shape is extensions/fork-task/index.ts:168-228 (itemSchema, `task` required, no `steps`), closed by the wire schema so the host drops the key before execute",
+   "searched": "probe in a fresh /tmp dir with published @oh-my-pi/pi-coding-agent 18.20.0 + @oh-my-pi/pi-ai 18.20.0: `toolWireSchema({parameters: z.object({context, tasks: z.array(item).min(1)})})` → item `additionalProperties: false`, `required: [\"task\"]`; `validateToolArguments` on `{context:\"probe\",tasks:[{task:\"do\",steps:[\"one\"]}]}` → `{context:\"probe\",tasks:[{task:\"do\"}]}`"
+  },
+  {
+   "id": "OP-3",
+   "point": "The scope of the header rewrite is stated two ways: 决策表 行 3 says the comment 改成「这组 topic 依赖的宿主模块」清单 and 补 `src/task/types.ts` 与 `src/task/steps.ts`, while the header today also names this repo's own modules (`agent/extensions/fork-task/index.ts`, `replica.ts`, `source-channel.ts`, `workspace.ts`) and carries a purpose line. Neither 预期结果 nor any acceptance row rules whether the local half and the purpose line stay.",
+   "input": "`sed -n '1,5p' extensions/fork-task/topics.ts` after the change.",
+   "outputs": [
+    "header keeps the purpose line and the local-file half and adds the two host modules",
+    "header lists host modules only, dropping the local-file half; 验收第 4 行 (`! grep -n \"pi-coding-agent@18\"`) passes either way"
+   ],
+   "producer": "extensions/fork-task/topics.ts:1-4",
+   "searched": "read topics.ts:1-11 and 决策表 行 3 / 范围边界 / 上下文「改动文件」; verified in the 18.20.0 tarball that every module the header names still exists (src/task/{index,types,steps,settings,discovery,isolation-runner,worktree}.ts, src/eval/js/tool-bridge.ts, src/thread/subagent-worker.ts), so nothing forces a prune"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "预期结果 结果 1 — the half「fork 条目只带一个 `task`」",
+   "input": "Text A output checked for a statement that a fork item carries one `task` (the whole assignment goes there); 验收第 1 行's Expect names only the five fields and the `task`/`steps` exclusion, so a text that lists `steps` and only says「steps 与 task 互斥」passes."
+  },
+  {
+   "row": "预期结果 结果 2 — the half「带 `task` 的调用照旧派发」",
+   "input": "`tool.fork_task({ context: \"probe\", tasks: [{ task: \"print one line\" }] })` in the same session with `task.steps: true`: expect a spawned child / `details.progress` and no error; no acceptance row ever sends a `task`-carrying fork item, so the doc's advice (put everything into `task`) is never proven to work."
+  },
+  {
+   "row": "决策表 行 2 — item carrying both `task` and `steps` keeps dispatching, `steps` dropped",
+   "input": "`tool.fork_task({ context: \"probe\", tasks: [{ task: \"print one line\", steps: [\"one\"] }] })`: expect a dispatch with no mutual-exclusion rejection; 验收第 2 行 feeds only a steps-only item."
+  },
+  {
+   "row": "决策表 行 3 — 补 `src/task/types.ts` 与 `src/task/steps.ts`",
+   "input": "`grep -n \"src/task/steps.ts\" extensions/fork-task/topics.ts` (and `types.ts`) after the change: expect a header hit; 验收第 4 行 only greps `pi-coding-agent@18`, so a header that drops the version and adds neither module passes."
+  },
+  {
+   "row": "决策表 行 3 / 范围边界 — 按当前发布版重核、不钉版本，且「任何以某个宿主版本号作为核对对象的写法」不残留",
+   "input": "a header rewritten as `Checked against pi-coding-agent 18.20.0 …` (no `@`) still satisfies `! grep -n \"pi-coding-agent@18\"`; observe with e.g. `grep -nE \"(^|[^0-9])[0-9]+\\.[0-9]+\\.[0-9]+\" extensions/fork-task/topics.ts` and by reading for the re-check sentence `验收第 4 行 never looks at`."
+  },
+  {
+   "row": "上下文「改动文件」 — `CHANGELOG.md` 的 `## [Unreleased]` 下一条 `### Changed`",
+   "input": "`sed -n '/## \\[Unreleased\\]/,/^## \\[/p' CHANGELOG.md` after the lgit commit described in README「Development」: expect one `### Changed` bullet naming the new `steps` entry in the `limits` topic; no acceptance row reads the changelog."
+  },
+  {
+   "row": "上下文「宿主 `createTaskSchema`（`task.steps` 打开时条目形状为 `steps: string[]`）」/ 验收第 1 行 Env",
+   "input": "in the sandbox session with `task.steps: true`, read the host `task` tool's schema (`read tool://task`, or `/dump` → `tools[]`): expect the item to advertise `steps: string[]` instead of `task: string`; if the setting were mistyped or not applied, every acceptance row would still pass while the change's premise stays unverified."
+  }
+ ]
+}

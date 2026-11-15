@@ -1,0 +1,119 @@
+{
+ "ref": "oh-my-omp/omp-sessions#40",
+ "agent": "scoutoh-my-omp-omp-sessions-40",
+ "seconds": 395,
+ "slices": [
+  {
+   "id": "s1-refresh-host-deps",
+   "title": "把 @oh-my-pi/* 开发依赖刷新到当前发布版",
+   "files": [
+    "bun.lock"
+   ],
+   "depends_on": [],
+   "rows": [
+    "5"
+   ],
+   "done_when": "在 PR 检出里 `bun pm ls` 显示 `@oh-my-pi/pi-coding-agent`、`@oh-my-pi/pi-natives`、`@oh-my-pi/pi-utils` 为实施时 `npm view @oh-my-pi/pi-coding-agent version` 报告的版本（写本计划时为 18.20.2），`package.json` 的 `latest` 范围与 `peerDependencies` 未改，`bun.lock` 的差异全部来自这三个包的依赖图（本计划实测：宿主自身的 @oh-my-pi/* 子包跟随到 18.20.2，移除 18.15.0 的 @huggingface/@img/sharp 可选 peer 条目，新增 @opentelemetry/* 条目，`@duckdb/node-api` 不变），且 `bun run check` 与 `bun test` 仍 exit 0（63 tests 全绿）。"
+  },
+  {
+   "id": "s2-narrow-adapter-imports",
+   "title": "src/omp-adapter.ts 的已导出符号改经包根与 internal-urls barrel 导入，并改写说成子路径的文件头注释",
+   "files": [
+    "src/omp-adapter.ts"
+   ],
+   "depends_on": [
+    "s1"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "4"
+   ],
+   "done_when": "在 PR 检出上 `grep -n '@oh-my-pi/' src/omp-adapter.ts` 只出现 `@oh-my-pi/pi-coding-agent`、`@oh-my-pi/pi-coding-agent/internal-urls`、`@oh-my-pi/pi-coding-agent/session/history-storage`、`@oh-my-pi/pi-coding-agent/session/session-index`、`@oh-my-pi/pi-coding-agent/session/session-paths`、`@oh-my-pi/pi-coding-agent/tools/read-json`、`@oh-my-pi/pi-utils`、`@oh-my-pi/pi-natives`（`src/omp-adapter.ts:1` 起的文件头注释不再把全部宿主导入描述成子路径），`SRC=<PR 检出> bun /tmp/c2-adapter.ts` exit 0 且 stdout 与 driver 的 `expected` 逐项相等，`bun run check`、`bun test` 仍 exit 0。"
+  },
+  {
+   "id": "s3-readme-coupling",
+   "title": "更新 README.md「Host coupling」与 README.zh-CN.md「宿主耦合」段",
+   "files": [
+    "README.md",
+    "README.zh-CN.md"
+   ],
+   "depends_on": [
+    "s2"
+   ],
+   "rows": [],
+   "done_when": "`README.md:47` 与 `README.zh-CN.md:47` 两段不再把 URL 路由与会话列表列为 omp 内部 import，而说明这些符号来自宿主包根与 `internal-urls` barrel、只有宿主未导出的 4 组符号仍走 host 子路径，措辞与 `src/omp-adapter.ts` 最终的导入面逐项一致。"
+  },
+  {
+   "id": "s4-real-omp-acceptance",
+   "title": "在 OrbStack 沙箱的真实 omp 会话里验收新导入面",
+   "files": [],
+   "depends_on": [
+    "s1",
+    "s2"
+   ],
+   "rows": [
+    "3"
+   ],
+   "done_when": "沙箱容器内真实 omp 会话中 `read session://README` 返回以 `session:// — read other OMP sessions on this machine` 开头的文本、eval 单元里 `await tool.session_query({ action: \"sessions\" })` 返回 sessions 行、启动与本轮没有 extension load error，并且容器内 `bun pm ls` 的 @oh-my-pi/* 版本随证据记录在 PR 证据包里。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op1-driver-expected-vs-current-published-host",
+   "point": "验收 driver 的 `expected` 是宿主 18.20.0 上的实测值并声明为「本 issue 写定的固定文本」，而继承的 约束 §1 要求在 PR 当时把 `@oh-my-pi/*` 刷新到当前发布版；今天 npm 的 latest 已是 18.20.2，契约没说两处冲突时以哪个版本为准、`expected` 是否可以重新实测。",
+   "input": "在 PR 检出里执行 `bun update @oh-my-pi/pi-coding-agent @oh-my-pi/pi-natives @oh-my-pi/pi-utils`（写本计划时解析到 18.20.2），随后 `SRC=<PR 检出> bun /tmp/c2-adapter.ts`。",
+   "outputs": [
+    "exit 0：18.20.0 的期望值在 18.20.2 上仍然成立，driver 原样通过，不需要改动（本计划实测在 18.20.2 与 18.15.0 上都 exit 0）",
+    "exit 1：期望值只能在实际安装的版本上重新实测，但 driver 是固定文本，契约没有给出改写 `expected` 的许可，PR 将无法给出通过的证据"
+   ],
+   "producer": "package.json:38-40（三个 `@oh-my-pi/*` devDependency 写 `latest`）＋ npm dist-tag `latest`=18.20.2（`npm view @oh-my-pi/pi-coding-agent version dist-tags --json`）",
+   "searched": "`npm view @oh-my-pi/pi-coding-agent version dist-tags --json`；在 /tmp 用 `git archive HEAD` 复制本 repo 后 `bun install`（18.15.0）与 `bun update`（18.20.2），两个版本各跑一次 body.md 的 `/tmp/c2-adapter.ts`；读 body.md 第 81 行（固定文本、18.20.0 实测值）与第 67 行（§1 刷新到当前发布版）"
+  },
+  {
+   "id": "op2-session-query-empty-rows",
+   "point": "验收 3 对 `session_query` 的期望是「返回 sessions 行，不是工具未激活或报错」，但 `action: \"sessions\"` 的返回是 `{ rows }`，空数组同样满足「返回行」；契约没有说空列表算通过还是失败，也没有说必须与改动前的行内容逐项相等。",
+   "input": "在容器里对一个还没有任何已落盘会话的 agent 目录跑 eval `await tool.session_query({ action: \"sessions\" })`，返回 `{ rows: [] }`。",
+   "outputs": [
+    "通过：`rows` 是数组，工具已激活且未报错，`action: \"sessions\"` 走了 TypeScript loaders",
+    "失败：没有返回任何 session 行，无法证明 session:// 与 session_query 在改动后仍在服务同一批会话"
+   ],
+   "producer": "src/query/tool.ts:235-237（`case \"sessions\"` → `{ rows: await sessionRows(...) }`），空数组由 src/relations.ts:103 `sessionRows` 经 `listSessions` 返回",
+   "searched": "读 src/query/tool.ts 的 `rowAction`/`run`；读 src/relations.ts:101-113 的 `sessionRows`；读 src/query/run.ts 确认 `sessions` 不经 DuckDB 也不报错"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "约束 §1：把 `@oh-my-pi/*` 开发依赖刷新到当前发布版、且不新增版本钉（这也是改 `bun.lock` 的唯一理由）",
+   "input": "在一个 `bun.lock` 仍解析到 18.15.0、`package.json` 已改成精确版本的检出上跑验收 1、2、4、5：18.15.0 的包根同样 `export * from \"./session/session-entries.js\"`／`session-listing.js`，`internal-urls` barrel 同样有 `export type * from \"./types.js\"`，实测 driver exit 0、`bun run check` exit 0，没有任何一行会因未刷新或不刷新而失败"
+  },
+  {
+   "row": "验收 1 的 `prompts`/`recaps`（结果 2「prompt 匹配与 recap 读数逐项不变」）",
+   "input": "在 agent 目录里预先写入含匹配 prompt（例如 `prompt alpha report`）的 history.db 与 s1 的 recap 记录后再跑 driver：期望值是 `[]`，读空的 store 与读有数据的 store 给出同一结果，无法区分读数是否改变"
+  },
+  {
+   "row": "结果 1：`session://` 的 `grep` 读数与改动前一致",
+   "input": "容器会话里对该机器的会话树跑一次 `grep session://here/<date>/*/timeline`（走 src/handler.ts:417 `readDirectory`）；验收 3 只喂了 `read session://README` 与 `session_query`"
+  },
+  {
+   "row": "结果 1：`sessions.jsonl` 的读数与改动前一致",
+   "input": "容器会话里 `read session://sessions.jsonl?q=<jq>`（src/routes.ts:95、109 的 `bucketSessions` 路由）并比对行；验收 3 没有读任何 `sessions.jsonl`"
+  },
+  {
+   "row": "结果 1：`session_query` 的读数与改动前一致",
+   "input": "同一容器会话里在基准提交与改后代码上各跑一次 `await tool.session_query({ action: \"sessions\" })` 并逐行比对；验收 3 只要求「返回 sessions 行、不是未激活或报错」"
+  },
+  {
+   "row": "结果 1：宿主已导出的符号只经包根与 `internal-urls` barrel 导入（全 repo，不止 adapter）",
+   "input": "在 `src/handler.ts` 之类其他文件里留下 `import { InternalUrlRouter } from \"@oh-my-pi/pi-coding-agent/internal-urls/router\"`；验收 4 只 grep `src/omp-adapter.ts`，这类残留与它的三条禁用子路径都不会出现在该文件里"
+  },
+  {
+   "row": "范围边界 不应残留：把全部宿主导入描述成子路径的文件头注释",
+   "input": "读 `src/omp-adapter.ts:1-3`；五条验收行都不读注释（验收 4 只输出含 `@oh-my-pi/` 的行），旧注释即使原样保留也不会让任何一行失败"
+  },
+  {
+   "row": "范围边界 不应残留：README.md:47「Host coupling」与 README.zh-CN.md:47「宿主耦合」把 URL 路由与会话列表列为 omp 内部 import 的表述",
+   "input": "`grep -n 'Host coupling' -A 3 README.md` 与 `grep -n '宿主耦合' -A 3 README.zh-CN.md`；没有任何验收行读这两份 README，范围边界要求的文档改动完全不被覆盖"
+  }
+ ]
+}

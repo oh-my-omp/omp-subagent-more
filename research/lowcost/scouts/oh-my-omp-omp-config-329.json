@@ -1,0 +1,90 @@
+{
+ "ref": "oh-my-omp/omp-config#329",
+ "agent": "scoutoh-my-omp-omp-config-329",
+ "seconds": 337,
+ "slices": [
+  {
+   "id": "task-item-shape",
+   "title": "State `steps` beside `task` as the task item's instruction field in SURFACE-task, TOPIC-task-batch and TOPIC-task-seance, and refresh their `upstream` headers to the release the new text was checked against",
+   "files": [
+    "agent/extensions/tool-topics/SURFACE-task.md",
+    "agent/extensions/tool-topics/TOPIC-task-batch.md",
+    "agent/extensions/tool-topics/TOPIC-task-seance.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "done_when": "In a held sandbox started from the PR checkout, the newest /tmp/omp-llm-request-*.json of a `task.steps=false` session and of a `task.steps=true` session each show the task `<tool … description=\"replaced\">` element plus the `read tool://task/batch` and `read tool://task/seance` results carrying one item-shape sentence that names `steps` as the field replacing `task` when that setting is on and calls the two mutually exclusive (the true session also carrying the ordered-stage rules, the last stage's result being the run's result), the true session's one-item batch dispatch of two `steps` to `task:low` starts without a missing-`steps` rejection, and `bun run check && bun run test` exits 0 on the same checkout."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "upstream-version",
+   "point": "The three `upstream` headers must name one OMP release, but the contract fixes the 基准 at v18.20.0 (can1357/oh-my-pi@c308970263ae) while this checkout's own dev dependency resolves to 18.20.1, and the inherited decision says to re-check anchors on the release current at PR time.",
+   "input": "The `upstream:` line written on the PR's three files, e.g. `pi-coding-agent@18.20.0 src/prompts/tools/task.md, src/task/types.ts, src/task/settings.ts` versus `pi-coding-agent@18.20.1 src/prompts/tools/task.md, src/task/types.ts, src/task/settings.ts`.",
+   "outputs": [
+    "`pi-coding-agent@18.20.0` — 上下文 基准 and 约束 「只按当前发布版（v18.20.0）的说明与 schema 表述」, matching can1357@c308970263ae.",
+    "`pi-coding-agent@18.20.1` — ref oh-my-omp/omp-config#320 决策 6863721490 §1 「实施时在 PR 当时的发布版上重新核对锚点」 plus `docs/operations.md:191` 「bump the version in `upstream`」, matching what `bun install` resolved."
+   ],
+   "producer": "bun.lock:61 (`@oh-my-pi/pi-coding-agent@18.20.1`) versus /tmp/ghc/oh-my-omp-omp-config-329/body.md:22 (v18.20.0, can1357/oh-my-pi@c308970263ae)",
+   "searched": "`grep -n '^upstream:' agent/extensions/tool-topics/*.md` (the three in scope say 18.13.2; the newest header in the catalog is 18.18.0), `cat package.json` (every `@oh-my-pi/*` dev dependency is `latest`), `grep -n pi-coding-agent bun.lock`, `grep -rn 'task.steps\\|Sequential Task Steps'` over the checkout (no hit)."
+  },
+  {
+   "id": "task-results-item-field",
+   "point": "`TOPIC-task-results.md` still lists `empty \\`task\\`` among preflight rejections — a sentence that makes `task` the item's instruction field with no mention of `steps`. 范围边界 「不应残留」 forbids exactly that kind of sentence, but 改动文件 names only the three files.",
+   "input": "A `task.steps=true` session that reads `tool://task/results` (the topic is indexed under `task`) and then dispatches a batch item that omits `steps` while sending an empty `task`.",
+   "outputs": [
+    "The line stays `empty \\`task\\``, so a `task.steps=true` session still reads a `task`-only item statement — 不应残留 violated.",
+    "The line becomes `empty \\`task\\` or \\`steps\\``, so the sentence is right — but the PR edits a fourth file beyond 改动文件."
+   ],
+   "producer": "agent/extensions/tool-topics/TOPIC-task-results.md:14; the host side it describes is node_modules/@oh-my-pi/pi-coding-agent/src/task/index.ts:274-296",
+   "searched": "`grep -n 'solutionSpace\\|`task`' agent/extensions/tool-topics/TOPIC-*.md` (of the task topics outside the three, only `TOPIC-task-results.md:14` calls `task` an item field; `TOPIC-eval-tools.md:55` names the `tools` field, not the instruction field), `grep -rn solutionSpace` over the checkout (no `docs/` page, agent file or command lists item fields), `grep -rn 'task.steps'` over the checkout (no hit)."
+  },
+  {
+   "id": "row2-dispatch-shape",
+   "point": "Row 2's dispatch sentence never names the batch shape, and `task.batch` is on in the sandbox (host default `true`; `agent/config.yml` sets no `batch` key). There a top-level `steps` is rejected as `Top-level \\`task\\` or \\`steps\\` is not part of the batch shape` (`src/task/index.ts:312`) and a call without `tasks[]` as `Missing \\`tasks\\`` (`:341`), so the row's verdict can turn on an error other than the missing-`steps` one it checks.",
+   "input": "The task tool call the session's model emits for 「用一次 task 调用派发一个 task:low worker，条目带两步、solutionSpace 写 one fix」: `{ agent: \"task:low\", steps: [s1, s2], solutionSpace: \"one fix\" }` at the top level, versus `{ context: \"…\", tasks: [{ agent: \"task:low\", steps: [s1, s2], solutionSpace: \"one fix\" }] }`.",
+   "outputs": [
+    "The batch item is accepted and the spawn starts — row passes as intended.",
+    "Rejected with `Missing \\`tasks\\`. Provide a \\`tasks\\` array (one subagent per item) with a shared \\`context\\`.` — row still passes its literal check 「不出现缺 steps 的校验错误」 although nothing started.",
+    "Rejected with `Task 1 is missing \\`steps\\`` — row fails; this is the outcome the change exists to prevent."
+   ],
+   "producer": "/tmp/ghc/oh-my-omp-omp-config-329/body.md:80 (the acceptance input that leaves the shape open); host preflight at node_modules/@oh-my-pi/pi-coding-agent/src/task/index.ts:299-345",
+   "searched": "`sed -n '34,60p' agent/config.yml` (no `task.batch`), `grep -n 'export const cfgTaskBatch' -A 4 src/task/settings.ts` (default `true`), `grep -n 'function validateSpawnParams' -A 45 src/task/index.ts` (top-level and missing-`tasks` rejections), `grep -n 'taskFields' src/task/types.ts` (one schema for batch items, flat calls and seance)."
+  },
+  {
+   "id": "static-surface-switch",
+   "point": "Surface and topic bodies are static: the catalog is parsed once at factory time and the surface is rendered verbatim inside `<tool name=\"task\" description=\"replaced\">`, with `{{native:…}}` the only substitution. One text therefore has to serve both settings, and the contract does not say how a reader decides which field its own session uses.",
+   "input": "The same `<tool name=\"task\" …>` element in a `task.steps=false` session and in a `task.steps=true` session — byte-identical both times; the only per-session signal a reader has is the task tool's parameter entry, which advertises `task` or `steps` (`src/task/types.ts:184`).",
+   "outputs": [
+    "The text names the setting (`task.steps` / `Sequential Task Steps`) as the switch — a reader cannot read its own settings inside a session, since settings are reachable only through the `omp config` CLI (`src/cli/config-cli.ts:302-324`) and no session tool exposes them.",
+    "The text says the item's field is whichever of `task`/`steps` the task tool's parameters declare, so the reader decides from the parameter definition it is handed.",
+    "Both sentences are present."
+   ],
+   "producer": "agent/extensions/tool-topics/prompt.ts:166-180 with agent/extensions/tool-topics/catalog.ts:82-102; the host switch it must describe is node_modules/@oh-my-pi/pi-coding-agent/src/task/types.ts:184",
+   "searched": "`read prompt.ts:150-191` (surface rendered verbatim; `{{native}}` is the only substitution), `read catalog.ts:82-152` (parsed once, header stripped before the body is served by `registry.ts:73`), `grep -n 'function handleGet' -A 22 src/cli/config-cli.ts` (settings only via CLI), `grep -rln 'plugin config\\|config get\\|config set' src/tools/` (no session tool reads settings)."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "范围边界 / 不应残留 — `upstream` 头仍只写 18.13.2，未按新文本依据的当前发布版更新来源",
+   "input": "`grep -n '^upstream:' agent/extensions/tool-topics/SURFACE-task.md agent/extensions/tool-topics/TOPIC-task-batch.md agent/extensions/tool-topics/TOPIC-task-seance.md` on the PR HEAD. No acceptance row reads these headers, and headers never reach a session (`catalog.ts:82-102` keeps `upstream` out of `Topic`; `registry.ts:73` serves only the body). Row 4's `bun run test` needs only `loadCatalog(…).problems` to be empty (`ci/tool-topics-catalog.test.ts:40-42`), which any single-line value satisfies; biome covers `agent/**/*.ts` only (`biome.json` `files.includes`), not `*.md`."
+  },
+  {
+   "row": "Row 2 — 「task 的 SURFACE 文本给出 `steps` 的有序阶段写法」",
+   "input": "The delta element alone: `jq -r '.messages[]?|strings|select(contains(\"<tool name=\\\"task\\\" description=\\\"replaced\\\">\"))' $(ls -t /tmp/omp-llm-request-*.json|head -1)`. Row 2's own jq also prints `systemPrompt` (a `string[]`, `src/session/agent-session.ts:7449`), and at `task.steps=true` that block already carries `- steps: ordered stages for one agent; each is sent only after it finishes the previous one, and the last stage's result is returned.` (`src/prompts/tools/task.md:38`), so an unedited SURFACE passes the row as written."
+  },
+  {
+   "row": "Row 3 — 「task 的 SURFACE 文本仍含 `# Target`/`# Change`/`# Acceptance`，`tool://task/batch` 仍说明 `context` 的用法」",
+   "input": "The same `/dump` output: `systemPrompt` already carries `# Target`/`# Change`/`# Acceptance` (`src/prompts/tools/task.md:45`) and `- context: shared (\\`# Goal\\`, \\`# Contract interfaces\\`); NEVER repeat per task.` (`task.md:35`), so both checks pass with the old SURFACE and the old batch topic; only the topic's `sourceSession` id/path/ambiguity rules go beyond the native one-liner (`src/prompts/tools/seance-task-guidance.md:1`)."
+  },
+  {
+   "row": "结果 2 — 「每步写什么」",
+   "input": "Any row's `/dump` output: no row asserts that the per-step composition the host renders (`First step carries \\`# Target\\``, `Each step: one \\`# Change\\` stage`, `Last step adds \\`# Acceptance\\``, `src/prompts/tools/task.md:39-41`) appears inside the `<tool name=\"task\" …>` element; row 2 checks only ordering, last-result and exclusivity."
+  }
+ ]
+}

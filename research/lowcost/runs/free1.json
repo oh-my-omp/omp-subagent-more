@@ -1,0 +1,467 @@
+{
+ "id": "free1",
+ "repo": "/tmp/delivering-issues/oh-my-omp-omp-config-323/free1/repo",
+ "whiteboard": "<omomp>/omp-config/.tmp/lowcost/runs/323-free1.md",
+ "ladder": [
+  "task:free1"
+ ],
+ "adjudicatorTier": "loop:adjudicator",
+ "maxTurns": 8,
+ "maxGateBounces": 2,
+ "maxReviewBounces": 2,
+ "phase": "reviewing",
+ "tierIndex": 0,
+ "turns": 5,
+ "gateBounces": 0,
+ "reviewBounces": 1,
+ "envHelps": 1,
+ "workers": [
+  {
+   "id": "free1taskfree1",
+   "tier": "task:free1"
+  }
+ ],
+ "reviews": [
+  {
+   "tier": "task:low",
+   "agent": "free1review",
+   "head": "8b872df4ff639d9205292823f42848c79919a416",
+   "pass": false,
+   "verdicts": [
+    {
+     "id": "R1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:76-89: native branch loops `native.data.answers`, skips only empty fields (l.80), pushes one `{question, answer}` per remaining field and returns all of them (l.89); `formatAskAnswers` (l.103-106) unchanged from base and renders `question → answer` per line. Consumers gate only on null: turn-judge/index.ts:565-566 pushes `用户在ask中回答`, user-prompt-inject/index.ts:301-302 and transcript.ts:355-356 push formatted lines, transcript.ts:312 maps null to `other`. Scratch probe: `{answers:[{name:'db',question:'Database',answer:'SQLite'}],timedOut:false}` → `Database → SQLite`. Driver not rerun."
+    },
+    {
+     "id": "R2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:69-75 returns null before any parse when `details` is an object with `timedOut === true`, so the guard covers both the native and legacy shapes. Scratch probe: `{results:[...],timedOut:true}` → null; `{question,selectedOptions,timedOut:true}` → null; `{answers:[...],timedOut:false}` → `Database → SQLite`. Absent field parses (l.76, `z.boolean().optional()` at l.32). Consumers receive null, so no timeline entry and `other` classification follow from turn-judge/index.ts:565 and transcript.ts:312."
+    },
+    {
+     "id": "R3",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:79-88: note pairs only when `note.name === field.name && note.question === field.question` (l.83); text folded by `replace(/\\s+/g,\" \").trim()` (l.84); empty folded text dropped (l.85); notes joined in array order after the answer with spaces (l.87), each as `[note: <option> — <text>]` (l.85; em dash is U+2014). Unpaired notes never enter `answers` so they are not output. With no notes, `notes ?? []` (l.82) leaves the answer unchanged. Scratch probe: text `\"  a\\n\\n b  \"` plus a blank note and a note on another question → `Database → SQLite [note: SQLite — a b]`."
+    },
+    {
+     "id": "R4",
+     "verdict": "pass",
+     "evidence": "Legacy branch (ask-answers.ts:91-100) is the base logic with `message.details` replaced by the local `details` (diff hunk @@ -36,8 +65,31 @@ shows only that change). The native branch needs an `answers` array (l.30), so legacy records never enter it. Guards `toolName !== 'ask' || isError === true` (l.67) are unchanged. `answerOf` (l.53-59) is unchanged. Non-ask and error results still return null."
+    },
+    {
+     "id": "D1",
+     "verdict": "pass",
+     "evidence": "Pairing on name and question both: l.83. Format ` [note: <option> — <text>]` joined by single spaces in array order: l.85, l.87. Whitespace collapsed and trimmed: l.84. Empty folded text dropped: l.85. Unpaired notes not output: they are only read inside the field loop (l.82-86). Probe: a note with question 'Other' and a note with text '   ' produced nothing extra."
+    },
+    {
+     "id": "D2",
+     "verdict": "fail",
+     "evidence": "Empty strings are skipped (ask-answers.ts:80 `if (field.answer === \"\") continue;`), and all-empty or `answers: []` returns null (l.89; probe nativeAllBlank → null, nativeNoTimedOutFieldsEmptyAnswers → null). But whitespace-only answers are not skipped: probe `{answers:[{name:'t',question:'Q',answer:'   '}]}` → `Q →    `. The host passes text values through unchanged (node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts answerText: `if (field.kind === 'text') return String(value)`). The decision row says `空白答案按未作答跳过` and its basis separately says `空串`, so 空白 covers whitespace too. The legacy path trims customInput (l.54-57), so it treats whitespace as no answer. Expected: skip when `field.answer.trim() === ''`."
+    },
+    {
+     "id": "X1",
+     "verdict": "pass",
+     "evidence": "Header lines 4-18 no longer contain `details.results[]` as the native tool's report. They say the current result is `AskToolDetails` with `answers[]` per named field, unfilled `answer: \"\"` is not an answer (matches data.ts answerText returning \"\" for undefined), `notes[]`, and `timedOut: true` as a deadline submission. Legacy `results[]` and the single question result are described as persisted-history or omp-ask-more pre-migration shapes, which matches the code (l.91-100). The word `results` appears only in the legacy parts."
+    },
+    {
+     "id": "X2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:73-75 guard runs before both parsers, so `timedOut: true` yields null for every shape. `timedOut: false` and absent parse (l.76, l.32). Probes: legacyBatch+timedOut true → null; legacySingle+timedOut true → null; malformed native with timedOut false → null. Consumers only receive non-null results (see R1 call sites)."
+    },
+    {
+     "id": "C1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:35-40: `Equals<z.infer<typeof nativeDetails>, NativeAskToolDetails>` with `Assert<...>` against `import type { AskToolDetails } from '@oh-my-pi/pi-tui/tools/ask'` (l.2), resolved to node_modules/@oh-my-pi/pi-tui/dist/types/tools/ask.d.ts. This is an identity check, so it is not vacuous (an `any` host type would also fail it). Probe in a scratch copy: adding `surveyId?: string` to the host's AskToolDetails made `tsc --noEmit` fail with `agent/extensions/_shared/ask-answers.ts(40,41): error TS2344: Type 'false' does not satisfy the constraint 'true'`. Restoring the file gave rc=0. The scratch copy was then moved to the trash."
+    },
+    {
+     "id": "C2",
+     "verdict": "pass",
+     "evidence": "No `any` in the file. No `as` cast. External input is parsed with `z` at ask-answers.ts:76, 91-92. The raw `in` / `=== true` guard at l.73 is a type-guard-style check allowed by AGENTS.md 'Types'. Comments (l.4-18, 35-37, 48-50, 69-72, 80) explain why and do not restate code. Pre-existing double parse of batch then single (l.91-92) is unchanged. Biome lint passed per the recorded run; I did not rerun it."
+    },
+    {
+     "id": "S1",
+     "verdict": "pass",
+     "evidence": "`git diff 21d748d 8b872df --stat`: one file, agent/extensions/_shared/ask-answers.ts (61 insertions, 9 deletions). No hunk touches formatAskAnswers (l.103-106). No consumer, TOPIC file, package.json or bun.lock changed. The lock already pins @oh-my-pi/pi-tui 18.20.1, and `npm view` reports latest 18.20.1, so the dependency refresh already holds."
+    }
+   ],
+   "findings": [
+    {
+     "severity": "blocker",
+     "where": "agent/extensions/_shared/ask-answers.ts:80",
+     "problem": "Whitespace-only native answers are not treated as blank. The guard is `field.answer === \"\"`, so `{answers:[{name:'t',question:'Q',answer:'   '}]}` yields the timeline line `Q →    `. A text field with only spaces reaches this path unchanged (data.ts answerText returns String(value) for text fields). Legacy customInput is trimmed (l.54-57), so the two paths disagree.",
+     "expected": "Skip blank answers as the decision table states (`空白答案按未作答跳过`, with `空串` cited separately as the basis): `if (field.answer.trim() === \"\") continue;` or an equivalent. Keep the all-blank → null rule (l.89)."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:73",
+     "problem": "The timed-out guard reads the raw `details.timedOut` literal before the boundary parse and outside the schema. The key is typed only at l.32 in `nativeDetails`, which is checked by the Equals assertion at l.40. If the host renamed `timedOut` and the schema key were updated alone, this guard would stop matching while `tsc` passed, and timed-out submissions would reach consumers.",
+     "expected": "Tie the guard to the same key as the schema, for example a shared constant or a check on the parsed value, so that a host rename changes both places. Keep the guard ahead of the legacy parsers so a timed-out record with a legacy shape still returns null."
+    }
+   ]
+  },
+  {
+   "tier": "task:low",
+   "agent": "free1review-2",
+   "head": "64197c61e536ef7b1d88b82f78729a6b756ca3ca",
+   "pass": false,
+   "verdicts": [
+    {
+     "id": "R1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:85-96 loops every `details.answers[]` entry with a non-blank answer and pushes one `{question, answer}` per field; `formatAskAnswers` (ask-answers.ts:111-113) is unchanged and renders `question → answer` per line. Consumers call it unchanged: turn-judge/index.ts:565-566 (`类型: \"用户在ask中回答\"`), user-prompt-inject/index.ts:301-302, transcript.ts:355-356. Scratch probe against the current module: host `{answers:[{name:\"db\",question:\"Database\",answer:\"SQLite\"}], timedOut:false}` -> `Database → SQLite`."
+    },
+    {
+     "id": "R2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:79 `if (typeof details === \"object\" && details !== null && timedOutKey in details && details[timedOutKey] === true) return null;` runs before any parse. Probe: host `timedOut:true` -> null; host `timedOut:false` -> answers; absent field -> answers (same code path, `=== true` only). transcript.ts:312 `askAnswers(message) === null ? \"other\" : \"answers\"` gives `other` for null. Caveat for legacy shapes is in finding 1, not a current-shape failure."
+    },
+    {
+     "id": "R3",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:88-94: pairing requires `note.name === field.name && note.question === field.question` (line 90); text is `note.text.replace(/\\s+/g, \" \").trim()` (line 91); empty text is not pushed (line 92); each note is `[note: ${note.option} — ${text}]` (U+2014 verified), joined in order after the answer by `[field.answer, ...notes].join(\" \")` (line 94). Probe: answer `SQLite` with notes text `\"a\\n\\n  b\\t c \"` plus `\" \\n \"` plus an unpaired `question:\"Removed\"` note gives `Database → SQLite [note: SQLite — a b c]`; the unpaired and whitespace-only notes are dropped. No notes -> identical to R1 output."
+    },
+    {
+     "id": "R4",
+     "verdict": "fail",
+     "evidence": "Legacy single shape with top-level `timedOut:true` regresses. Probe (baseline = `git show 21d748d:agent/extensions/_shared/ask-answers.ts` vs current, scratch /tmp/a4-probe/probe.ts): input `{question:\"Database\",options:[\"SQLite\"],multi:false,selectedOptions:[\"SQLite\"],timedOut:true}` -> base `[{question:\"Database\",answer:\"SQLite\"}]`, current `null`. This is a real persisted shape: the 18.1.17 host writes `details = {question, options, multi, selectedOptions, customInput, note, timedOut: timedOut || undefined}` (<other-checkout>/node_modules/@oh-my-pi/pi-coding-agent/src/tools/ask.ts:1127-1141; `AskToolDetails.timedOut` in dist/types/tools/ask.d.ts:84). The pre-check at line 79 is shape-agnostic, so it drops it. R4 requires the legacy shape's parse result to equal the baseline, and the goal says history reads are unchanged. Legacy batch and no-timedOut single results are byte-identical to baseline (probe)."
+    },
+    {
+     "id": "D1",
+     "verdict": "pass",
+     "evidence": "Decision table row 1 (body.md:47) matched point by point: name+question pairing (ask-answers.ts:90); ` [note: <option> — <text>]` per note in order (line 92, 94); whitespace collapse and trim (line 91); empty after collapse dropped (line 92); unpaired notes never reach output because they are only read while iterating answered fields (lines 88-93). Verified by probe as in R3."
+    },
+    {
+     "id": "D2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:87 `if (field.answer.trim() === \"\") continue;` skips blank answers; line 96 `return answers.length === 0 ? null : answers;` returns null for all-blank and for `answers: []`. Probes: `answers:[{…answer:\"  \"}]` with a paired note -> null; formAnswers' unfilled field (`answer: \"\"`) is skipped the same way."
+    },
+    {
+     "id": "X1",
+     "verdict": "pass",
+     "evidence": "Header (ask-answers.ts:4-17) no longer says the native tool reports `details.results[]`. It states the current shape (`answers[]` one `{name, question, answer}` per named field, `notes[]`, `timedOut: true`) and says legacy `results[]` / top-level question result are parsed for persisted and pre-migration omp-ask-more output. The header does not mention that legacy entries also carry `timedOut` (see finding 1), but nothing it says is false about the current shape."
+    },
+    {
+     "id": "X2",
+     "verdict": "unsure",
+     "evidence": "Current shape: no path hands a top-level `timedOut:true` submission to consumers (ask-answers.ts:79-81; probes `timedOut:true` -> null; `false`/absent -> answers). Legacy shapes are not uniform: a top-level legacy `timedOut:true` is dropped (R4 fail), but per-result legacy `timedOut:true` still yields an answer. Probe `{results:[{question:\"Database\",selectedOptions:[\"SQLite\"],timedOut:true,…}]}` -> `[{question:\"Database\",answer:\"SQLite\"}]` in both base and current (QuestionResult.timedOut: dist/types/tools/ask.d.ts:73; set at src/tools/ask.ts:1046, 1071, 1182 of the 18.1.17 host). Whether an auto-selected legacy answer counts as a `timedOut:true` submission is a contract ruling, not something the text settles. See finding 2."
+    },
+    {
+     "id": "C1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:32 `const timedOutKey = \"timedOut\" satisfies keyof NativeAskToolDetails;`; lines 43-45 `Equals<z.infer<typeof nativeDetails>, NativeAskToolDetails>` with `Assert<…>` (identity relation, not assignability). tsc is in `bun run check` and includes agent/**/*.ts (tsconfig.json). Scratch probe (/tmp/a4-probe/tc, `paths` maps `@oh-my-pi/pi-tui/tools/ask` to a stub): stub identical to the host passes (exit 0); a JSDoc-only change passes; added optional `warnings?: string[]` -> TS2344 `Type 'false' does not satisfy the constraint 'true'` at ask-answers.ts:45; renamed `timedOut` -> `timeout` -> TS1360 at line 32 plus TS2344; `notes?: readonly OptionNote[]` -> TS2344; `FormAnswer` gains required `kind` -> TS2344. So a real host shape change fails tsc in this module."
+    },
+    {
+     "id": "C2",
+     "verdict": "pass",
+     "evidence": "No `any` and no `as` in the file (grep). `satisfies` at line 32 is used for a pin, not a cast. External input enters through zod (`nativeDetails`, `batchDetails`, `questionResult`) and a typeof/in guard (line 79). Comments explain rationale (lines 29-31, 74-78, 86) and do not restate code. Minor items are listed as findings 3 and 4."
+    },
+    {
+     "id": "S1",
+     "verdict": "pass",
+     "evidence": "`git diff --stat 21d748d 64197c6` changes one file, agent/extensions/_shared/ask-answers.ts. `formatAskAnswers` (lines 110-113) is outside every hunk. turn-judge, user-prompt-inject, transcript.ts and tool-topics are untouched. The `results[]` legacy branch logic is byte-identical apart from `message.details` being read into a `details` const."
+    }
+   ],
+   "findings": [
+    {
+     "severity": "blocker",
+     "where": "agent/extensions/_shared/ask-answers.ts:74-81 (timedOut pre-check runs on any shape)",
+     "problem": "The pre-parse `timedOut === true` check is shape-agnostic. A persisted legacy single-question ask result with top-level `timedOut:true` (18.1.17 writes `timedOut: timedOut || undefined` at src/tools/ask.ts:1141 of the installed older host) now returns null. Baseline returns `[{question:\"Database\",answer:\"SQLite\"}]`. Verified by scratch probe against 21d748d.",
+     "expected": "Legacy shapes read exactly as the baseline (R4 and the goal's 'history reads unchanged'). Scope the guard to the current shape, e.g. inside the `native.success` branch: `if (native.data.timedOut === true) return null;`. That also removes the second raw read of the key. If the parent instead rules that legacy timed-out auto-selections must also be excluded, R4's wording must change and finding 2 must be settled the same way."
+    },
+    {
+     "severity": "ruling_needed",
+     "where": "agent/extensions/_shared/ask-answers.ts:94-107 vs :79 (legacy per-result vs top-level timedOut)",
+     "problem": "Legacy per-result `timedOut:true` (QuestionResult.timedOut) still yields an answer, while legacy top-level `timedOut:true` yields null. The same auto-selected legacy answer is treated differently depending on which legacy shape it came in. Contract §2 ('timedOut: true 的提交不当作用户回答交给消费方') and R4 ('旧形状…逐字相同') do not settle it.",
+     "expected": "A ruling from Main on whether legacy auto-selected answers (top-level or per-result timedOut) count as timed-out submissions. Then apply it uniformly to both legacy paths, or keep both as baseline."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:74-75 (comment 'timedOut: true exists only on the current shape')",
+     "problem": "The comment is false. The 18.1.17 host sets `timedOut` on legacy results too (dist/types/tools/ask.d.ts:73 QuestionResult, :84 AskToolDetails; src/tools/ask.ts:1046, 1071, 1134, 1141, 1182).",
+     "expected": "Comment reflects the ruling in finding 2 and the actual legacy behavior."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:79 and :37 (timedOut read twice)",
+     "problem": "The same `timedOut` field is read by hand from raw `details` (line 79) before zod parses it (`nativeDetails`, line 37). That is a second boundary read of one field, which conflicts with 'parse once at the boundary'.",
+     "expected": "Read `timedOut` once through the schema, `native.success && native.data.timedOut === true`, as in finding 1."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:21-28, 82 (one malformed note drops every answer)",
+     "problem": "One malformed `notes[]` entry (for example, missing `value`) makes the whole native parse fail. The function then silently returns null and all answers vanish. Probe: `answers` with one note missing `value` -> null. The compile-time guard does not cover data-level oddities.",
+     "expected": "Either accept this as the all-or-nothing boundary (host always writes complete OptionNote, so risk is low), or make notes tolerant per entry. Record the choice."
+    },
+    {
+     "severity": "minor",
+     "where": "contract body.md (宿主基准 18.20.0) vs node_modules",
+     "problem": "The installed host is pi-tui 18.20.1 and pi-coding-agent 18.20.1, not the 18.20.0 anchor. The Equals check passes against 18.20.1.",
+     "expected": "Re-stamp the anchor to the version the check was run against, as §1 asks for the PR-time release."
+    }
+   ]
+  },
+  {
+   "tier": "loop:reviewer-low",
+   "agent": "free1review-3",
+   "head": "aae5aa9f43107cca8e674f8d7efd49c348b15c2f",
+   "pass": false,
+   "verdicts": [
+    {
+     "id": "R1",
+     "verdict": "pass",
+     "evidence": "Kept from the 64197c6 review: the delta does not touch the native loop. ask-answers.ts:81-92 loops native.data.answers, skips blank fields (:83), pushes one {question, answer} per field (:90), and returns the list (:92). formatAskAnswers (:107-109) is unchanged. Probe on the aae5aa9 copy: nativeNoFlag {answers:[{name:'db',question:'Database',answer:'SQLite'}]} → 'Database → SQLite'. The literal 'one line per question' is not met when a textarea answer contains a newline; that gap is the O1 finding, not a change in R1."
+    },
+    {
+     "id": "R2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:74-79: the timedOut check now sits inside `if (native.success)` (:79 `if (native.data.timedOut === true) return null;`), before any answer is produced. Probes on aae5aa9: nativeTimedOut {answers:[…], timedOut:true} → null; nativeTimedOutFalse (timedOut:false) → 'Database → SQLite'; nativeNoFlag (absent) → 'Database → SQLite'. Null reaches consumers as before: transcript.ts:312 classifies it as 'other'. A current-shape record whose answers[] fails the schema falls to the legacy parser (:94-97), which returns null for a current-shape record, as the 2026-11-14T20:06:58 RULING's instruction (3) directs."
+    },
+    {
+     "id": "R3",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:84-90 unchanged by aae5aa9 (the delta only moves the timedOut check). Pairing requires note.name === field.name && note.question === field.question (:86). Text is collapsed and trimmed (:87). Empty text is dropped (:88). Notes are appended in array order (:88, :90). Output format is `<answer> [note: <option> — <text>]`."
+    },
+    {
+     "id": "R4",
+     "verdict": "pass",
+     "evidence": "Previously failed on the top-level legacy timedOut:true case; fixed in aae5aa9 by removing the record-level pre-check. Probe on aae5aa9 vs the base 21d748d (git show, both run with bun): legacySingleTopTimedOut {question,options,multi,selectedOptions:['SQLite'],timedOut:true} → base 'Database → SQLite', cur 'Database → SQLite'; legacyBatchPerResultTimedOut {results:[{…,timedOut:true}]} → both 'Database → SQLite'; legacyBatchTopTimedOut {results:[…],timedOut:true} → both 'Database → SQLite'. Legacy records have no answers key, so the native branch (:74-75) never captures them. Legacy branch lines :94-103 are the baseline logic."
+    },
+    {
+     "id": "D1",
+     "verdict": "pass",
+     "evidence": "Same code as R3, unchanged by the delta: pairing on name and question (ask-answers.ts:86), whitespace collapse and trim (:87), empty-after-collapse dropped (:88), ` [note: <option> — <text>]` per note in order (:88, :90). Unpaired notes are never read because the notes loop runs only per answered field (:85-89)."
+    },
+    {
+     "id": "D2",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:82-83 skips answers whose trim() is empty (kept verbatim from 64197c6, unchanged in the delta). :92 returns null when no answer remains, which covers all-blank and answers: []. Probe on aae5aa9 for the delta: nativeEmptyAnswers and all-blank cases were not re-probed; the code is byte-identical in the delta."
+    },
+    {
+     "id": "X1",
+     "verdict": "pass",
+     "evidence": "Header ask-answers.ts:4-20 no longer says the native tool reports details.results[]. It states the current shape (AskToolDetails: answers[] one {name, question, answer} per named field; blank answer is not an answer; notes[]; timedOut:true = deadline submission). Legacy results[] and the single question result are described as persisted or pre-migration shapes read as before whatever timedOut they carry. The aae5aa9 header change matches the probes above. Nothing in the header is false about the current shape."
+    },
+    {
+     "id": "X2",
+     "verdict": "pass",
+     "evidence": "Current shape: ask-answers.ts:79 returns null before any output for timedOut:true; probes nativeTimedOut → null, nativeTimedOutFalse and nativeNoFlag → answers. Legacy shapes that carry timedOut (top-level single, per-result batch, top-level batch) yield their answers exactly as the base 21d748d (probes above). That legacy behavior is the adjudicator's ruling (whiteboard entry 2026-11-14T20:06:58, RULING), which the body's 使用场景 ('从旧会话恢复出来的作答，表现与改动前一致') and 预期结果 4 support. The pass rests on that ruling, not on the contract's generic wording of 预期结果 2."
+    },
+    {
+     "id": "C1",
+     "verdict": "pass",
+     "evidence": "ask-answers.ts:2 imports the host's AskToolDetails type from @oh-my-pi/pi-tui/tools/ask (dist types). :33 `const timedOutKey = \"timedOut\" satisfies keyof NativeAskToolDetails;`. :35-39 nativeDetails uses the computed key [timedOutKey]. :44-46 Equals<z.infer<typeof nativeDetails>, NativeAskToolDetails> under Assert<…> is an identity check, so an added, removed, renamed or optional host field fails tsc. The delta removes only the raw `in` guard; the schema, pin and assert are unchanged. Line :79 reads native.data.timedOut, a typed property access that fails tsc if the key leaves the host type. The negative probes in the 64197c6 review still hold for this schema."
+    },
+    {
+     "id": "C2",
+     "verdict": "pass",
+     "evidence": "No `any` and no `as` in ask-answers.ts (read in full). `satisfies` at :33 is a pin, not a cast. External input is parsed once through zod (:35-39 nativeDetails; :57 batchDetails; :52 questionResult). The raw property read is gone from the record-level guard, so the input is parsed once in the native branch. Comments at :76-78 and :82 explain why and do not restate code. The one comment with a factual problem is at :31-32; see the minor finding."
+    },
+    {
+     "id": "S1",
+     "verdict": "pass",
+     "evidence": "git diff 64197c6 aae5aa9 --stat: one file, agent/extensions/_shared/ask-answers.ts (63 insertions, 8 deletions). git diff 21d748d aae5aa9 --stat: the same single file. The hunks cover :11-28, :26-37, :70-91 and :95-103. formatAskAnswers (:107-109) is outside every hunk. No consumer, TOPIC file, package.json or lock changed."
+    },
+    {
+     "id": "O1",
+     "verdict": "fail",
+     "evidence": "Probes on the aae5aa9 copy (scratch under /tmp/a4-probe-aae, checkout not written): nativeMultilineTextarea {answers:[{name:'n',question:'Notes',answer:'line one\\nline two'}]} → 'Notes → line one\\nline two' (two lines). nativePaddedAnswer {answer:'  padded  '} → 'Title →   padded  '. nativeEmptyOptionNote with option '' → 'Database → SQLite [note:  — t]'. ask-answers.ts:90 passes `field.answer` through raw. The host's answerText returns String(value) for text fields (node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:245-247), and the parser supports textarea (parse.ts:500-504), so raw newlines reach this code. The contract is silent on native answer-text normalization: the decision table collapses note text only, and legacy customInput is trimmed (ask-answers.ts:59-64). The contract's 预期结果 1 says each answered question occupies one line. The code chose raw passthrough, so the observable multi-line and padded output is decided here, not by the contract or a ruling."
+    }
+   ],
+   "findings": [
+    {
+     "severity": "ruling_needed",
+     "where": "agent/extensions/_shared/ask-answers.ts:81-90 (native answer text pushed raw at :90)",
+     "problem": "The code decides how native answer text is normalized, and the contract and whiteboard do not. A multi-line textarea answer reaches formatAskAnswers with its newline intact: nativeMultilineTextarea answer 'line one\\nline two' → 'Notes → line one\\nline two', two physical lines for one question. Whitespace-padded answers keep their padding: '  padded  ' → 'Title →   padded  '. Note text is collapsed by the decision table, legacy customInput is trimmed (ask-answers.ts:59-64), and the native answer is neither. The host's answerText passes text values through with String(value) (node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:245-247), and the form parser supports textarea (parse.ts:500-504), so raw newlines reach this code.",
+     "expected": "A ruling on native answer text, with one of two outcomes. (a) Collapse and trim the native answer the same way note text is collapsed (`replace(/\\s+/g, ' ').trim()`), so each answered question is one line as 预期结果 1 states. (b) Keep the raw value and amend the contract to say so, accepting multi-line output for textarea answers. Until ruled, the code's choice is undecided by the contract. Either way, the same rule should cover both the answer and the note text."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:31-32",
+     "problem": "The comment says the timeout key 'is spelled once', but line :79 writes `native.data.timedOut` as a second literal spelling of the same key. The claim no longer holds.",
+     "expected": "Reword the comment to say the key is pinned to the host type (`satisfies keyof NativeAskToolDetails`, Equals assert), so a host rename fails tsc at both the pin and the property access."
+    },
+    {
+     "severity": "minor",
+     "where": "agent/extensions/_shared/ask-answers.ts:88 (note formatting with option '')",
+     "problem": "A note whose option is an empty string renders as `[note:  — t]` with two spaces and no label (probe nativeEmptyOptionNote). The contract's note format does not define an empty option. The host's labelOf falls back to the raw value (node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:250), so an empty option is unlikely in practice.",
+     "expected": "No code change is needed unless a ruling wants a defined output for an empty option. If one is wanted, record it in the contract first."
+    }
+   ]
+  }
+ ],
+ "rulings": [
+  {
+   "request": {
+    "from": "reviewer:task:low",
+    "category": "review_dispute",
+    "question": "The reviewer of commit 64197c61e536ef7b1d88b82f78729a6b756ca3ca reports that the code decides points the contract leaves open. Rule on each:\n1. agent/extensions/_shared/ask-answers.ts:94-107 vs :79 (legacy per-result vs top-level timedOut): Legacy per-result `timedOut:true` (QuestionResult.timedOut) still yields an answer, while legacy top-level `timedOut:true` yields null. The same auto-selected legacy answer is treated differently depending on which legacy shape it came in. Contract §2 ('timedOut: true 的提交不当作用户回答交给消费方') and R4 ('旧形状…逐字相同') do not settle it. (alternatives: A ruling from Main on whether legacy auto-selected answers (top-level or per-result timedOut) count as timed-out submissions. Then apply it uniformly to both legacy paths, or keep both as baseline.)",
+    "tried": [],
+    "evidence": [
+     "agent/extensions/_shared/ask-answers.ts:94-107 vs :79 (legacy per-result vs top-level timedOut)"
+    ]
+   },
+   "ruling": {
+    "kind": "ruling",
+    "ruling": "Legacy shapes read exactly as the baseline, so a legacy `timedOut` (top-level or per-result) never suppresses an answer. Only the current `answers[]` shape's `timedOut: true` yields null; the shape-agnostic pre-check at ask-answers.ts:79 is the regression and must go.",
+    "basis": [
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 预期结果 4",
+      "quote": "[保持] 旧形状 `details.results[]` 与单个 `{ question, selectedOptions, customInput? }` 的解析结果与基准提交逐字相同"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 继承的裁决",
+      "quote": "按 §2，`answers[]` 是当前形状，`timedOut: true` 的提交不交给消费方；`results[]` 与单个 `questionResult` 继续解析——它们既是已落盘历史，也是 omp-ask-more 迁移前的活产出，两者都不许删。"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 预期结果 2",
+      "quote": "`timedOut: true` 的提交不产生任何作答：`askAnswers` 返回 `null` … `timedOut: false` 或该字段缺席时按作答解析。"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 上下文 (host anchor)",
+      "quote": "`AskToolDetails`：`{ answers: FormAnswer[]; notes?: OptionNote[]; timedOut?: boolean }`，`timedOut` 的注释是「The deadline submitted the form's current values instead of the user.」"
+     },
+     {
+      "source": "agent/extensions/_shared/ask-answers.ts:79 (HEAD 64197c6)",
+      "quote": "if (typeof details === \"object\" && details !== null && timedOutKey in details && details[timedOutKey] === true) {"
+     }
+    ],
+    "instruction": "Do the following in agent/extensions/_shared/ask-answers.ts. (1) Remove the record-level pre-check at lines 74-81. Read `timedOut` once, through the schema: after `const native = nativeDetails.safeParse(details)`, inside `if (native.success)` return null first when `native.data.timedOut === true`, then do the existing answers/notes loop. Keep the `timedOutKey` computed schema key if it is still what ties the key to `NativeAskToolDetails` (the `satisfies` pin plus the Equals assert); drop the second raw read. (2) Leave the legacy `results[]` and single `questionResult` branch untouched: no `timedOut` handling, so a top-level or per-result `timedOut: true` in a legacy record still yields its answer exactly as at 21d748d. (3) Fix the header comment and the comment above the guard: say that `timedOut: true` is checked on the current shape only, and that legacy shapes are read as before whatever `timedOut` they carry (history is not reinterpreted). Do not claim `timedOut` exists only on the current shape. A record carrying a malformed `answers[]` together with `timedOut: true` is not a current-shape parse, so it follows the legacy path like any non-matching `details`; no extra handling. (4) Re-run the a4-ask driver, `bun run check && bun run test`, and probe these: legacy single with top-level `timedOut:true` returns its answer (equal to the baseline), legacy `results[]` with per-result `timedOut:true` returns its answer (equal to the baseline), and `{answers:[...], timedOut:true}` returns null. The reviewer's other minor points (malformed note drops all answers; 18.20.0 vs 18.20.1 anchor) need no code change; the all-or-nothing boundary parse stays since the host always writes a complete OptionNote.",
+    "contract_gap": false
+   }
+  },
+  {
+   "request": {
+    "from": "reviewer:loop:reviewer-low",
+    "category": "review_dispute",
+    "question": "The reviewer of commit aae5aa9f43107cca8e674f8d7efd49c348b15c2f reports that the code decides points the contract leaves open. Rule on each:\n1. agent/extensions/_shared/ask-answers.ts:81-90 (native answer text pushed raw at :90): The code decides how native answer text is normalized, and the contract and whiteboard do not. A multi-line textarea answer reaches formatAskAnswers with its newline intact: nativeMultilineTextarea answer 'line one\\nline two' → 'Notes → line one\\nline two', two physical lines for one question. Whitespace-padded answers keep their padding: '  padded  ' → 'Title →   padded  '. Note text is collapsed by the decision table, legacy customInput is trimmed (ask-answers.ts:59-64), and the native answer is neither. The host's answerText passes text values through with String(value) (node_modules/@oh-my-pi/pi-tui/src/html-form/data.ts:245-247), and the form parser supports textarea (parse.ts:500-504), so raw newlines reach this code. (alternatives: A ruling on native answer text, with one of two outcomes. (a) Collapse and trim the native answer the same way note text is collapsed (`replace(/\\s+/g, ' ').trim()`), so each answered question is one line as 预期结果 1 states. (b) Keep the raw value and amend the contract to say so, accepting multi-line output for textarea answers. Until ruled, the code's choice is undecided by the contract. Either way, the same rule should cover both the answer and the note text.)",
+    "tried": [],
+    "evidence": [
+     "agent/extensions/_shared/ask-answers.ts:81-90 (native answer text pushed raw at :90)"
+    ]
+   },
+   "ruling": {
+    "kind": "ruling",
+    "ruling": "Option (a): the native answer value is collapsed and trimmed exactly as note text is (`replace(/\\s+/g, \" \").trim()`), so each answered question renders as one `question → answer` line. This is a new rule the contract did not contain.",
+    "basis": [
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 目标",
+      "quote": "每个作答问题一行"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 预期结果 1",
+      "quote": "`details.answers[]` 里的每个作答问题在 `formatAskAnswers` 输出中占一行 `question → answer`"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 决策表 备注行",
+      "quote": "备注文本的换行与连续空白折叠为单个空格，折叠后为空的不并入"
+     },
+     {
+      "source": "/tmp/ghc/oh-my-omp-omp-config-323/body.md 决策表 空答案行",
+      "quote": "空白答案按未作答跳过；全部为空或 `answers: []` 返回 `null`"
+     },
+     {
+      "source": "agent/extensions/_shared/ask-answers.ts:90",
+      "quote": "answers.push({ question: field.question, answer: [field.answer, ...notes].join(\" \") });"
+     }
+    ],
+    "instruction": "In the native branch of ask-answers.ts, compute `const value = field.answer.replace(/\\s+/g, \" \").trim();` once. Use `if (value === \"\") continue;` as the blank test (this equals the current `trim() === \"\"` test, so the skip rule and the all-blank → null rule do not change). Then push `answer: [value, ...notes].join(\" \")`. Notes keep their existing collapse. Do not touch the legacy branch: `answerOf`/`customInput` stay byte-identical to the baseline (R4 [保持]), and legacy answers are not collapsed. Do not collapse the question text or the note option label, and add no handling for an empty note option; the decision table does not define it and the host falls back to the raw value, so it is a minor, no change. Update the comment above the blank test to say the value is collapsed to a single line, since the contract requires one line per question. Re-run the a4-ask driver (its fixture answers `SQLite` and `no` are unaffected), `bun run check && bun run test`, and probe: `'line one\\nline two'` → `Notes → line one line two`, `'  padded  '` → `Title → padded`, `'   '` → null.",
+    "contract_gap": true
+   }
+  }
+ ],
+ "base": "21d748d522fd47c6c08516c377295ca0d4b5ce81",
+ "worker": {
+  "id": "free1taskfree1",
+  "tier": "task:free1",
+  "since": 1794687140940,
+  "sawRunning": true
+ },
+ "passedHead": "0d7145442485e14bb2b8596a7458c74fc97f1a94",
+ "gateRuns": 4,
+ "handoff": {
+  "head": "0d7145442485e14bb2b8596a7458c74fc97f1a94",
+  "files_changed": [
+   "agent/extensions/_shared/ask-answers.ts"
+  ],
+  "results": [
+   {
+    "id": "结果 1",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:80-95 — nativeDetails.safeParse succeeds on the host's { answers[] } shape; each field's value collapses to one line and becomes {question, answer} while formatAskAnswers (line 107-109) renders `question → answer` per line. Driver: native=\"Database → SQLite\\nBackfill → no\", persisted=[\"Database → SQLite\\nBackfill → no\"] via the real transcript reader; probe 'line one\\nline two' → 'Notes → line one line two', '  padded  ' → 'Title → padded'"
+   },
+   {
+    "id": "结果 2",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:76-79 — `if (native.data.timedOut === true) return null;` inside the native.success branch, so the suppression applies only when the record parses as the current shape; `timedOut: false`/absent parses normally. Driver: timedOut=null, notTimedOut=\"Backfill → no\"; probe {answers:[…], timedOut:true} → null"
+   },
+   {
+    "id": "结果 3",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:87-92 — notes paired by name+question, text folded \\s+→\" \" and trimmed, empty-folded and unpaired notes dropped, merged as ` [note: <option> — <text>]` per note in order. Driver: notes=\"Database → SQLite [note: SQLite — only if backups stay] [note: SQLite — and WAL on]\", orphan note absent"
+   },
+   {
+    "id": "结果 4",
+    "met": true,
+    "where": "agent/extensions/_shared/ask-answers.ts:47-52,63-69,96-103 — questionResult, batchDetails, answerOf and the legacy parse loop are byte-for-byte the baseline code with no timedOut handling and no value collapse. Driver: legacyBatch='Database → SQLite + \"in WAL\"', legacySingle=\"Database → SQLite\", legacyNoSelection/otherTool/errorResult=null. Probes vs baseline (git show 21d748d): legacy single top-level timedOut:true, legacy results[] per-result timedOut:true and legacy batch top-level timedOut:true all return \"Database → SQLite\" — identical to baseline"
+   }
+  ],
+  "decisions": [
+   {
+    "point": "Native answer value normalization (adjudicated option a)",
+    "choice": "`const value = field.answer.replace(/\\s+/g, \" \").trim()` computed once; blank test `value === \"\"`; pushed answer `[value, ...notes].join(\" \")`; question text and note option label not collapsed",
+    "basis": "Adjudicator ruling relayed by Main: each answered question renders as one line, collapse matches note-text folding; legacy answers explicitly not collapsed (R4 [保持])"
+   },
+   {
+    "point": "Scope of the timedOut suppression (adjudicated)",
+    "choice": "`native.data.timedOut === true` checked only inside the native.success branch; legacy records keep their answer whatever timedOut they carry",
+    "basis": "Adjudicator ruling: legacy shapes read exactly as the baseline; a legacy timedOut (top-level or per-result, as 18.1.17 persisted) never suppresses an answer. Probes vs git-show baseline confirm identical readings"
+   },
+   {
+    "point": "How the flag's key stays tied to the host type",
+    "choice": "`const timedOutKey = \"timedOut\" satisfies keyof NativeAskToolDetails` as the computed schema key `[timedOutKey]`; the parsed access `native.data.timedOut` is typed by the schema itself",
+    "basis": "omptype's zod-like API has no .pick/.shape/.keyof; the satisfies pin plus the Equals assert both fail tsc on a desync — negative-tested (TS1360 + TS2344)"
+   },
+   {
+    "point": "Where notes merge into the output",
+    "choice": "Fold paired notes into AskAnswer.answer at parse time; AskAnswer type and formatAskAnswers stay unchanged",
+    "basis": "Contract fixes only the formatted line; merging at parse means no consumer can read .answer directly and silently lose notes, and legacy constructors need no notes field"
+   },
+   {
+    "point": "Parse order when both keys are present",
+    "choice": "Native shape parsed before legacy results[]/single",
+    "basis": "omptype z.object strips unknown keys, so a record carrying both answers and results parses as native — the current shape wins per §2"
+   },
+   {
+    "point": "Compile-time link mechanism",
+    "choice": "import type { AskToolDetails as NativeAskToolDetails } from \"@oh-my-pi/pi-tui/tools/ask\" plus `type _NativeDetailsIsHostShape = Assert<Equals<z.infer<typeof nativeDetails>, NativeAskToolDetails>>` (identity-function idiom, type alias — no runtime binding)",
+    "basis": "约束 requires a host shape change to surface as a tsc error; Equals catches added/removed/changed fields at any depth incl. optional-vs-required; import type satisfies the AGENTS.md subpath exception and is erased at runtime. Negative-tested: optionalizing optionNote.value produced TS2344"
+   }
+  ],
+  "compile_time_link": "agent/extensions/_shared/ask-answers.ts:2,33,41-46 — `import type { AskToolDetails as NativeAskToolDetails } from \"@oh-my-pi/pi-tui/tools/ask\"`, `const timedOutKey = \"timedOut\" satisfies keyof NativeAskToolDetails` (single pinned spelling of the flag's key used as the computed schema key), and `type _NativeDetailsIsHostShape = Assert<Equals<z.infer<typeof nativeDetails>, NativeAskToolDetails>>`. A host change to any field of AskToolDetails, FormAnswer or OptionNote resolves Equals to false and fails `Assert<… extends true>` (TS2344) at that line — negative-tested by optionalizing optionNote.value; a timedOut rename additionally fails the `satisfies keyof` (TS1360).",
+  "deviations": [
+   "wb_free1 and gate_free1 were absent from the session tool registry during the first round; the first FINDING entry was appended to the whiteboard file via shell (format matched) before the tools were restored; all later entries and gate passes went through the tools",
+   "Committed with plain `git commit` per assignment rules instead of the repo's lgit convention; no CHANGELOG.md entry was written",
+   "HEAD is four fix commits (8b872df → 64197c6 → aae5aa9 → 0d71454) on main of the private clone; review-driven rework is recorded in commit history"
+  ],
+  "risks": [
+   "No real-omp session run in this child — real-session observation of the timeline/{{ask_answers}} entries is owned by the tree's acceptance issue #337",
+   "A persisted record carrying BOTH answers[] and results[] parses as native (schema strips unknown keys); unproducible by either producer, and the decision favors the current shape",
+   "Answers skipped as blank lose their paired notes with them — matches 'blank skipped' but means a note on an unfilled or whitespace-only field is also dropped",
+   "A record with malformed answers[] plus timedOut:true falls to the legacy path per adjudication (not a current-shape parse); with no legacy keys it returns null",
+   "Empty note option label renders `[note:  — t]` per the ruling (decision table does not define it; host falls back to the raw value)"
+  ]
+ },
+ "reviewer": {
+  "id": "free1review-4",
+  "tier": "loop:reviewer-low",
+  "head": "0d7145442485e14bb2b8596a7458c74fc97f1a94",
+  "since": 1794687215550,
+  "sawRunning": false,
+  "lastStatus": "1|# free1review-4 (running)\n2|\n3|No final output yet: `agent://free1review-4` shows progress until the run publishes its"
+ },
+ "adjudicator": {
+  "id": "free1adjudicator",
+  "since": 1794687108944,
+  "sawRunning": false
+ }
+}

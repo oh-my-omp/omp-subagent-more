@@ -1,0 +1,103 @@
+{
+ "ref": "oh-my-omp/omp-sessions#41",
+ "agent": "scoutoh-my-omp-omp-sessions-41",
+ "seconds": 437,
+ "slices": [
+  {
+   "id": "session-identity",
+   "title": "Give every session file a route identity: `bucketSessions` resolves names that are not `<timestamp>_<id>.jsonl` from the session header (`readSessionInfo`: sid = header id, created = header timestamp, skip a missing/invalid header) instead of dropping them, and `locateSession`'s `prefix` branch adds the same header read for unstamped files in every bucket, keeping stamped names first for a shared sid and leaving single-match/ambiguity rules unchanged",
+   "files": [
+    "src/routes.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+   ],
+   "done_when": "With `bun install` refreshed in the PR checkout so `@oh-my-pi/*` is the current release, `REPO=<checkout> bun /tmp/b8-session-names.ts` exits 0 with every reading asserted by acceptance rows 1–4 and `bun run check && bun test` exit 0."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-listed-preference-scope",
+   "point": "Whether the stamped-file preference for one sid applies only inside the requested date (`listed` branch) or across the whole bucket; the contract states both, and only the acceptance readings settle it",
+   "input": "Bucket `-tmp-b8` holding `2026-11-14T10-00-00-000Z_abc123.jsonl` (header id `zzz999`, created `2026-11-14T10:00:00.000Z`) and `copy.jsonl` (header id `abc123`, created `2026-11-10T12:00:00.000Z`, text `hello from copy`); read `session://projects/-tmp-b8/2026-11-10/abc123/timeline`",
+   "outputs": [
+    "renders `hello from copy` (preference applied within the matching date only)",
+    "throws `No session abc123 dated 2026-11-10 in -tmp-b8` (the stamped file with id abc123 exists, so the copy is never used)"
+   ],
+   "producer": "src/routes.ts:200-206 (`listed` branch matches sid and date in the `bucketSessions` rows); the two files are the contract's own fixtures, /tmp/ghc/oh-my-omp-omp-sessions-41/body.md:115 and :122",
+   "searched": "Read 决策 4 (body.md:57) against 结果 4 (body.md:64) and the acceptance readings `day10`/`byCopyDate` (body.md:186,193); read src/routes.ts:187-227 and src/handler.ts:203-210, which never apply the preference themselves"
+  },
+  {
+   "id": "op-date-entry-dedup",
+   "point": "Whether `.../<date>` lists a sid once or once per file when two files share that sid and the same header creation date (a byte copy of a stamped session), i.e. whether the date directory dedupes by sid",
+   "input": "Bucket holding `2026-11-14T10-00-00-000Z_abc123.jsonl` and `copy.jsonl` written as a byte copy of it (both header id `abc123`, timestamp `2026-11-14T10:00:00.000Z`); read `session://projects/-tmp-b8/2026-11-14`",
+   "outputs": [
+    "`[\"abc123\",\"abc123\"]` — one directory entry per file",
+    "`[\"abc123\"]` — one entry per sid"
+   ],
+   "producer": "the user copying a session file into a bucket and resuming it by path (body.md:15); the host accepts `--resume <path>` and keeps the name (pi-coding-agent src/main.ts:1310-1311, src/session/session-manager.ts:2359), entries are built by src/handler.ts:207-210 with no dedupe",
+   "searched": "ast_grep `bucketSessions`/`fileStamp` over src, test and index.ts; read src/handler.ts:192-236, src/routes.ts:187-227, host src/session/session-listing.ts:409-514 (`created` from the header timestamp) and src/main.ts:1300-1340"
+  },
+  {
+   "id": "op-scan-depth",
+   "point": "Whether the header read covers only files directly in the bucket or also `.jsonl` files below bucket subdirectories (subagent transcripts, which carry their own `type: \"session\"` header)",
+   "input": "Bucket `-tmp-b8` with `2026-11-14T10-00-00-000Z_abc123.jsonl` and `2026-11-14T10-00-00-000Z_abc123/ToolAsk.jsonl` whose first line is `{\"type\":\"session\",\"id\":\"abc123.ToolAsk\",\"timestamp\":\"2026-11-13T09:00:00.000Z\"}`; read `session://projects/-tmp-b8` and `locateSession({kind:\"prefix\",prefix:\"ToolAsk\"}, \"/tmp/b8\")`",
+   "outputs": [
+    "bucket dates stay `2026-11-14,sessions.jsonl` and the prefix reports `No session id starts with \"ToolAsk\"` (bucket level only)",
+    "a `2026-11-13` date appears and lists the transcript's id; `session://abc123.ToolAsk` is then rejected as `\"abc123.ToolAsk\" is not a session id prefix` — a listed sid no URL can open"
+   ],
+   "producer": "the host writes subagent transcripts at `<transcript-dir>/<AgentId>.jsonl` with a session header (pi-coding-agent src/session/sub-sessions.ts:1-6 and :68-112); this repo derives the same layout in src/routes.ts:229-244",
+   "searched": "read host src/session/sub-sessions.ts, src/session/session-listing.ts:1199-1240 (bucket-level glob, no recursion), this repo src/routes.ts:229-273 and src/handler.ts:203-210; ast_grep/grep for agent transcript fixtures under test/"
+  },
+  {
+   "id": "op-symlinked-bucket",
+   "point": "Whether the new content scan enumerates symlinked bucket directories; the host's own bucket scan skips them, and the contract says only that the new scan must not copy that function",
+   "input": "`<sessions root>/-tmp-b8-alias` is a symlink to `-tmp-b8`, which holds `current.jsonl` (header id `def456`); read `session://def456/timeline` and `locateSession({kind:\"prefix\",prefix:\"def456\"}, \"/tmp/b8\")`",
+   "outputs": [
+    "one candidate: `current.jsonl` opens",
+    "two candidates with the same sid (`def456 (-tmp-b8)`, `def456 (-tmp-b8-alias)`) → `\"def456\" matches 2 sessions`, or a silent dedupe by sid"
+   ],
+   "producer": "a user-created bucket alias — no omp code writes one; the host guards the shape in pi-coding-agent src/session/session-listing.ts:1201-1211 (skips `entry.isSymbolicLink()` so an alias does not list a bucket twice, #5385)",
+   "searched": "read host `scanBucketFiles` and `findSessionFiles` (src/session/session-listing.ts:1199-1240, :1384-1394), this repo `bucketDir` (src/routes.ts:181-185) and the `projects` listing (src/handler.ts:199-202), neither of which skips symlinks"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 3 / 决策 2 — a stamped name still takes `created` from the name, not the header",
+   "input": "`2026-11-14T10-00-00-000Z_abc123.jsonl` whose header timestamp is `2026-11-09T10:00:00.000Z`: bucket dates must contain 2026-11-14 and not 2026-11-09, `.../2026-11-14/abc123` must open, `.../2026-11-09/abc123` must error. The driver's stamped file has header timestamp on the same day as its name (body.md:115), so an implementation taking `created` from the header passes every reading"
+  },
+  {
+   "row": "决策 2 / 结果 3 — listing a stamped bucket reads no file content",
+   "input": "`2026-11-14T10-00-00-000Z_abc123.jsonl` whose content is `not json\\n`: it must still appear on 2026-11-14 and open via `session://abc123/timeline`. The driver's stamped file is valid JSON with a readable header, so reading it and falling back to the name passes"
+  },
+  {
+   "row": "结果 2 / 决策 3 — a header that yields no valid `created` (or no id) enters no list and matches no prefix",
+   "input": "`notime.jsonl` = `{\"type\":\"session\",\"version\":1,\"id\":\"eee111\",\"cwd\":\"/tmp/b8\"}` (probe run against the checkout's host: `readSessionInfo` returns `created: Invalid Date`) and `emptyid.jsonl` with `\"id\":\"\"`: neither may appear in any date directory nor match `session://eee111`, and the bucket listing plus the prefix lookup must stay error-free. The driver's only junk file (`broken.jsonl`, body.md:126) has no session header at all"
+  },
+  {
+   "row": "结果 1 — `session_query`'s `agents`, `events` and `sql` reach the session through the same resolution",
+   "input": "after the driver's fixture layout, `tool.session_query` with `sids:[\"def456\"]` and `action:\"agents\"|\"events\"|\"sql\"` must return rows for `current.jsonl`; the only acceptance command calls `locateSession` directly (body.md:171) and never the tool"
+  },
+  {
+   "row": "结果 2 — a file that does not read as a session matches no id prefix",
+   "input": "`session://broken` for the driver's `broken.jsonl`: the error must be `No session id starts with \"broken\"`. The driver asserts only that `junk` is an object with an `error` key (body.md:195-197), so a thrown read failure from the new scan (EISDIR on a directory, a parse error) passes unnoticed"
+  },
+  {
+   "row": "决策 4, second clause — several candidates in the same class keep the existing single-match/ambiguity rule",
+   "input": "`current.jsonl` and `current2.jsonl`, both headers `id: def456`, no timestamp in either name: `session://def456/timeline` must report `\"def456\" matches 2 sessions`. The driver's ambiguity readings (body.md:179-180) both use distinct sids"
+  },
+  {
+   "row": "结果 1 — every file the host can read as a session, not only names ending `.jsonl`",
+   "input": "`current.txt` in the bucket whose first line is a session header (`id: ggg777`, timestamp `2026-11-12T12:00:00.000Z`; probe: `readSessionInfo` parses it): it must be listed under 2026-11-12 and open. `--resume <path>` reaches it (host src/main.ts:1310-1311), and a scan filtering `*.jsonl` passes every driver reading"
+  },
+  {
+   "row": "结果 2 — a non-file entry in a bucket makes no listing throw",
+   "input": "an artifacts directory `2026-11-14T10-00-00-000Z_abc123/` sitting next to the stamped session file (the layout the host writes, pi-coding-agent src/session/sub-sessions.ts:1-6): `session://projects/-tmp-b8` and each date directory must list only session files and not throw; the driver's bucket has no directory entry"
+  }
+ ]
+}

@@ -1,0 +1,123 @@
+{
+ "ref": "oh-my-omp/omp-todo-more#49",
+ "agent": "scoutoh-my-omp-omp-todo-more-49",
+ "seconds": 481,
+ "slices": [
+  {
+   "depends_on": [],
+   "done_when": "In the PR checkout the lockfile resolves every @oh-my-pi/* dev dependency to the current `latest` release (18.20.2 at plan time; package.json already pins the channel as `latest`, so only bun.lock changes), `bun install` succeeds, `bun run check` then reports the host-contract errors listed in 问题 (state.ts TS2322, render.ts/native.ts TS2322/TS2345, test/native.ts, test/overtime.ts, test/tool.ts) instead of the old `commitTodoPhases does not exist`, and `bun test` is still 269 pass.",
+   "files": [
+    "bun.lock"
+   ],
+   "id": "dep-refresh",
+   "rows": [],
+   "title": "Refresh the @oh-my-pi/* development dependencies so tsc sees the current host contract"
+  },
+  {
+   "depends_on": [
+    "dep-refresh"
+   ],
+   "done_when": "At the checkout root, with the contract's driver stored verbatim as /tmp/a2-host-projection.ts, `bun /tmp/a2-host-projection.ts` ends in `ok` (exit 0) with projectionStatuses holding only pending/in_progress/completed/abandoned, `Wait on review` as `pending`, projectionHasBlockerKey false, inProgressStays `in_progress`, trackerMatchesResult true, committed true, while moreBlockedItem and nativeBlockedRow still report `blocked` with `reviewer silent`; hostPhases is the only place that translates status, so src/commit.ts:36 and src/tool.ts:477 need no edit, and test/tool.test.ts's `projected()` no longer passes the plugin's five values (or a blocker) through; the commit's `## [Unreleased]` section records the four-value projection (lgit writes it).",
+   "files": [
+    "src/state.ts",
+    "index.ts",
+    "test/tool.test.ts",
+    "CHANGELOG.md"
+   ],
+   "id": "host-projection",
+   "rows": [
+    "2",
+    "3",
+    "4",
+    "6"
+   ],
+   "title": "Project every task into the host's four statuses with no blocker key (src/state.ts hostPhases and its index.ts header claim only; leave the unrelated `finished-subagent auto-complete` header claim untouched)"
+  },
+  {
+   "depends_on": [
+    "dep-refresh",
+    "host-projection"
+   ],
+   "done_when": "`bun run check && bun test` exits 0 on the refreshed dependencies with no blocked/blocker-related TS2322/TS2345 and the suite count unchanged except for the fixtures moved to the host shape, while `bun /tmp/a2-host-projection.ts` still prints `legacyFellBack: false`, `legacyHasBlockedRow: true`, `legacyText: true`, `replayedBranchStatus: \"blocked\"` — i.e. detailsSchema (src/render.ts:37-51) still parses a persisted result whose phases carry `status: \"blocked\"` plus `blocker`, and the readers are typed so that TodoMoreDetails.phases stays strictly HostTodoPhase[].",
+   "files": [
+    "src/render.ts",
+    "src/native.ts",
+    "test/native.test.ts",
+    "test/overtime.test.ts"
+   ],
+   "id": "reader-types",
+   "rows": [
+    "5",
+    "7"
+   ],
+   "title": "Type the result-details readers and fixtures against the current host contract while detailsSchema keeps accepting the historical five-value/blocker shapes"
+  },
+  {
+   "depends_on": [
+    "dep-refresh",
+    "host-projection",
+    "reader-types"
+   ],
+   "done_when": "In the OrbStack sandbox of omp-config#320 decision §1/§3 (this repo has no AGENTS.md, so that route is the only one), with the PR head sha cloned to /work/omp-todo-more, `bun install`d and linked by `omp plugin link /work/omp-todo-more`, a session that runs the two eval units (INIT+PHASE+ADD, then BLOCK) and then `/todo export /tmp/a2-todo.md` writes a file whose task line is `- [ ] Wait on review` with no `[undefined]` anywhere in it, and `/todo import /tmp/a2-todo.md` prints `Imported 1 phase(s), 1 task(s) from /tmp/a2-todo.md.` with no `Could not parse`.",
+   "files": [],
+   "id": "sandbox-roundtrip",
+   "rows": [
+    "1"
+   ],
+   "title": "Prove the host Markdown round trip on a blocked item in a real session"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "orphan-blocker",
+   "input": "One Todo document that runs `BLOCK \"Wait on review\" \"reviewer silent\"` and then, in the same or a later call, `START \"Wait on review\"` (or `DONE`/`DROP`); read `details.more`, the native card/HUD row, `omp-todo-more:read`'s `counts`, and `details.phases`.",
+   "outputs": [
+    "The snapshot keeps `{status:\"in_progress\", blocker:\"reviewer silent\"}`: the card/HUD shows `Blocker: reviewer silent` on an active row while `counts.blocked` is 0 and `details.phases` is `{content, status:\"in_progress\"}` with the blocker dropped (the literal reading of 结果 1 plus 结果 2)",
+    "Leaving `blocked` clears the blocker, so no record ever holds a non-blocked item with a blocker; that requires editing START/DONE/DROP in src/tool.ts, which 责任单元 says this child leaves alone (the plugin's five-value state and its writer stay as they are)"
+   ],
+   "point": "An item whose plugin status has left `blocked` but whose `blocker` is still set: 结果 2 speaks of blocked and blocker as one presentation while 结果 1 keys the projection on status alone, and the contract never says whether the plugin record keeps that orphan blocker or whether any code should clear it.",
+   "producer": "<omomp>/omp-todo-more/src/tool.ts:269-282 (start/done/drop assign status and never touch `blocker`; only a BLOCK without reason at src/tool.ts:294 and UNBLOCK at src/tool.ts:307 delete it); the same combination enters the plugin from a pre-18.19 `user_todo_edit` record through src/state.ts:297 in joinNative, which copies `task.blocker` whatever the status",
+   "searched": "grep `blocker` over src/, test/, index.ts; read all `applyOp` cases in src/tool.ts:265-330, hostPhases/joinNative/itemSnapshotSchema in src/state.ts:135-183,280-324; checked 范围边界's 「不在范围：插件自己的 BLOCK/UNBLOCK 语法、五值状态、卡片与 topic 文案」"
+  },
+  {
+   "id": "view-committed",
+   "input": "An eval unit `await tool.todo({ input: \"*** Begin Todo\\nVIEW\\n*** End Todo\" })` in the sandbox session; read the bridge status line it emits.",
+   "outputs": [
+    "`committed: false` — host contract: `committedTodoPhases` returns undefined on `op === \"view\"` (host 18.20.2 src/tools/todo.ts:42-47) and the status line is built from that same call (src/eval/js/tool-bridge.ts:155-157), so this is the only reachable result while the plugin and host stay unchanged",
+    "`committed: true` — the literal reading of 结果 3, which would need either the plugin's VIEW result to stop carrying `op: \"view\"` or a host change; 范围边界 excludes both (plugin protocol untouched, host behavior untouched)"
+   ],
+   "point": "结果 3 promises the eval bridge's status line reports `committed: true` without qualification, but the host refuses any result whose `details.op` is `\"view\"`, and a plugin VIEW result carries exactly that op.",
+   "producer": "<omomp>/omp-todo-more/src/tool.ts:671 (`if (op === \"view\") return result(..., { op })`), with `RESULT_OPS` including `view` at src/tool.ts:48",
+   "searched": "read runTodo's result exits in src/tool.ts:664-724 and RESULT_OPS/OPS in src/tool.ts:48 and src/protocol.ts; read host 18.20.2 (npm tarball) src/tools/todo.ts:42-47, src/eval/js/tool-bridge.ts:150-160 and :360-380"
+  },
+  {
+   "id": "same-list-claim",
+   "input": "After the driver's BLOCK, or after a direct (non-bridged) `todo` call that BLOCKs, read the host's list (`/todo`, `session.getTodoPhases()`, the TodoTracker projection built from `details.phases`) and the plugin's list (`branchFacts(manager).state`, the native card, the Tern HUD).",
+   "outputs": [
+    "Host surfaces report `pending` with no blocker while the plugin's snapshot, card and Tern HUD report `blocked` with the reason — 结果 1 + 结果 2 + 使用场景, and the state the eval bridge leaves on the branch (plugin snapshot blocked, host `user_todo_edit` pending)",
+    "Both sides report the same statuses — the literal reading of 目标 (「宿主与插件读到同一个列表」), which would require the plugin's authority to degrade to pending (refused by 决定表第 2 行) or the host to keep `blocked` (refused by 决定表第 1 行)"
+   ],
+   "point": "目标 and 使用场景 say the host and the plugin read the same list after resume/rewind/fork, while 使用场景 plus 结果 1/2 make the host's own surfaces show a blocked item as pending and the plugin's card/Tern HUD show it as blocked for the same branch.",
+   "producer": "<omomp>/omp-todo-more/src/tool.ts:477 writes the pending projection into `details.phases` while src/commit.ts:24 appends the plugin snapshot with `blocked`, and the eval bridge then commits the host record on top (host 18.20.2 src/eval/js/tool-bridge.ts:367-373, src/session/agent-session.ts:11577-11580)",
+   "searched": "read 目标, 使用场景, 结果 1-5, 决定表 and 范围边界 in the contract; read src/commit.ts, src/tool.ts result(), src/branch.ts recordOf/foldState usage, and host 18.20.2 canonicalTodoPhases/withoutBlocked and AgentSession.commitTodoPhases"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "input": "The row's own commands cannot produce it: its first eval unit (INIT + PHASE + ADD) makes details.phases four-valued, so the host bridge calls `session.commitTodoPhases` (host 18.20.2 src/eval/js/tool-bridge.ts:367-373) and appends a canonical `user_todo_edit` entry; the BLOCK call then contributes nothing on the baseline, so `/todo export` reads that record through getLatestTodoPhasesFromEntries and writes `- [/] Wait on review` (host src/modes/controllers/todo-command-controller.ts:140-144,227-240). Observing the stated `[undefined]` needs a session whose branch holds no canonical todo record while `session.getTodoPhases()` holds a `blocked` item.",
+   "row": "验收行 1 的基线 expect（`- [undefined] Wait on review` / `Could not parse … unrecognized syntax`）"
+  },
+  {
+   "input": "In the same sandbox session run `/todo`, `/todo copy` (read the clipboard) and `/todo edit` with `$EDITOR` set to a script that writes the file back unchanged, then check for `[undefined]` and for `Could not parse Markdown`; acceptance row 1 only runs `/todo export` and `/todo import`.",
+   "row": "结果 3 的 `/todo`（无参数显示）、`/todo copy`、`/todo edit` 保存"
+  },
+  {
+   "input": "Acceptance row 6 feeds `joinNative(hostPhases(state), state, …)`, i.e. the plugin's own projection, not a record the host wrote; to observe the real path read `branchFacts(manager).state` after acceptance row 1's `/todo import` (which goes through AgentSession.commitTodoPhases) and confirm `Wait on review` is `pending` with no `blocker`.",
+   "row": "结果 5 的宿主整表写入（`/todo start|done|drop|rm|append`、RPC `set_todos`、eval 桥提交）"
+  },
+  {
+   "input": "Send one `omp-todo-more:read` request to the session that holds the blocked item and read `counts.blocked === 1`; no acceptance row touches the review channel and there is no review-API test (src/review-api.ts:32-34 counts by plugin status).",
+   "row": "结果 2 的 `omp-todo-more:read` `counts.blocked`"
+  }
+ ]
+}

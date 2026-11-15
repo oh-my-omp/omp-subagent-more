@@ -1,0 +1,110 @@
+{
+ "ref": "oh-my-omp/omp-dispatch#243",
+ "agent": "scoutoh-my-omp-omp-dispatch-243",
+ "seconds": 412,
+ "slices": [
+  {
+   "id": "host-adapter-published",
+   "title": "把席位宿主适配对齐到当前发布版宿主（18.20.0）：刷新 @oh-my-pi/* 依赖，main() 收窄，席位 MCP 视图按自己的 session id 打开",
+   "files": [
+    "package.json",
+    "bun.lock",
+    "src/ports/host.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "4",
+    "5"
+   ],
+   "done_when": "`bun run check && bun test` 在 `@oh-my-pi/pi-coding-agent` 与 `@oh-my-pi/omptype` 刷新到当前发布版后 exit 0，且 `bun run sim tree flow` 在真实 omp 18.20.0 上分别打印 `PASS tree` 与 `PASS flow`。"
+  },
+  {
+   "id": "mcp-scope-sim",
+   "title": "用 stdio MCP fixture 与 mcp-scope 场景证明席位 MCP 视图的隔离（含模型日志记录每次请求的工具名与 README 场景清单）",
+   "files": [
+    "tests/sim/mcp-server.ts",
+    "tests/sim/scenario.ts",
+    "tests/sim/extension.ts",
+    "tests/sim/run.ts",
+    "README.md"
+   ],
+   "depends_on": [
+    "host-adapter-published"
+   ],
+   "rows": [
+    "2",
+    "3"
+   ],
+   "done_when": "`bun run sim mcp-scope` 打印 `PASS mcp-scope` 且 exit 0，其打印的 run 目录里 `model.jsonl` 显示席位 A 在 `mcp__fx_load` 之后的每条请求都带 `mcp__fx_added`、Main 与席位 B 在之后的每条请求都不带它，且 A 的 `dispatch-session-contract` 条目里 `dispatch` 只出现一次。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "added-result-payload",
+   "point": "合同规定 fixture 在 `tools/call` 进行中发 `notifications/tools/list_changed`、其后的 `tools/list` 多出 `added`，但没有规定 `added` 被调用时返回什么。验收第 2 行要求「对它的调用拿到工具结果而不是 unknown tool」，而宿主 MCP 代理在工具不可用或出错时同样返回一个 toolResult（`MCP error: … no longer available`，18.20.0 `src/task/executor.ts:1044-1075`），因此「有 toolResult」本身分不出成功与失败。",
+   "input": "席位 A 在 `mcp__fx_load` 之后调用 `mcp__fx_added`（JSON-RPC `tools/call` 名 `added`）。",
+   "outputs": [
+    "检查接受任何 toolResult，不比对内容（MCP 错误结果也会通过）",
+    "检查要求 fixture 返回固定文本（例如 `added`）并与之比对，否则判失败"
+   ],
+   "producer": "none",
+   "searched": "`grep -rn \"mcp\" tests/ --include=*.ts` 只命中 `tests/active-tools.test.ts:28-29`；读 `tests/sim/extension.ts:164-211`（ownerStep/gateStep 只生成 bash/commit/submit/verdict/escalate/text 步骤）、`tests/sim/scenario.ts:12-27`（OwnerRound 只有 commit/escalate/quit）、`find tests/sim -type f` 无 MCP fixture。"
+  },
+  {
+   "id": "main-request-vacuity",
+   "point": "验收第 2 行要求「此后 Main 的每条请求 … 都不带它」，但合同没有要求 A 的 `mcp__fx_load` 之后 Main 至少再发一次请求；Main 只在 coordinator 唤醒它时才产请求，若之后没有 Main 请求，这条断言空成立，场景可以在从未验证 Main 的情况下 PASS。",
+   "input": "mcp-scope 的一次运行里，A 调过 `mcp__fx_load` 之后 `model.jsonl` 内不再出现任何 `kind: \"main\"` 条目（例如 A 的脚本轮以 `{kind:'quit'}` 结束、Main 没被唤醒）。",
+   "outputs": [
+    "PASS：断言空真，无任何 Main 请求被检查",
+    "FAIL：检查要求 A 的 load 之后至少存在一条 Main 请求，缺失即失败"
+   ],
+   "producer": "tests/sim/extension.ts:89-112（attentionPlan 只在 `Dispatch needs Main:` 唤醒时产请求）；tests/sim/extension.ts:164-189（席位按脚本轮产请求，`quit` 轮只回文本、不提交）",
+   "searched": "读 `tests/sim/extension.ts:73-190`、`tests/sim/run.ts:447-784`（既有场景如何安排 Main 后续请求）、`tests/sim/run.ts:795-812`。"
+  },
+  {
+   "id": "fixture-capabilities",
+   "point": "合同只要求 fixture 在 `initialize` 后提供工具 `load`；没有说 `initialize` 结果里的 `capabilities` 怎么写，也没说 fixture 是否要应答 `resources/list`、`prompts/list`。宿主按 capabilities 决定是否发这些请求，应答失败会把该服务器记成 failed，`mcp__fx_load` 就不会出现。",
+   "input": "omp 连上该 stdio server 时 fixture 返回的 `initialize` 结果（只声明 tools，或同时声明 resources/prompts）。",
+   "outputs": [
+    "只声明 `tools`：宿主只发 `tools/list`，fixture 只需处理 initialize、tools/list、tools/call",
+    "声明了 resources/prompts：宿主再发 `resources/list`、`prompts/list`（18.20.0 `src/mcp/manager.ts:1973-1981`），fixture 必须应答，否则服务器 failed、席位首请求不含 `mcp__fx_load`"
+   ],
+   "producer": "none",
+   "searched": "18.20.0 发布包 `src/mcp/manager.ts:1973-1981`（`serverSupportsResources`/`serverSupportsPrompts` 门控）、`:2060-2200`；`grep -rn \"mcp\" tests/ --include=*.ts`（无 fixture）。"
+  },
+  {
+   "id": "scenario-shape-and-end",
+   "point": "合同要求「同时建两个席位 A、B」并给出 `PASS mcp-scope`、exit 0，但没有说 A/B 是哪两种席位（两条并行 ticket 的 Owner，还是 Owner 加 judge），也没有说这次运行是否必须把 agenda 交付完。sim 的默认驱动等待 `completed`，不交付的场景必须自带 `drive`，因此两种读法会得到不同的场景与断言集合。",
+   "input": "`bun run sim mcp-scope`（场景由本 child 新写：A 调 `mcp__fx_load` 再调 `mcp__fx_added`，B 在 A 的 load 之后至少再发一次请求）。",
+   "outputs": [
+    "A、B 都是 work 席位（两条并行 ticket 的 Owner），运行必须把两张 ticket 交付到终态才算结束",
+    "A 是 work 席位、B 是 judge（形如 `head` 的两个 judge），运行自带 drive 在观察到断言后停止，不要求交付"
+   ],
+   "producer": "none",
+   "searched": "读 `tests/sim/run.ts:59-117`（Case 只有 scenario/drive/check，无 mcp 钩子）、`tests/sim/run.ts:447-784`（并发只出现在 `tree` 的并行 ticket 与 `head` 的两个 judge）、`:801`（默认 `waitUntil(..., completed)`）；`src/default-workflow.yml` 的状态表。"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "决策表「main() 怎么拿到原生会话」——收窄后使用，收窄失败即抛「The native Main session is unavailable」",
+   "input": "让注册表里 Main 的 ref 其 `session` 是另一线程的句柄（`instanceKey` 不以当前线程前缀开头，见 18.20.0 `src/session/agent-session-handle.ts:240-243`），再调 `agents()` 或 `launch()`，应答必须是「The native Main session is unavailable」；验收 1–5 都在单线程 sim 里跑，永远拿不到这种 Main，抛错分支无从观察。"
+  },
+  {
+   "row": "决策表「createAgentSession 传不传 mcpToolScope」——传席位自己的 scope，否则 helper 从 owner 起步",
+   "input": "席位 A 在 `mcp__fx_load` 之后派一次 helper（agent 定义允许 spawns，`host.ts:171`），helper 首个请求的 `tools` 必须带 `mcp__fx_added`（不传 `mcpToolScope` 时它从 owner 视图起步、不带该工具）；验收 1–5 没有任何场景从席位派生 helper。"
+  },
+  {
+   "row": "结果 2（body.md:73）与使用场景（body.md:18）「Main 之后再拿到 MCP 工具，也不进入已建席位的视图」",
+   "input": "两个席位在线时由 Main 自己调用 `mcp__fx_load`（其调用按 owner scope 记账，`added` 被授予 owner），或让 fixture 在第二次 `load` 时再加一个工具；A 的下一条请求 `tools` 不得带该新工具。第 2 行只喂 A→Main、A→B 两个方向，没有 Main→席位 的输入。"
+  },
+  {
+   "row": "结果 3（body.md:74）「席位工具表里 `dispatch` 只有一个且是绑定的那个」",
+   "input": "席位在 accepted submit 之后再调一次 `dispatch`，应答必须是绑定工具守卫的「This seat has already handed off.」（`src/ports/host.ts:114`）；扩展自己注册的那个会照常执行。第 3 行的命令只数 `dispatch-session-contract` 条目里的名字，无法分辨是哪一个。"
+  },
+  {
+   "row": "结果 2「Main 的工具表与 system prompt 不被席位的 MCP 活动改写」",
+   "input": "A 调过 `mcp__fx_load` 之后 Main 的一条请求，其 `Context.systemPrompt`（pi-ai `types.ts:1658`）不得含 `mcp__fx_added`；第 2 行只读 `Context.tools`，sim 模型日志也只记 `at/session/kind/role/ticket/note/step`（`tests/sim/extension.ts:234`），system prompt 无从观察。"
+  }
+ ]
+}

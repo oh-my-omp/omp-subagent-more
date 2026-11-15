@@ -1,0 +1,103 @@
+{
+ "ref": "oh-my-omp/omp-config#325",
+ "agent": "scoutoh-my-omp-omp-config-325",
+ "seconds": 298,
+ "slices": [
+  {
+   "id": "s1-conflict-report",
+   "title": "attach() 报告 input-polish chord 冲突（固定英文日志 + tr() 画面提示，按 chord 去重）",
+   "files": [
+    "agent/extensions/input-polish/index.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "6"
+   ],
+   "done_when": "分支上 `bun run check && bun run test` 退出 0；`attach()`（agent/extensions/input-polish/index.ts:349 起，仅 `ctx.mode === \"tui\" && ctx.agent.kind === \"main\"` 之后）对 `pi.getShortcutConflict(cfg.key)` 做穷尽 `switch`（`reserved` / `keybinding` / `extension` / `undefined`，无 catch-all、无动作名单常量），以模块级 Set 按 chord 去重，`keybinding` 的 warn 行与通知同时含 chord、全部动作 id 与 `~/.omp/agent/keybindings.yml`，`reserved` 只陈述 omp 保留且扩展仍抢占，`extension` 点名持有者路径，且 diff 不含 index.ts 头部注释及 Windows/Ctrl+Enter 注释措辞。"
+  },
+  {
+   "id": "s2-docs",
+   "title": "在 docs/extensions.md 与 zh-CN 双胞胎的 input-polish 小节写明附着期冲突告警",
+   "files": [
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "s1"
+   ],
+   "rows": [],
+   "done_when": "两个文件的 `### input-polish` 小节（docs/extensions.md:234、docs/extensions.zh-CN.md:234）在同一位置各加同一段行为说明：默认 `ctrl+enter` 与 `app.approval.approve` / `app.message.followUp` 冲突时附着期每个进程告警一次并指向 `~/.omp/agent/keybindings.yml`，`alt+enter` 属 omp 保留且扩展仍抢占，两个动作改绑后静默，且两文件的标题层级、表格行与锚点仍一一对齐。"
+  },
+  {
+   "id": "s3-sandbox-acceptance",
+   "title": "在 OrbStack 沙箱按验收表串行跑 1–5 行并采集证据",
+   "files": [],
+   "depends_on": [
+    "s1",
+    "s2"
+   ],
+   "rows": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "done_when": "在一次 `bun sandbox/sandbox.ts hold --repo <PR 检出>` 的沙箱里按表序串行执行验收行 1–5，每行输出符合其 Expect（第 1、3 行的 `grep -c` 计数、第 2 行的 `reserved` 行与 `grep -c 0`、第 4 行的默认值与拒值、第 5 行的 `-p` 静默），并在最终 HEAD 上重跑 `bun run check && bun run test` 退出 0，日志 grep 输出与 TUI 截图进入同一个证据包。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "op-unbind-vs-rebind",
+   "point": "keybindings.yml 把动作写成空列表（解绑）是否算「已经把这两个动作挪走」。宿主对空列表不回落到默认键的语义是：`getKeys` 返回 `[]`，`appApproveKeys` / `appFollowUpKeys` 又回落到 `[\"ctrl+enter\",\"ctrl+q\"]`，于是同一份文件仍会被判为 `keybinding` 冲突；契约只裁了「改绑到 ctrl+q 后静默」，没裁解绑。",
+   "input": "`~/.omp/agent/keybindings.yml` 内容为 `app.approval.approve: []` 与 `app.message.followUp: []`（或只写其一），`input-polish.key` 为默认 `ctrl+enter`",
+   "outputs": [
+    "产生 `keybinding` 告警并列出一个或两个动作 id（宿主回落到 ctrl+enter 的结果）",
+    "不产生告警（把「动作已无绑定」当作已挪走）"
+   ],
+   "producer": "操作员书写的 `~/.omp/agent/keybindings.yml`，验收行 3 的命令自己就用 printf 写它（/tmp/ghc/oh-my-omp-omp-config-325/body.md:95）；宿主在 `KeybindingsManager.#rebuild` 里按 `userKeys === undefined ? defaultKeys : userKeys` 取键（node_modules/@oh-my-pi/pi-tui/src/keybindings.ts:283），空列表的回落见 node_modules/@oh-my-pi/pi-tui/src/keybinding-matchers.ts:106,115",
+   "searched": "读宿主 runner.ts:1489-1516、keybindings.ts:254-291、keybinding-matchers.ts:105-118；grep 仓库与 sandbox/ 里对 keybindings.yml 的处理（无排除项、无项目覆盖文件 .omp/plugin-overrides.json）"
+  },
+  {
+   "id": "op-negative-case-vs-extension-kind",
+   "point": "结果 3 说两个宿主动作改绑后「会话不再产生该告警」，而决策表要求 `extension` 类点名持有者：当某扩展持有 ctrl+enter 时，同一状态该出还是不出告警，两句给出相反输出；验收行 3 的「`grep -h` 至多只有 active info 行」也会与决策表冲突。",
+   "input": "沙箱里装入一个 factory 调 `pi.registerShortcut(\"ctrl+enter\", …)` 的扩展，同时 keybindings.yml 把 `app.approval.approve` 与 `app.message.followUp` 都改绑到 ctrl+q",
+   "outputs": [
+    "仍产生一条 `extension` 类告警并点名该扩展路径（决策表），验收行 3 的 Expect 因此不成立",
+    "完全不产生告警（结果 3 的字面读法），`extension` 分支对该 chord 永不触发"
+   ],
+   "producer": "none — 已装插件中无 ctrl+enter/alt+enter 持有者；注册写法见 <omomp>/omp-todo-more/src/reminders.ts:952（该插件唯一的 chord 是 ctrl+n），沙箱若要触发需按 omp-config#320 决策 6863721490 §3 用 `omp plugin link` 装入临时插件",
+   "searched": "在 <omomp> 全部插件源码（排除 node_modules）grep `registerShortcut`，只命中 omp-todo-more/src/reminders.ts:952；install-plugins.sh 的 pi-bansos、pi-pretty-codeblocks 无本地检出；omp-config 各扩展无 registerShortcut（grep agent/ 无结果）"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "责任与必要决策「三类冲突如何呈现」：`keybinding` 列出全部动作 id 并指出改绑位置",
+   "input": "keybindings.yml 写 `app.message.dequeue: ctrl+enter` 或 `tui.input.newLine: ctrl+enter`，两个宿主动作保持默认；同一会话的日志与画面应出现第三个动作 id（现有各行只喂默认的两个动作，无法区分「列出全部」与「写死两个」）"
+  },
+  {
+   "row": "责任与必要决策「告警频率」：每个 omp 进程每个 chord 至多一次，模块级 Set 去重",
+   "input": "一个 TUI 进程内先按 ctrl+enter 告警，再由第二个 `docker exec` 执行 `omp plugin config set omp-config input-polish.key alt+enter` 并在同一会话 `/new`（readSettings 每次 attach 重读，host 值即时生效）：日志应新增一条 alt+enter/reserved，改回 ctrl+enter 再 `/new` 不应出现第三条；现有行 1 只重复同一 chord，按进程去重也能通过"
+  },
+  {
+   "row": "责任与必要决策「三类冲突如何呈现」的 `extension` 分支：点名持有者",
+   "input": "用 `omp plugin link` 装入一个 `pi.registerShortcut(\"ctrl+enter\", …)` 的临时插件并把两个宿主动作改到 ctrl+q；日志应出现 `extension` 类告警并点出该插件路径（当前安装集合里没有这样的生产者）"
+  },
+  {
+   "row": "结果 6 [保持]：覆盖层的 Enter/Esc 语义照旧",
+   "input": "验收行 1 的会话里等改写完成（浮层显示 ready）后按 Enter：编辑器内容应被替换且同一 Enter 走普通提交路径；行 1 只按了 Esc，Enter 分支（index.ts:434-441）从未被任何行观察"
+  },
+  {
+   "row": "验收行 1 的 Env 列：容器内没有 keybindings.yml",
+   "input": "宿主 `~/.omp/agent/keybindings.yml` 存在（例如 `app.message.followUp: ctrl+q`）时跑行 1：sandbox 整份复制 `~/.omp/agent`（sandbox/README.md:36 的排除列表不含该文件）会把它带进容器，而行 1 的命令既不创建也不删除该文件来建立这个前置条件"
+  },
+  {
+   "row": "结果 2：内容不含 `app.*` 动作名，也不声称该 chord 空闲",
+   "input": "验收行 2 的 TUI 画面文本（画面提示不写日志）：应既无 `app.*` 动作名也无「空闲 / free / available」类断言；现有命令只 grep 了 `reserved` 与 `app.approval.approve` 计数"
+  }
+ ]
+}

@@ -1,0 +1,100 @@
+{
+ "ref": "oh-my-omp/omp-config#330",
+ "agent": "scoutoh-my-omp-omp-config-330",
+ "seconds": 366,
+ "slices": [
+  {
+   "id": "split-check-steps",
+   "title": "Add one _shared rule for an item's task text (task, or all steps in original order) and make task-split-check judge steps items with it (schema, header comment, docs paragraph)",
+   "files": [
+    "agent/extensions/_shared/task-item.ts",
+    "agent/extensions/task-split-check/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "2",
+    "4"
+   ],
+   "done_when": "In the sandbox with task.steps=true, the row-1 two-topic steps item is blocked with the split reason naming the item and passes after being rewritten as single-topic steps, the row-2 length-capped steps item is blocked with the report-limit reason and passes once the cap is removed, and with task.steps=false the row-4 task item is still blocked with the same split reason as before."
+  },
+  {
+   "id": "isolation-nudge-steps",
+   "title": "Make isolation-nudge count steps items as shared writers with the same _shared task-text rule (schema, promptHash, header comment, docs paragraph), then run the repo gate",
+   "files": [
+    "agent/extensions/isolation-nudge/index.ts",
+    "docs/extensions.md",
+    "docs/extensions.zh-CN.md"
+   ],
+   "depends_on": [
+    "split-check-steps"
+   ],
+   "rows": [
+    "3",
+    "5",
+    "6"
+   ],
+   "done_when": "In the sandbox with task.steps=true, row 3's two unisolated steps writers are blocked with 'Not dispatched — a reminder' and 'isolated: true', the identical re-dispatch runs, a new pair of steps writers is blocked again, with task.steps=false row 5's two unisolated task items are still blocked without a split reason, and 'bun run check && bun run test' exits 0 on the branch that contains this slice (row 6)."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "both-fields",
+   "point": "When one item carries both task and steps, the contract only says the host rejects it ('takes task or steps, not both'); it never says which text the two hooks judge and hash, so a hook can preempt the host error with a split/isolation block based on one field.",
+   "input": "task.steps=true, batch call {\"context\":\"one fix for the report\",\"tasks\":[{\"agent\":\"task:mid\",\"task\":\"核对 a 与 b 是否为同一实现，并重写 README 的安装段\",\"steps\":[\"核对 a 与 b 是否为同一实现\",\"重写 README 的安装段\"]}]} sent without the schema-required solutionSpace so validation fails and the lenient path hands the raw item to the hook",
+   "outputs": [
+    "judge and hash the task text only, so the split block names the item and the host error never surfaces",
+    "judge and hash the joined steps only, same visible outcome",
+    "judge context + task + steps concatenated",
+    "skip the item entirely, so the model gets the host's 'takes task or steps, not both' result"
+   ],
+   "producer": "the model via the lenient fallback: node_modules/@oh-my-pi/pi-coding-agent/src/task/index.ts:778 sets lenientArgValidation, node_modules/@oh-my-pi/pi-agent-core/src/tool-arguments.ts:27-40 returns raw args on a schema mismatch, node_modules/@oh-my-pi/pi-agent-core/src/agent-loop.ts:3193-3224 passes them to beforeToolCall; on successful validation the wire item schema (node_modules/@oh-my-pi/pi-coding-agent/src/task/types.ts:184,190-205, '+': 'delete') keeps only one of the two fields",
+   "searched": "grep of the host package for taskFields, createTaskSchema, validateTaskInput, validateAgentToolArguments, beforeToolCall; grep of agent/ for taskItemSchema/parseTaskCall/parseTaskItems (only the two extensions parse task items)"
+  },
+  {
+   "id": "host-rejected-steps",
+   "point": "For an item whose steps the host will reject (absent, empty array, or blank strings) the contract only says the hooks add no second rejection (范围边界); it never says what text the hooks derive or whether the item is judged and counted as a shared writer.",
+   "input": "task.steps=true, three variants of {\"context\":\"给 X 写一份不超过 300 字的报告\",\"tasks\":[{\"agent\":\"task:mid\",\"isolated\":true,\"solutionSpace\":\"one fix\"}]}: (i) no task and no steps, (ii) \"steps\":[], (iii) \"steps\":[\"  \"]",
+   "outputs": [
+    "the item is skipped: no judge request and no shared-writer entry, and the model sees the host's 'Missing `steps`' / 'invalid `steps`' result",
+    "the item is judged with an empty assignment: report-limit can still flag from the capped context, so the model sees a task-split-check reason instead of the host error, and isolation-nudge hashes the empty string and counts one shared writer",
+    "the hook throws on the empty text (item.task.trim() on undefined, createHash().update(undefined)) and the boundary catch turns it into a warning, i.e. the fail-open-by-warning the 问题 section names"
+   ],
+   "producer": "the model: for (i) validation fails and the lenient fallback hands the raw item to the hook (node_modules/@oh-my-pi/pi-agent-core/src/tool-arguments.ts:27-40); for (ii)/(iii) the wire item schema accepts them ('steps: string[]', node_modules/@oh-my-pi/pi-coding-agent/src/task/types.ts:184) and the host rejects them only later in validateTaskInput (node_modules/@oh-my-pi/pi-coding-agent/src/task/index.ts:274-289), after the hook has run",
+   "searched": "same greps as both-fields plus the steps branch of validateTaskInput and the item fields of createTaskSchema"
+  },
+  {
+   "id": "join-format",
+   "point": "The contract fixes only 'all steps joined in original order'; the separator and trimming are unstated, yet the joined string is exactly what the judge reads and what both dedup hashes use, and the host has its own rendering of the same steps.",
+   "input": "task.steps=true, {\"context\":\"shared background\",\"tasks\":[{\"agent\":\"task:mid\",\"isolated\":true,\"solutionSpace\":\"one fix\",\"steps\":[\"核对 a 与 b 是否为同一实现\",\"重写 README 的安装段\"]}]}",
+   "outputs": [
+    "steps joined with a single newline (step text trimmed per step, as the host trims each step it sends)",
+    "steps joined with a blank line between them",
+    "steps rendered the way the host renders the run's assignment, i.e. a '## Step N' Markdown brief (node_modules/@oh-my-pi/pi-coding-agent/src/task/steps.ts:89-91, used by spawnAssignment at src/task/index.ts:681), so the judge sees what the child is labelled with",
+    "steps joined without trimming, so trailing spaces inside a step change the isolation dedup key"
+   ],
+   "producer": "the model emits the steps array through node_modules/@oh-my-pi/pi-coding-agent/src/task/types.ts:184; the text is materialized only in agent/extensions/task-split-check/index.ts:155-156 and :168-177 and agent/extensions/isolation-nudge/index.ts:72, and no acceptance row distinguishes the variants",
+   "searched": "read src/task/steps.ts, src/prompts/system/subagent-steps-brief.md, spawnAssignment and formatApprovalSteps in src/task/index.ts; grep for renderStepsBrief"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "范围边界: '两字段都缺的条目照宿主校验处理，钩子不另行拒绝'",
+   "input": "task.steps=true, {\"context\":\"shared background\",\"tasks\":[{\"agent\":\"task:mid\",\"isolated\":true,\"solutionSpace\":\"one fix\"}]} with neither task nor steps (and the same with \"steps\":[] or \"steps\":[\"  \"]); expect the host's own missing/invalid `steps` result and no split or isolation block, which no row feeds"
+  },
+  {
+   "row": "结果 2: '与前序同消息或运行中的共享写入者合计两个以上时，调用被拦下'",
+   "input": "one assistant message with two separate task calls, each a single task:mid steps writer with isolated omitted (second call while the first still runs), expect the second call blocked with the reminder, no row feeds a single-item call whose count comes only from a same-message or running writer"
+  },
+  {
+   "row": "结果 1: '判为多主题或限制报告长度时整次调用被 block'",
+   "input": "task.steps=true, one batch whose item 1 has two topics over two steps and item 2 has one topic in one step; expect the whole call blocked (neither worker spawned) with the split reason naming only item 1, rows 1 and 2 use single-item calls so block-the-call and skip-the-item are indistinguishable"
+  },
+  {
+   "row": "上下文/范围边界: 'batch 条目与扁平调用共用这组字段' (the flat branch of parseTaskCall/parseTaskItems)",
+   "input": "task.steps=true, a flat task call {\"agent\":\"task:mid\",\"isolated\":true,\"solutionSpace\":\"one fix\",\"steps\":[\"核对 a 与 b 是否为同一实现\",\"重写 README 的安装段\"]} with no tasks[]; expect the split block, no row feeds the flat steps form"
+  }
+ ]
+}

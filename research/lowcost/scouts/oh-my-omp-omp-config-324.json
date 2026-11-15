@@ -1,0 +1,102 @@
+{
+ "ref": "oh-my-omp/omp-config#324",
+ "agent": "scoutoh-my-omp-omp-config-324",
+ "seconds": 253,
+ "slices": [
+  {
+   "id": "S1",
+   "title": "改写 append-system-model 文件头：用宿主 18.19.0 per-model 模板事实取代「无法按模型条件化」的旧断言",
+   "files": [
+    "agent/extensions/append-system-model/index.ts"
+   ],
+   "depends_on": [],
+   "rows": [
+    "预期结果 1",
+    "预期结果 3"
+   ],
+   "done_when": "`git diff agent/extensions/append-system-model/index.ts` 只含文件头注释改动、无任何语句变化，改后 WHY THIS EXISTS（现 index.ts:6-9）不再把「无法按模型条件化」写成宿主限制，而写明：片段解决按会话与按模型增补文字；宿主 18.19.0 起 `systemPromptTemplates` 整份替换基础提示词、在有已发现的 `SYSTEM_TEMPLATE.md` 时不读取、代价是每个模型维护一份模板；原文其余各节（FILES/MATCHING/TIMING/OUTPUT/FAILURE POLICY）逐字未动，且 `bun run check` 通过。"
+  },
+  {
+   "id": "S2",
+   "title": "两页提示词分层说明补入宿主 per-model 模板入口、其在本仓库不生效的原因与代价，并据此说明仍用两个扩展",
+   "files": [
+    "docs/prompts-and-context.md",
+    "docs/prompts-and-context.zh-CN.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "预期结果 2",
+    "预期结果 3"
+   ],
+   "done_when": "`git diff docs/prompts-and-context.md docs/prompts-and-context.zh-CN.md` 新增的正文与表格行写明：`systemPromptTemplates` 的选择键只有模型（provider/model-id 子串、最长命中、仅 config.yml 设置）；本仓库下发的 `agent/SYSTEM_TEMPLATE.md` 是已发现模板，故 omomp 会话里 per-model 文件不会被读取；它整份替换基础提示词，采用后要按模型各维护一份并在每次 OMP 升级后重新对照；两页并据此指回 `append-system-model` 片段与 `system-prompt-replace` 规则，且两页 `##`/`###` 标题序列、表格行数与锚点一一对应（现为 docs/prompts-and-context.md:5,23,62,86,101 与 .zh-CN.md:5,23,62,86,101）。"
+  }
+ ],
+ "open_points": [
+  {
+   "id": "OP1",
+   "point": "结果 2 要求两页写「omomp 会话里 per-model 文件不会被读取」，但合同自己的上下文（body.md:39）把这句建立在「只要这份非空模板在」之上；`omp-config-autoupdate.exclude` 是仓库提供的、让更新器永不写出某 managed 文件的机制，被排除的机器上没有该模板，此时 per-model 模板会被读取。合同未规定文案写无条件结论还是写前置条件。",
+   "input": "机器在 `omp-config-autoupdate.exclude` 里写 `SYSTEM_TEMPLATE.md`（或 `--profile`/`PI_CODING_AGENT_DIR` 指向未被更新器写入的 agent 目录），agent 目录下没有 `SYSTEM_TEMPLATE.md`，用户 config.yml 设了 `systemPromptTemplates`，再启动一次会话。",
+   "outputs": [
+    "页面无条件写「omomp 会话里 per-model 文件不会被读取」，该机器上观察到的相反",
+    "页面写「只要已发现的 `SYSTEM_TEMPLATE.md` 在（本仓库下发的模板已装到 agent 目录）就不读取」，任何机器上都成立"
+   ],
+   "producer": "agent/extensions/_shared/package.json:121-125（`omp-config-autoupdate.exclude`：\"items the updater never writes\"）+ agent/extensions/omp-config-autoupdate/omp-config-update.ts:503-515,580-598（排除即丢弃全部 create/write 操作）；agent 目录解析见 omp-config-update.ts:2855",
+   "searched": "grep `exclude` 全量 omp-config-update.ts 与 `_shared/package.json` settings；`agent/SYSTEM_TEMPLATE.md` 在 managedPlain/restart 列表（omp-config-update.ts:480,498）；ci/omp-config-settings.test.ts:216 用 exclude 保留本机文件而非下发改写；`--agent-dir` 参数（omp-config-update.ts:2865）"
+  },
+  {
+   "id": "OP2",
+   "point": "结果 2 只列三件事，未规定是否写明 per-model 模板同样作用于 subagent 会话、且模板须保留 `{{#if subagent}}` 分支；本仓库模板正是靠该分支把 Step 4 切成主会话 Verify / 子代理 Hand-off，缺了它子代理会按主会话措辞渲染。",
+   "input": "读者按两页说明，把 `agent/SYSTEM_TEMPLATE.md` 复制成 `~/.omp/agent/prompts/<model>.md` 并按模型删改，在 config.yml 设 `systemPromptTemplates`，排除下发的 `SYSTEM_TEMPLATE.md`，然后派一个 `task` 子代理。",
+   "outputs": [
+    "两页不提 subagent 作用域，读者可能删掉 `{{#if subagent}}`，子代理失去 Hand-off 段落",
+    "两页写明模板也作用于子代理会话、必须保留 `{{#if subagent}}` 分支"
+   ],
+   "producer": "docs/prompts-and-context.md:11 与其孪页 :11（这两行正是解释 `{{#if subagent}}` 切换的地方）；宿主依据 docs/system-prompt-customization.md「Per-model templates / Runtime behavior」第一条",
+   "searched": "grep `{{#if subagent}}` in agent/SYSTEM_TEMPLATE.md（命中 :152、:173）；grep `subagent` in node_modules/@oh-my-pi/pi-coding-agent/dist/types/system-prompt.d.ts:286-289；docs/prompts-and-context.md:11 与 zh-CN:11 对照"
+  },
+  {
+   "id": "OP3",
+   "point": "结果 2 要求写「它整份替换基础提示词」；宿主文档的实际范围是替换 block 0（内置 system-prompt.md），`<project-context>` 尾部、安全块与 provider 工具 schema 保留，本仓库的 repo-rules 增量与 APPEND_SYSTEM.md 追加文字也仍在。合同未规定是否把「整份」的范围写清，读者的两种理解都被文案允许。",
+   "input": "读者采用 per-model 模板后，期待 `repo-rules` 增量、`APPEND_SYSTEM.md` 追加文字与 `<project-context>` 尾部照常到达模型；按另一种理解则以为整份提示词（含这些）都被该文件取代。",
+   "outputs": [
+    "只写「整份替换基础提示词」，不说明保留尾部与增量",
+    "写明只替换内置指令块，`<project-context>` 尾部、扩展增量与追加文字不随之消失"
+   ],
+   "producer": "docs/prompts-and-context.md:7（「The files shape the base prompt OMP builds; the extensions … add their customization as delta messages」）与 :21（增量流说明）；zh-CN 同段落 :7、:21",
+   "searched": "宿主 docs/system-prompt-customization.md「Block layout and prompt caching」「Handlebars template route」；本仓库 docs/prompts-and-context.md:21 自称的 base prompt / delta 区分；dist/types/system-prompt.d.ts:164-168（selected file replaces only the bundled default）"
+  },
+  {
+   "id": "OP4",
+   "point": "结果 1 要求文件头不再断言提示词「无法按模型条件化」，但旧句（index.ts:6-9）是复合断言：「cannot be conditioned on the session (main or subagent, cwd, full or light mode) or on its model」，并明确点了 `SYSTEM_TEMPLATE.md`。本仓库自己的 `agent/SYSTEM_TEMPLATE.md` 已用 `{{#if subagent}}` 按主/子会话分支，所以只删「or on its model」会留下同样不成立的前半句。合同未规定这句是否收窄。",
+   "input": "改写后的文件头仍写 `OMP's APPEND_SYSTEM.md / SYSTEM.md / SYSTEM_TEMPLATE.md and the rulebook cannot be conditioned on the session (main or subagent, …)`，只去掉「or on its model」；读者把它与 `agent/SYSTEM_TEMPLATE.md:152` 的 `{{#if subagent}}` 对照。",
+   "outputs": [
+    "保留整句 session 断言（四个文件 + rulebook 一起），仅删模型部分——对 `SYSTEM_TEMPLATE.md` 仍不成立",
+    "收窄断言：普通文本路由与 rulebook 不能按会话条件化；block 0 模板只能按渲染期数据（`subagent`、`eagerTasks`、工具存在等）分支，不能按 cwd/模式/delegation/模型切换"
+   ],
+   "producer": "agent/extensions/append-system-model/index.ts:6-9（被改写的句子本身）",
+   "searched": "grep `{{#if subagent}}`/`{{#if eager`/`{{#has tools` in agent/SYSTEM_TEMPLATE.md（:98,102,103,107,114,118,124,125,150,152,173）；grep `cwd|light|mode` in 同一文件（无模板级分支）；docs/prompts-and-context.md:11 对 `{{#if subagent}}` 的描述；宿主模板数据字段见 docs/system-prompt-customization.md「Handlebars template route」"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "预期结果 1",
+   "input": "`git diff agent/extensions/append-system-model/index.ts`（应只有文件头注释）+ `rg -n 'systemPromptTemplates' agent/extensions/append-system-model/index.ts`（改前 0 命中）+ `rg -n 'cannot be conditioned' 同一文件`（改后应为 0）；合同没有任何验收命令，`bun run check`（biome+tsc）与 `bun run test` 都不读注释正文。"
+  },
+  {
+   "row": "预期结果 2",
+   "input": "`rg -n 'systemPromptTemplates' docs/prompts-and-context.md docs/prompts-and-context.zh-CN.md`（体合同 body.md:29 记录改前 0 命中）与两页 `^##|^###|^|` 逐行比对；无任何闸门覆盖 `.md`：biome.json `files.includes` 只含 agent/ci/sandbox 的 `.ts` 与配置文件，tsconfig.json `include` 只含 `.ts`，`bun test ci` 无 docs 或孪页对齐测试。"
+  },
+  {
+   "row": "预期结果 3（不变边界）",
+   "input": "`git diff --name-only` 应恰为 范围 三个文件（外加 lgit 在 repo 根写入的 CHANGELOG.md）；合同无该检查，需 deliverer 手工看 diff 才能确认 system-prompt-replace 文件头、agent/extensions-last/README*.md、README*.md、docs/extensions*.md 未被改动。"
+  },
+  {
+   "row": "仓库 AGENTS.md「Validating a change」第 2 条：sandbox 运行时验证（Extension, prompt 或 tool-topic 改动）",
+   "input": "`bun sandbox/sandbox.ts hold` 后驱动一次 `omp` 会话对比改动前后的 system prompt；本次只改文件头注释与文档，运行时可观测输出不变，合同 约束（body.md:68）也明确「不采集运行证据」，故这条仓库闸门无输入可喂。"
+  },
+  {
+   "row": "合同缺失「责任与必要决策」与「验收标准」两节",
+   "input": "body.md 全文 76 行与 refs/ 下两份决策文件都没有这两节（第 约束 条只写「不写验收表，不采集运行证据」）；deliverer 只能以 预期结果 1–3 自建 gate，即上面三条命令型观察。"
+  }
+ ]
+}

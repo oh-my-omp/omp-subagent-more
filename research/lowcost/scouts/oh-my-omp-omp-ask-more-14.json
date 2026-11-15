@@ -1,0 +1,193 @@
+{
+ "ref": "oh-my-omp/omp-ask-more#14",
+ "agent": "scoutoh-my-omp-omp-ask-more-14",
+ "seconds": 436,
+ "slices": [
+  {
+   "id": "refresh-host-types",
+   "title": "Refresh the @oh-my-pi dev dependencies to the current published release",
+   "files": [
+    "bun.lock"
+   ],
+   "depends_on": [],
+   "rows": [],
+   "done_when": "`bun pm ls --all` reports @oh-my-pi/pi-coding-agent at exactly the version `npm view @oh-my-pi/pi-coding-agent version` prints (18.20.2 at planning time), package.json still declares `latest`, and `bun run check` now fails only on the host symbols this child deletes (`QuestionResult` imported by src/result.ts, `recoverAskQuestions` imported by test/schema.test.ts)."
+  },
+  {
+   "id": "host-shaped-results",
+   "title": "Return the host's `{answers}` shape from the full-screen page",
+   "files": [
+    "src/result.ts",
+    "test/timeout.test.ts"
+   ],
+   "depends_on": [
+    "refresh-host-types"
+   ],
+   "rows": [
+    "2",
+    "3"
+   ],
+   "done_when": "With the contract's fixed driver saved verbatim as /tmp/a3-sheet.ts, `SRC=$PWD bun /tmp/a3-sheet.ts` exits 0: submit/timeout/cancel/dismissed `details` hold only `answers` (`retry|指数退避`, `cache|手动清空`, `\"\"` for the unanswered one) with no `results` and no `timedOut`, the model text keeps `User answers:` plus its `id: …` / `(cancelled)` / `(timed out:` lines, and `askToolRenderer.describeResult` returns no warning tone, target `重试应该怎么做？`, one answer row per question and `(no answer)` for the unanswered one."
+  },
+  {
+   "id": "form-text-readability",
+   "title": "Judge the readability of exactly what the generated form shows",
+   "files": [
+    "src/readability.ts",
+    "test/readability.test.ts"
+   ],
+   "depends_on": [
+    "refresh-host-types"
+   ],
+   "rows": [
+    "4"
+   ],
+   "done_when": "With the contract's fixed driver saved verbatim as /tmp/a3-gate.ts, `SRC=$PWD bun /tmp/a3-gate.ts` exits 0: every native-surface state carries the header, the question, each label and each tradeoff and none of the brief, `description` or `preview`, and the native advisory no longer says the brief and tradeoffs are not shown. (Lands before delegate-html-form because it removes the last reader of `optionSchema.preview`, which that slice deletes.)"
+  },
+  {
+   "id": "delegate-html-form",
+   "title": "Delegate one generated HTML form and drop the option projection",
+   "files": [
+    "index.ts",
+    "src/schema.ts",
+    "test/schema.test.ts"
+   ],
+   "depends_on": [
+    "refresh-host-types",
+    "form-text-readability"
+   ],
+   "rows": [
+    "1",
+    "8"
+   ],
+   "done_when": "With the contract's fixed driver saved verbatim as /tmp/a3-delegate.ts, `SRC=$PWD bun /tmp/a3-delegate.ts` prints `payloadKeys: [\"html\"]`, `payloadHasQuestions: false`, both questions and both contexts with the `label: tradeoff` lines, `固定 3 次 & 放弃 <fast>` unchanged, the recommended option `checked`, names `retry,cache`, `fallbackSamePayload: true` and `passThrough: true` from both the `rpc` and the failed-sheet call, `bun run check && bun test` exit 0 on the current host types, and `rg -n -e QuestionResult -e nativeQuestion -e recoverAskQuestions -e preview index.ts src test` finds nothing; the row's `answers[1].answer === \"手动清空\"` reading still needs the decision in open point `answers-free-text-prefix` before the script can exit 0."
+  },
+  {
+   "id": "docs-and-topic",
+   "title": "Rewrite the README/design sections, the result topic and the file header for the two surfaces",
+   "files": [
+    "README.md",
+    "README.zh-CN.md",
+    "docs/design.md",
+    "docs/design.zh-CN.md",
+    "src/topics/results.md",
+    "index.ts"
+   ],
+   "depends_on": [
+    "host-shaped-results",
+    "form-text-readability",
+    "delegate-html-form"
+   ],
+   "rows": [
+    "9"
+   ],
+   "done_when": "The README `What the model sends and gets` / `Readability check` / `Sessions without the TUI` / `Known limitations` sections, their design.md counterparts and the zh-CN mirrors state that delegation sends one HTML form, what each surface's `details` and model text are, that `/tree` only moves the leaf, and that the card draws each question with its answer; `src/topics/results.md` explains both the page's `id: …` lines and the host JSON the delegated call returns; and none of `results is the native one`, `/tree` reopening the extended ask, the timed-out question drawn as `Cancelled`, `hands every question's native fields to the native ask`, or an `options[{label, description?, preview?}]` parameter remains in those files."
+  },
+  {
+   "id": "sandbox-e2e",
+   "title": "Drive acceptance rows 5–7 in the OrbStack sandbox on the pushed PR head",
+   "files": [
+    "docs/verification.md",
+    "docs/verification.zh-CN.md"
+   ],
+   "depends_on": [
+    "host-shaped-results",
+    "delegate-html-form"
+   ],
+   "rows": [
+    "5",
+    "6",
+    "7"
+   ],
+   "done_when": "In one sandbox started by `bun sandbox/sandbox.ts hold`, with /work/omp-ask-more checked out at the PR head, `bun install` run and `omp plugin link /work/omp-ask-more` done, `MODEL=<model> bun /tmp/a3-rpc.ts <run>` exits 0 with at least one `selectionMarker: \"radio\"` select whose `title` is the `label: tradeoff` lines then the question and whose options are the two labels, that ask's toolResult starting `User answers:\\n{`, and no `html.length` on the console; the TUI session still shows the sheet (brief, evidence, demo, `Other…`), answers, cancels on `esc` and times out; `/tree` on that ask result moves the leaf without opening a form; and the two verification docs' `not yet exercised` lists match what was run."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "answers-free-text-prefix",
+   "point": "Acceptance row 1 reads the same field's free-text answer two ways: `answers[1].answer` must be the bare `手动清空`, while `otherAnswer` for the same field must be `Other: 自定义`. The host's `answerText` prefixes `Other: ` on every submitted value that is not an option value, and it is that function the row's readings come from, so both readings cannot hold for one form. 结果 2 (`answer` 是所选项 label 或 Other 的自由文本) and the decision row (`answer` 是所选项 `label`／自填文本／未答空串) state the same field both bare and prefixed.",
+   "input": "the plugin-generated radio group for the driver's `cache` question (options `TTL 60s`, `写时失效`) submitted as `{cache: \"手动清空\"}` and as `{cache: \"自定义\"}` through `formAnswers`",
+   "outputs": [
+    "`answer` is `Other: 手动清空` / `Other: 自定义` — what `packages/tui/src/html-form/data.ts` `answerText` returns for a non-option value",
+    "`answer` is the bare `手动清空` / `自定义` — what row 1 asserts for `answers` and what this plugin's own page returns for a custom answer"
+   ],
+   "producer": "packages/tui/src/html-form/data.ts:245-253 (host `answerText`; `field.other` set at packages/tui/src/html-form/parse.ts:246-249)",
+   "searched": "Read the fixed driver text in the contract (both `answers` and `otherAnswer` assertions), the 18.20.2 package `html-form/data.ts:118-258` and `html-form/parse.ts:214-582`, and src/result.ts:8-64 for the sheet-side answer text."
+  },
+  {
+   "id": "label-shape-rejects-page-asks",
+   "point": "The decision requires every option `label` to be single-line with normalized whitespace and to be rejected otherwise (so a submitted value comes back equal to the model's label). It does not say whether that rule also rejects a `tui` call that the full-screen page answers, where no form is built; 结果 4 [保持] says the page's own behavior does not change, and nothing about label shape is checked today.",
+   "input": "`ask({questions:[{id:\"a\",question:\"选哪个？\",brief:{where:\"w\",what:\"d\",how:\"h\"},options:[{label:\"two\\nlines\",tradeoff:\"t1\"},{label:\"b\",tradeoff:\"t2\"}]}]})` in a session with `hasUI: true, mode: \"tui\"`",
+   "outputs": [
+    "the call is rejected before the page opens, naming `questions[0].options[0].label`",
+    "the call is accepted and the page draws the label exactly as the model wrote it (today's behavior, which 结果 4 asks to keep)"
+   ],
+   "producer": "src/schema.ts:126 (optionParamSchema.label is `z.string().min(1)`; src/schema.ts:384-390 requires only non-empty, non-reserved, non-duplicate)",
+   "searched": "Read src/schema.ts:90-107,124-144,179-183,372-403; src/component.ts:320-345 and src/nodes.ts:255-275 for how option labels are drawn; test/schema.test.ts:142-266 for the existing validate cases (none constrains label shape)."
+  },
+  {
+   "id": "question-normalized-per-surface",
+   "point": "结果 2 and 结果 3 require both surfaces to return `{answers}` whose `question` is 题干. Only the delegated one is rebuilt by the host, which runs it through `oneLine`, so the same call yields different `answers[].question` on the page and through the form (and a string different from the model's own text) whenever the question holds a line break or a doubled space. Nothing in the contract rules on a multi-line `question`.",
+   "input": "`question: \"第一句。\\n第二句。\"`, asked once in a `tui` session (page answers) and once in an `rpc` session (form delegated), both submitted",
+   "outputs": [
+    "delegated `answers[0].question` is `第一句。 第二句。`, the page's `answers[0].question` keeps the newline",
+    "both surfaces return the model's exact text (the plugin and the host both normalize, or neither does)",
+    "the call is rejected at validation because a question must be one line"
+   ],
+   "producer": "src/schema.ts:138 (questionParamSchema.question accepts any non-empty string)",
+   "searched": "Read src/schema.ts:100-107,135-144,372-378; host `html-form/data.ts:138-157` (`fieldQuestions` → `oneLine`) and `:256-258` (`oneLine` definition); src/result.ts for the page-side `question` source."
+  },
+  {
+   "id": "label-starting-with-other",
+   "point": "`RESERVED_LABELS` rejects only the exact rows a surface adds. The host form drops its free-text `Other` row for the whole question as soon as one option label starts with `Other` (`/^\\s*other\\b/i`), so a label that merely begins with the word passes validation and silently takes the reader's free-text answer away. The decision says the reserved labels are the rows the surfaces really add and says nothing about this suppression.",
+   "input": "`options:[{label:\"Otherwise keep\",tradeoff:\"t1\"},{label:\"禁用\",tradeoff:\"t2\"}]` delegated through `invokeTool`",
+   "outputs": [
+    "accepted: the delegated form has `other: false`, so the reader can only pick the two options",
+    "rejected as a label that removes a row the UI adds"
+   ],
+   "producer": "src/schema.ts:126",
+   "searched": "Read src/schema.ts:23-28 (exact-match map) and :384-390 (lookup by exact label); host `html-form/parse.ts:246-249` for the suppression regex; grepped src/test for `other` handling — only src/component.ts:333 and src/state.ts `onOther` (page-side)."
+  },
+  {
+   "id": "reserved-row-in-zh",
+   "point": "The decision names the page's added row as `Other…`, but the page renders it through `tr(\"Other…\", \"其他…\")`, so in a Chinese session the row the UI adds reads `其他…` and is not in `RESERVED_LABELS`; a model label equal to it duplicates a row the UI adds. The wording names only the English row.",
+   "input": "`options:[{label:\"其他…\",tradeoff:\"t1\"},{label:\"b\",tradeoff:\"t2\"}]` with `OMOMP_LANG=zh`",
+   "outputs": [
+    "accepted: the zh page shows its own `其他…` row next to an option row reading `其他…`",
+    "rejected as a row the UI adds"
+   ],
+   "producer": "src/schema.ts:126",
+   "searched": "Read src/component.ts:337 (`tr(\"Other…\", \"其他…\")`), src/nodes.ts:267 (answer row `tr(\"Other\", \"其他\")`), src/schema.ts:23-28, src/i18n.ts."
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 2 的「`label` 里的 `& < >` 经表单往返后一字不差」与决策表「结果 details 与文本」的「`answer` 是所选项 `label`」",
+   "input": "submit the special-character option itself — `formAnswers(form, {retry: \"固定 3 次 & 放弃 <fast>\"})` and read `answers[0].answer`; /tmp/a3-delegate.ts reads that label only through `optionLabelText` and submits `指数退避`/`手动清空`, so the answer never travels back from that label"
+  },
+  {
+   "row": "决策表「选项 `label` 的形状」（单行、空白已归一，其余一律拒绝）",
+   "input": "a call whose option label is `\"two\\nlines\"`, and one whose label is `\"a  b\"` or `\" padded \"`; no acceptance row feeds a label that violates the shape, so no command shows the rejection message"
+  },
+  {
+   "row": "决策表「可读性检查的 native 面」的保留标签替换（宿主表单的 `Other`、插件页面的 `Other…`；删掉 `Other (type your own)`、`Chat about this`、`Next →`）",
+   "input": "labels `Other` and `Other…` (must now be rejected as UI-added) and `Chat about this` / `Next →` (must now be accepted); rows 1–9 never send either, and row 8's `rg` pattern does not match `RESERVED_LABELS`"
+  },
+  {
+   "row": "结果 2 的「推荐项预先选中（超时提交的就是它）」",
+   "input": "a native-host ask with `recommended: 1` and no answer given, left to `ask.timeout`, expecting `answers[0].answer` to be that option and `timedOut: true`; row 5 answers every `select` with its `initialIndex`, so the deadline path is never taken"
+  },
+  {
+   "row": "结果 2 的「ACP 与 TUI 回退是整表单」",
+   "input": "an ACP session (`ui.formDialog` present) with the plugin linked and one `ask` call, expecting the whole form on one surface; row 1 drives `rpc` through `invokeTool` and row 5 drives `rpc-ui` field-by-field, so no acceptance command renders a whole-form surface"
+  },
+  {
+   "row": "结果 4 [保持] 的「倒计时与通知照旧」",
+   "input": "an ask idled past `timeout` with `notify.terminal: true` and a trusted `notify.command` set, expecting one terminal notification and one command run; row 6 reads only the page and the model's `(timed out: …)`, so no command observes a notification"
+  },
+  {
+   "row": "第 9 行的读取列表与「不应残留」",
+   "input": "read `README.md:11` / `README.zh-CN.md:11` (`## Why` still presents the host's per-option `preview` and `ask.ts:52-88` as current) and `docs/verification.md:34,193` / `docs/verification.zh-CN.md:34,193` (`not yet exercised: the native-delegation path`, `the native dialog`); row 9 reads only the four named sections and `src/topics/results.md`, so neither residue is covered"
+  }
+ ]
+}

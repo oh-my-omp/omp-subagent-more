@@ -1,0 +1,77 @@
+{
+ "ref": "oh-my-omp/omp-remote-build#38",
+ "agent": "scoutoh-my-omp-omp-remote-build-38",
+ "seconds": 419,
+ "slices": [
+  {
+   "id": "S1",
+   "title": "Point tool-delta's host import at the package root export",
+   "files": [
+    "src/tool-delta.ts",
+    "CHANGELOG.md"
+   ],
+   "depends_on": [],
+   "rows": [
+    "1",
+    "3",
+    "4",
+    "5"
+   ],
+   "done_when": "In a PR-branch checkout after `bun install`, `bun /tmp/rb-c3-imports.ts <checkout>` prints `{\"specifiers\":[\"@oh-my-pi/pi-coding-agent\"]}` and exits 0 while the same command on the baseline commit prints `{\"specifiers\":[\"@oh-my-pi/pi-coding-agent/session/session-context\"]}` and exits 1, `bun /tmp/rb-c3-delta.ts <checkout>` prints `noProjection=delta, agentCarrier=none, customCarrier=none, hostDeveloper=delta, changedBody=supersede, previousRetraction=supersede, effectiveNowNone=retract, nothingSentNone=none, batchFirst=true, batchRepeat=none` and exits 0, and `bunx tsc --noEmit -p . && bun test` exits 0."
+  },
+  {
+   "id": "S2",
+   "title": "Prove the plugin still loads and keeps its five tools in a real omp v18.20.0 session",
+   "files": [],
+   "depends_on": [
+    "S1"
+   ],
+   "rows": [
+    "2"
+   ],
+   "done_when": "With `/work/omp-remote-build` at S1's head inside the omp-config OrbStack sandbox and `/work/rb-c3` a git-init scratch project holding `.omp/remote-build.json` = `{}`, one prompt in the session started by `docker exec -it -w /work/rb-c3 omp-sandbox-<run> omp --no-extensions -e /work/omp-remote-build/src/index.ts --model <model>` shows no extension load error and no `remote-build: updating tools failed` notification (src/index.ts:166), and `/dump`'s newest `/tmp/omp-llm-request-*.json` lists `container_exec`, `container_write_stdin`, `container_list_sessions`, `container_kill_session` and `remote_env_init` in `tools[].name`; this slice needs no repository change beyond S1's head."
+  }
+ ],
+ "open_points": [
+  {
+   "id": "OP1",
+   "point": "Whether the PR also refreshes the `@oh-my-pi/pi-coding-agent` dev dependency and its lock entry: ref 320 §1 requires each child to refresh its repo's `@oh-my-pi/*` dev dependency to the current release, while this contract's 依赖关系 says 「Depends on: 无」 and its 约束 forbids pinning any version for this change; the acceptance procedure's plain `bun install` honours the existing lock, so the two readings produce different PR diffs and different `tsc` baselines.",
+   "input": "`bun install` in the PR-branch checkout, where package.json:45 declares `\"@oh-my-pi/pi-coding-agent\": \"latest\"` and bun.lock:152 locks `@oh-my-pi/pi-coding-agent@18.18.0` while the current release is 18.20.0.",
+   "outputs": [
+    "bun.lock and node_modules stay at 18.18.0 and the PR carries only the `src/tool-delta.ts` import line — consistent with 依赖关系 「无」, 「当前 dev 依赖 18.18.0 的包根同样 re-export 该符号」 and 约束 「不为本次改动钉任何版本号」 (the `latest` specifier is unchanged either way)",
+    "bun.lock is rewritten to the current release (18.20.0 or newer) and committed with the import line — ref 320 §1 「每个 child 把所在 repo 的 `@oh-my-pi/*` 开发依赖刷新到当前发布版」; no acceptance row observes which of the two happened, so both pass rows 1-5"
+   ],
+   "producer": "package.json:45 (declares `latest`) together with bun.lock:152 (locks 18.18.0); the installed copy at node_modules/@oh-my-pi/pi-coding-agent/package.json is 18.18.0",
+   "searched": "read package.json, bun.lock:8-11,152, node_modules/@oh-my-pi/pi-coding-agent/package.json (version 18.18.0), the contract's 依赖关系 and 约束 sections, and refs/oh-my-omp-omp-config-320-6863721490-s1.md §1; confirmed the root barrel re-exports the symbol in the locked 18.18.0 types (node_modules/@oh-my-pi/pi-coding-agent/dist/types/index.d.ts:30) so rows 1/3/4/5 need no refresh"
+  },
+  {
+   "id": "OP2",
+   "point": "结果 2 states 「上一块是撤回时重新注入」 (re-injection, which reads like a plain delta) while acceptance row 3 pins `previousRetraction=supersede`; the two differ in whether the re-injected block opens with the supersede line, so an implementer who trusts the prose over the table could 'fix' src/tool-delta.ts:100-101 and fail row 3.",
+   "input": "A context projection whose last `omp-remote-build/tools` block is the retraction line (`The earlier reminders from omp-remote-build/tools no longer apply.`), followed by a wanted text delta.",
+   "outputs": [
+    "a block whose inner text is exactly the wanted body with no supersede line — the script's `tag()` reports this as `delta`, matching 结果 2's 「重新注入」 read literally",
+    "a block opening with `This reminder supersedes every earlier reminder from omp-remote-build/tools; only this one applies.` — the script's `tag()` reports `supersede`, which row 3 expects and src/tool-delta.ts:100-101 produces today; the script as written exits 1 on the first reading"
+   ],
+   "producer": "src/tool-delta.ts:100-101 renders the supersede-prefixed block for the `retracted` arm; the retraction block it supersedes is emitted by src/tool-delta.ts:95 through atPrompt (src/tool-delta.ts:120-123) whenever src/index.ts:162 hands it `{ kind: \"none\" }` at src/index.ts:177",
+   "searched": "read 结果 2, the acceptance table's expected map (row 3), src/tool-delta.ts:42-135, src/index.ts:150-182; ran the row-3 script against the checkout and observed `previousRetraction=supersede` with exit 0"
+  }
+ ],
+ "gate_gaps": [
+  {
+   "row": "结果 2 「无事可撤时不发」",
+   "input": "`atPrompt(ctx, { kind: \"none\" })` over a projection whose last `omp-remote-build/tools` block is already the retraction line; src/tool-delta.ts:95 must return undefined (probe with /tmp/rb-c3-probe.cNmsV8/rb-c3-gaps.ts printed `alreadyRetractedNone=none`). Row 3's `nothingSentNone` feeds only the absent-projection case (`[user]`), so the `retracted` arm of that clause is never fed."
+  },
+  {
+   "row": "结果 2 「[保持] 差分语义与基准一致」 — the turn-boundary batch reset (src/tool-delta.ts:12-17,39,131-133, wired at src/index.ts:172-174)",
+   "input": "`afterTools(ctx, { kind: \"text\", body })`, then `turnStarted()`, then `afterTools` again over a projection that still holds no persisted block; the second call must send the delta again (probe printed `afterToolsFirst=sent, afterToolsAfterTurnStart=sent`). No acceptance row calls `turnStarted()`, so dropping the reset would still leave every reading unchanged."
+  },
+  {
+   "row": "结果 2 「投影里已有同内容（`developer` 载体…）时不重发」",
+   "input": "A `role: \"developer\"`, `attribution: \"agent\"` carrier whose `content` is `[{ type: \"text\", text: reminder(body) }]` — the shape the host persists `tool_result` context in (node_modules/@oh-my-pi/pi-agent-core/src/tool-context.ts:47 `createAdditionalContextMessage`) — must yield no resend (probe printed `blockContentCarrier=none`). Rows 3 and 4 feed only string `content`, so src/tool-delta.ts:53-62's block-array path is never exercised by the acceptance commands."
+  },
+  {
+   "row": "约束 「PR 的用户可见变更按 repo 惯例记进 `## [Unreleased]`（由 lgit 写入），不改版本号、不加版本段」",
+   "input": "Stage `src/tool-delta.ts`, run `uvx --from lgit-cli lgit`, and read the PR branch's `CHANGELOG.md` `## [Unreleased]` diff (an entry appears, or none does because lgit sees no user-visible change); no acceptance row reads CHANGELOG.md and package.json's version stays 0.1.23 either way."
+  }
+ ]
+}
