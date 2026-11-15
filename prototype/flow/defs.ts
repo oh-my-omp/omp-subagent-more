@@ -51,6 +51,8 @@ export type AgentBox = Common & {
 	readonly raises: readonly string[];
 	/** `true`: each session in its own worktree; `false`: sessions share the caller's workspace on purpose; absent: the host decides. */
 	readonly isolated: boolean | undefined;
+	/** A command run in the session's workspace before the session's first turn. */
+	readonly prepare: string | undefined;
 	/** Most sessions one item may take through answered raises: the first, and one per answer. */
 	readonly bound: number;
 };
@@ -129,6 +131,7 @@ const AGENT_KEYS: Record<string, true> = {
 	raises: true,
 	handle: true,
 	isolated: true,
+	prepare: true,
 	limit: true,
 	bound: true,
 };
@@ -199,7 +202,8 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	});
 	const limit = count("limit", undefined);
 	const template = isAgent ? text("brief") : text("command");
-	for (const match of template.matchAll(PLACEHOLDER)) {
+	const prepare = isAgent && raw.prepare !== undefined ? text("prepare") : undefined;
+	for (const match of `${template}\n${prepare ?? ""}`.matchAll(PLACEHOLDER)) {
 		const used = match[1] ?? "";
 		if (!(used in inputs)) say(`\`{{${used}}}\` names no input of this box`);
 	}
@@ -242,6 +246,7 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 			out,
 			raises,
 			isolated: typeof isolatedRaw === "boolean" ? isolatedRaw : undefined,
+			prepare,
 			bound,
 			inputs,
 			handle,

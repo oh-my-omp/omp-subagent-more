@@ -41,7 +41,6 @@ import {
 	cfgTaskDisabledAgents,
 	cfgTaskIsolationApply,
 	cfgTaskIsolationEnabled,
-	cfgTaskIsolationMerge,
 } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
@@ -56,6 +55,7 @@ import {
 	inheritReleasedPatch,
 	inheritSourceWorkspace,
 	keptTaskBranch,
+	overlayFilePath,
 	recordStart,
 	writeOverlay,
 } from "../../extensions/fork-task/workspace.ts";
@@ -194,7 +194,16 @@ type Flow = {
 };
 
 /** What the spawn hook does for one session the flow is about to start. */
-type Prepared = { readonly overlay: string | undefined; readonly model: string | string[] | undefined };
+type Prepared = {
+	/** Changes the session inherits. */
+	readonly overlay: string | undefined;
+	readonly model: string | string[] | undefined;
+	/** The box's `prepare` command with its inputs filled in. */
+	readonly prepare: string | undefined;
+};
+
+/** Where the parent leaves the `prepare` command of the child at `childFile`; the child's thread reads it before its first turn. */
+const prepareFilePath = (childFile: string): string => `${overlayFilePath(childFile)}.prepare`;
 
 type Runtime = {
 	readonly pi: ExtensionAPI;
@@ -350,13 +359,6 @@ async function runAgent(
 	if (box.isolated === true && !cfgTaskIsolationEnabled.get(parent.settings)) {
 		return failed("spawn", "the box is `isolated`, and this session does not allow isolated subagents (`task.isolation.enabled`)");
 	}
-	// OMP reports a hand-back it could not complete only by the task branch it keeps, and only in branch mode.
-	if (box.isolated === true && cfgTaskIsolationApply.get(parent.settings) && cfgTaskIsolationMerge.get(parent.settings) !== "branch") {
-		return failed(
-			"spawn",
-			"the box is `isolated`, and with `task.isolation.merge` set to `patch` the flow cannot tell whether a session's changes reached your checkout; set it to `branch`",
-		);
-	}
 	let model: string | string[] | undefined;
 	if (box.model !== undefined) {
 		model = (await lookUpAgents(parent, [box.model])).models.get(box.model);
@@ -390,7 +392,8 @@ async function runAgent(
 	// The task tool returns once the session's job is registered; the spawn hook runs later, inside that job.
 	// So what was prepared for the session stays until the session has ended.
 	const prepared = spawnId(flow.dir, name);
-	rt.spawns.set(prepared, { overlay, model });
+	const prepare = box.prepare === undefined ? undefined : fill(box.prepare, firing.inputs, shellWord);
+	rt.spawns.set(prepared, { overlay, model, prepare });
 	try {
 		return await spawnAndWait(parent, flow, box, firing, item, signal);
 	} finally {
@@ -438,15 +441,29 @@ async function spawnAndWait(
 	signal.removeEventListener("abort", cancel);
 	const outcome = outcomeOfJob(box, job, session);
 	if (outcome.kind !== "done" && outcome.kind !== "raise") return outcome;
-	// With `task.isolation.apply` off the branch is kept on purpose: nothing was to be merged.
-	if (box.isolated !== true || !cfgTaskIsolationApply.get(parent.settings)) return outcome;
-	// OMP deletes the task branch of a session once its changes are in the caller's checkout, and keeps it when it could not merge them.
-	const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
-	if (kept === undefined) return outcome;
+	// OMP merges a yielded session's changes into the caller's checkout itself, and says in the session's result when it could not.
+	const refusal = handBackFailure(job.resultText ?? "");
+	if (refusal === undefined) return outcome;
 	return failed(
 		"workspace",
-		`the session yielded, but OMP could not merge its changes into your checkout; they are on branch \`${kept}\`, and your checkout may be left half-updated (\`git status\`). ${clip((job.resultText ?? "").slice(-600))} (history://${session})`,
+		`the session yielded, but OMP did not get its changes into your checkout, which may be left half-updated (\`git status\`). OMP says: ${clip(refusal)} (history://${session})`,
 	);
+}
+
+/**
+ * What OMP says went wrong handing an isolated session's changes back, read from the result it
+ * gives for the session: its merge summary carries a notification exactly when changes that
+ * were to be applied were not.
+ */
+function handBackFailure(resultText: string): string | undefined {
+	const open = resultText.lastIndexOf("<merge-summary>");
+	const close = resultText.indexOf("</merge-summary>", open);
+	if (open < 0 || close < 0) return undefined;
+	const summary = resultText.slice(open + "<merge-summary>".length, close);
+	// The result is rendered into a harness block, which writes the `<` of a notification tag as an entity.
+	const plain = summary.replaceAll("&lt;", "<");
+	if (!plain.includes("<system-notification>")) return undefined;
+	return plain.replace(/<\/?system-notification>/g, "").trim();
 }
 
 async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing, signal: AbortSignal): Promise<Outcome> {
@@ -492,10 +509,15 @@ async function beforeSubagentSpawn(
 	const prepared = rt.spawns.get(id);
 	if (!prepared) return;
 	rt.spawns.delete(id);
+	const childFile = path.join(dir, `${event.spawnKey}.jsonl`);
 	try {
-		if (prepared.overlay !== undefined) await writeOverlay(path.join(dir, `${event.spawnKey}.jsonl`), prepared.overlay);
+		if (prepared.overlay !== undefined) await writeOverlay(childFile, prepared.overlay);
+		if (prepared.prepare !== undefined) {
+			fs.mkdirSync(path.dirname(prepareFilePath(childFile)), { recursive: true });
+			fs.writeFileSync(prepareFilePath(childFile), prepared.prepare);
+		}
 	} catch (error) {
-		return { block: true, reason: `flow: handing the earlier session's changes to the new one failed: ${errorText(error)}` };
+		return { block: true, reason: `flow: handing the new session what was prepared for it failed: ${errorText(error)}` };
 	}
 	return prepared.model === undefined ? undefined : { model: prepared.model };
 }
@@ -514,12 +536,30 @@ async function beforeAgentStart(rt: Runtime, _event: BeforeAgentStartEvent, ctx:
 		rt.pi.logger.warn("flow: recording the workspace start failed", { error: errorText(error) }),
 	);
 	const applied = await applyOverlay(file, cwd).catch((error: unknown) => ({ kind: "failed" as const, message: errorText(error) }));
-	if (applied.kind !== "failed") return;
-	const reason = `flow: the changes of the earlier session did not apply to this workspace: ${applied.message}`;
+	const reason =
+		applied.kind === "failed"
+			? `flow: the changes of the earlier session did not apply to this workspace: ${applied.message}`
+			: await prepareWorkspace(file, cwd);
+	if (reason === undefined) return;
 	rt.pi.logger.warn(reason);
 	callerSession(ctx)?.agent.addBeforeModelCallHook(() => {
 		throw new Error(reason);
 	});
+}
+
+/** Runs the `prepare` command left for the session at `file`, once; returns why the session cannot start when it fails. */
+async function prepareWorkspace(file: string, cwd: string): Promise<string | undefined> {
+	const left = prepareFilePath(file);
+	if (!fs.existsSync(left)) return undefined;
+	const command = fs.readFileSync(left, "utf8");
+	fs.rmSync(left, { force: true });
+	let output = "";
+	const result = await new Shell().run({ command, cwd, timeoutMs: 240_000 }, (error, chunk) => {
+		if (error === null) output += chunk;
+	});
+	if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return undefined;
+	const how = result.timedOut ? "timed out" : `exited with ${result.exitCode ?? "no status"}`;
+	return `flow: the box's \`prepare\` command ${how} in this workspace: ${clipOutput(output.trim())}`;
 }
 
 async function fire(rt: Runtime, parent: AgentSession, flow: Flow, firing: Firing): Promise<void> {

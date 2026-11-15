@@ -235,12 +235,13 @@ describe("definitions and values", () => {
 		const flow = open();
 		const verdict = flow.store.submit({
 			kind: "define",
-			boxes: { ok: GATE, bad: { agent: "task:low", brief: "{{nope}}", out: OUT, raises: "q", typo: 1 } },
+			boxes: { ok: GATE, bad: { agent: "task:low", brief: "{{nope}}", prepare: "install {{gone}}", out: OUT, raises: "q", typo: 1 } },
 		});
 		expect(verdict.accepted).toBe(false);
 		expect(verdict.refusals).toEqual([
 			"bad: unknown field `typo`",
 			"bad: `{{nope}}` names no input of this box",
+			"bad: `{{gone}}` names no input of this box",
 			"bad: `raises` is an array of names",
 		]);
 		expect(flow.log.filter((action) => action.kind === "defined")).toEqual([]);

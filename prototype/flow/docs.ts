@@ -48,6 +48,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`bound\` | agent | Most sessions one item may take through answered raises and failed checks: the first, and one per answer or failed check. 3 when absent. |
 | \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
+| \`prepare\` | agent | A command run in the session's workspace before its first turn, for what the session needs and no model should spend a turn on (\`bun install\`). \`{{name}}\` is replaced by the input's text as one quoted shell word. When it fails, the session does not start. |
 
 ## References
 
@@ -63,13 +64,13 @@ A box takes at most one reference of the last two kinds. References are resolved
 
 ## Checks
 
-A command box that names an agent box in \`checks\` is a verdict on that box's work:
+A command box that names an agent box in \`checks\` declares how its \`exit\` exception is handled: by reopening the work it checked.
 
 \`\`\`json
 { "command": "bun test", "in": { "work": "work[]" }, "checks": "work" }
 \`\`\`
 
-When the command exits non-zero, the item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow does not stop. A reopening counts towards the checked box's \`bound\`; once that is spent, the failed check is an ordinary \`exit\` exception.
+When the command exits non-zero, the item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow does not stop. A reopening counts towards the checked box's \`bound\`; once that is spent, the exception is unhandled and stops the flow like any other.
 
 The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`. A \`handle.exit\` count on the check runs the command again that many times before the item is reopened.
 
@@ -81,19 +82,19 @@ Every session is new: none continues an earlier one. A session ends by yielding 
 - the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
 - for an \`isolated\` box, the changes the earlier session left in its worktree. A session that yields hands its changes to your checkout, where the next worktree starts from them; when \`task.isolation.apply\` is off they stay a patch, which the next session of the item receives. A session that failed or was cancelled hands nothing back, and the next session of the item starts with its uncommitted changes applied, whatever model it runs on. The same holds for a session that yielded and whose changes could not be merged: the item fails with \`workspace\`, and its next session starts from those changes.
 
-An \`isolated\` box needs \`task.isolation.merge\` set to \`branch\` while \`task.isolation.apply\` is on. A worktree holds no ignored files of your checkout (installed dependencies, build output): say in the brief how a session gets what its checks need, and keep what it creates for that out of its changes with an ignore rule.
+A worktree holds no ignored files of your checkout (installed dependencies, build output): give the box a \`prepare\` command for what its sessions need. Everything a session or its \`prepare\` command leaves in the worktree that git does not ignore is handed back as the session's change.
 
 ## Runtime exceptions
 
 | Name | Raised when |
 |---|---|
-| \`spawn\` | The session could not be started, or the box is \`isolated\` and the session's isolation settings do not allow it. |
-| \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session, or a session yielded and its changes could not be merged into your checkout (the reason names the branch that holds them). |
-| \`session\` | The session failed, aborted itself, or ended without yielding. |
+| \`spawn\` | The session could not be started. |
+| \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session, or a session yielded and OMP reported that its changes did not reach your checkout (the reason quotes OMP). |
+| \`session\` | The session failed, aborted itself, or ended without yielding; or its \`prepare\` command failed. |
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |
 | \`bound_exceeded\` | An item raised in its last allowed session. |
-| \`exit\` | A command exited non-zero, and it is not a check that could reopen an item. |
+| \`exit\` | A command exited non-zero. Handled when the box \`checks\` an item that can still be reopened. |
 | \`timeout\` | A command timed out. |
 | \`host\` | Starting or reading the session threw. |`;
 
