@@ -47,7 +47,7 @@ export type AgentBox = Common & {
 	/** Exception types the agent may raise instead of returning a result. */
 	readonly raises: readonly string[];
 	readonly isolated: boolean;
-	/** Most sessions one item may take, counting continuations after an answered raise. */
+	/** Most sessions one item may take through answered raises: the first, and one per answer. */
 	readonly bound: number;
 };
 
@@ -235,10 +235,13 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	};
 }
 
-/** `{{name}}` replaced by the input's text: a string as written, anything else as JSON. */
-export function fill(template: string, inputs: Readonly<Record<string, Json>>): string {
-	return template.replace(PLACEHOLDER, (_whole, name: string) => {
-		const value = inputs[name] ?? null;
-		return typeof value === "string" ? value : JSON.stringify(value, null, 1);
-	});
+/** The text an input stands for: a string as written, anything else as JSON. */
+export const textOf = (value: Json): string => (typeof value === "string" ? value : JSON.stringify(value, null, 1));
+
+/** `{{name}}` replaced by the input's text, passed through `quote`. */
+export function fill(template: string, inputs: Readonly<Record<string, Json>>, quote: (text: string) => string = (text) => text): string {
+	return template.replace(PLACEHOLDER, (_whole, name: string) => quote(textOf(inputs[name] ?? null)));
 }
+
+/** One POSIX shell word holding `text` exactly. */
+export const shellWord = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;

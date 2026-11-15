@@ -9,6 +9,7 @@
 		"includes": [
 			"extensions/**/*.ts",
 			"prototype/**/*.ts",
+			"prototype/**/*.js",
 			"skills/**/*.js",
 			"tests/**/*.ts",
 			"biome.json",

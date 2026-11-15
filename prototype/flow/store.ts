@@ -188,6 +188,11 @@ export class Store {
 		return found.ready;
 	}
 
+	/** The id under which the session of an attempt can be read outside the flow. */
+	spawned(key: string, attempt: number, session: string): void {
+		this.#dispatch({ kind: "spawned", key, attempt, session });
+	}
+
 	/** The end of one session, however it ended. */
 	settle(key: string, attempt: number, outcome: Outcome): void {
 		this.#dispatch({ kind: "settled", key, attempt, outcome });

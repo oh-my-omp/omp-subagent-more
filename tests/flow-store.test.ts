@@ -1,7 +1,11 @@
 // The flow store without a host: commands in, firings out, sessions settled by the test.
 // Each test states a property of the design that a run with real sessions depends on.
 import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Json } from "../prototype/flow/defs.ts";
+import { appendLog, readLog } from "../prototype/flow/journal.ts";
 import type { Firing } from "../prototype/flow/plan.ts";
 import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
 import { type Action, type Outcome, replay } from "../prototype/flow/state.ts";
@@ -158,6 +162,20 @@ describe("runtime exceptions", () => {
 		expect(flow.store.state.mode.kind).toBe("stopped");
 	});
 
+	test("each handled exception name has its own count", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { gate: { command: "true", handle: { exit: 1, timeout: 1 } } } });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("gate", 1, failed("exit"));
+		flow.fire();
+		flow.store.settle("gate", 2, failed("timeout"));
+		expect(flow.store.state.mode.kind).toBe("running");
+		expect(flow.fire()).toEqual(["gate@3"]);
+		flow.store.settle("gate", 3, failed("timeout"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { name: "timeout" } });
+	});
+
 	test("a session that outlived its item reports to nothing", () => {
 		const flow = fanned();
 		flow.store.submit({ kind: "retract", keys: ["work#0"] });
@@ -302,6 +320,31 @@ describe("exceptions raised by a session", () => {
 		]);
 	});
 
+	test("sessions that failed do not count towards `bound`; only answered raises do", () => {
+		const flow = raising({
+			work: {
+				agent: "task:low",
+				brief: "Do {{slice}}",
+				in: { slice: "input.slices[]" },
+				out: OUT,
+				raises: ["question"],
+				bound: 2,
+				handle: { spawn: 2 },
+			},
+		});
+		flow.store.settle("work#0", 1, failed("spawn"));
+		flow.fire();
+		flow.store.settle("work#0", 2, failed("spawn"));
+		flow.fire();
+		flow.store.settle("work#0", 3, { kind: "raise", type: "question", detail: "which?", handoff: HANDOFF });
+		expect(flow.store.state.items["work#0"]?.phase.kind).toBe("raised");
+
+		flow.store.submit({ kind: "answer", key: "work#0", value: "this" });
+		flow.fire();
+		flow.store.settle("work#0", 4, { kind: "raise", type: "question", detail: "and now?", handoff: HANDOFF });
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { key: "work#0", name: "bound_exceeded" } });
+	});
+
 	test("an item that raises in its last allowed session ends as the runtime exception `bound_exceeded`", () => {
 		const flow = raising({
 			work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question"], bound: 1 },
@@ -320,6 +363,84 @@ describe("exceptions raised by a session", () => {
 		const flow = open();
 		flow.store.submit({ kind: "define", boxes: { work: ASK, answer: ANSWER, second: ANSWER } });
 		expect(flow.store.submit({ kind: "run" }).refusals).toEqual(["work!question: answered by more than one box (answer, second)"]);
+	});
+});
+
+describe("the log on disk", () => {
+	/** A run that leaves every kind of action in its log. */
+	function eventful(file: string) {
+		const log: Action[] = [];
+		const store = new Store(log, (action) => {
+			log.push(action);
+			appendLog(file, action);
+		});
+		store.observe({ "task:low": "low-1" });
+		store.submit({
+			kind: "define",
+			boxes: {
+				work: { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, raises: ["question"] },
+				gate: { command: "true", handle: { exit: 1 } },
+				solo: { command: "true" },
+			},
+		});
+		store.submit({ kind: "supply", name: "slices", value: ["a", "b", "c"] });
+		store.submit({ kind: "run" });
+		store.advance();
+		store.settle("solo", 1, done("out"));
+		store.spawned("work#0", 1, "FlowWork0");
+		store.settle("work#0", 1, done({ n: 0 }));
+		store.settle("work#1", 1, { kind: "raise", type: "question", detail: "which?", handoff: HANDOFF });
+		store.submit({ kind: "answer", key: "work#1", value: "this" });
+		store.advance();
+		store.settle("gate", 1, failed("exit"));
+		store.settle("work#2", 1, failed("session"));
+		store.settle("work#1", 2, { kind: "cancelled" });
+		store.submit({ kind: "retry", keys: ["work#2"] });
+		store.submit({ kind: "retract", keys: ["work#0"] });
+		store.submit({ kind: "run" });
+		store.advance();
+		store.submit({ kind: "stop", reason: "enough" });
+		store.observe({ "task:low": "low-2" });
+		store.submit({ kind: "define", boxes: { work: null, gate: null, solo: { command: "false" } } });
+		store.submit({ kind: "retract", keys: Object.keys(store.state.items).filter((key) => key !== "solo") });
+		store.submit({ kind: "keep", keys: ["solo"] });
+		store.submit({ kind: "run" });
+		store.advance();
+		return { store, log };
+	}
+
+	test("a store opened on the file holds the state the writing store had", () => {
+		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-log-")), "nested", "flow.jsonl");
+		const { store, log } = eventful(file);
+		expect([...new Set(log.map((action) => action.kind))].sort()).toEqual([
+			"answered",
+			"defined",
+			"fired",
+			"halted",
+			"idled",
+			"kept",
+			"observed",
+			"resumed",
+			"retracted",
+			"retried",
+			"settled",
+			"spawned",
+			"started",
+			"supplied",
+		]);
+		expect(readLog(file)).toEqual(log);
+		expect(new Store(readLog(file), () => {}).state).toEqual(store.state);
+	});
+
+	test("a last line cut short is dropped; any other line that is not an action fails the read", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-log-"));
+		const torn = path.join(dir, "torn.jsonl");
+		fs.writeFileSync(torn, `${JSON.stringify({ kind: "started" })}\n{"kind":"sup`);
+		expect(readLog(torn)).toEqual([{ kind: "started" }]);
+
+		const foreign = path.join(dir, "foreign.jsonl");
+		fs.writeFileSync(foreign, `${JSON.stringify({ kind: "settled", key: "a", attempt: 1 })}\n${JSON.stringify({ kind: "started" })}\n`);
+		expect(() => readLog(foreign)).toThrow("line 1 is not a flow action");
 	});
 });
 

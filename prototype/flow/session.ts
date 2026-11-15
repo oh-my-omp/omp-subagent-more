@@ -3,7 +3,7 @@
 // A session returns exactly one object through `yield`: the result, or one of the exception
 // types its box declares. Either way it carries a handoff, because the next session of the item
 // (after an answer, or after a failure) starts fresh and has nothing else of this one.
-import { type AgentBox, fill, isObject, type Json, type JsonObject } from "./defs.ts";
+import { type AgentBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
 import type { Outcome } from "./state.ts";
 
@@ -34,8 +34,6 @@ export function yieldSchema(box: AgentBox): JsonObject {
 	};
 }
 
-const show = (value: Json): string => (typeof value === "string" ? value : JSON.stringify(value, null, 1));
-
 /** The assignment of one session: the box's brief with its inputs, what came before, and how to finish. */
 export function briefOf(box: AgentBox, firing: Firing): string {
 	const parts = [fill(box.brief, firing.inputs).trim()];
@@ -45,20 +43,20 @@ export function briefOf(box: AgentBox, firing: Firing): string {
 				"## Continuation",
 				"An earlier session worked on this same assignment and stopped to raise a question. You start fresh: nothing of that session reaches you except its handoff.",
 				"Handoff of the earlier session:",
-				show(firing.continuation.previous),
+				textOf(firing.continuation.previous),
 				"Answer to what it raised:",
-				show(firing.continuation.answer),
+				textOf(firing.continuation.answer),
 			].join("\n"),
 		);
 	}
 	const finish = [
 		"## How to finish",
-		"Finish by calling `yield` with its `data` argument set to exactly one object.",
+		"Finish by calling `yield` with its `data` argument set to exactly one object. Never use `yield`'s `error` argument: it aborts the session and nothing of your work reaches anyone.",
 		'- The assignment is complete: `{"status": "done", "value": <result>, "handoff": {…}}`, where `<result>` matches the result schema.',
 	];
 	if (box.raises.length > 0) {
 		finish.push(
-			`- You cannot complete it and guessing would be wrong: \`{"status": "raise", "raise": "<type>", "detail": "…", "handoff": {…}}\`, where \`<type>\` is one of ${box.raises.map((type) => `\`${type}\``).join(", ")} and \`detail\` says concretely what is needed. No person reads this session: raise through \`yield\`, never through the \`ask\` tool.`,
+			`- You cannot complete it and guessing would be wrong: \`{"status": "raise", "raise": "<type>", "detail": "…", "handoff": {…}}\`, where \`<type>\` is one of ${box.raises.map((type) => `\`${type}\``).join(", ")} and \`detail\` says concretely what is needed. A raise is an ordinary result sent as \`data\`; it is answered, and a later session continues. No person reads this session: never use the \`ask\` tool.`,
 		);
 	}
 	finish.push(

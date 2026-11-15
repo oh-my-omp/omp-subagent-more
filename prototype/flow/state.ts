@@ -44,6 +44,8 @@ export type Action =
 			readonly attempt: number;
 			readonly continuation: Continuation | null;
 	  }
+	/** Where the session of an attempt can be read from outside the flow. */
+	| { readonly kind: "spawned"; readonly key: string; readonly attempt: number; readonly session: string }
 	| { readonly kind: "settled"; readonly key: string; readonly attempt: number; readonly outcome: Outcome };
 
 export type Phase =
@@ -62,11 +64,15 @@ export type Item = {
 	/** Mark of what the latest attempt ran under. */
 	readonly fingerprint: string;
 	readonly phase: Phase;
-	/** Handled runtime exceptions already spent on this item. */
-	readonly refires: number;
+	/** Sessions of this item that followed one another through answered raises, this one included. */
+	readonly chain: number;
+	/** How many times each handled runtime exception has already made this item fire again. */
+	readonly refires: Readonly<Record<string, number>>;
 	readonly continuation: Continuation | null;
 	/** An answer to the item's raise given from outside the flow. */
 	readonly answer: Json | undefined;
+	/** Id of the latest attempt's session, once it has one. */
+	readonly session: string | undefined;
 };
 
 export type StopCause =
@@ -167,7 +173,8 @@ function settle(state: State, item: Item, outcome: Outcome): State {
 	});
 	const fail = (name: string, reason: string): State => {
 		const allowed = state.boxes[item.box]?.handle[name] ?? 0;
-		if (item.refires < allowed) return put({ kind: "retry", name, reason }, { refires: item.refires + 1 });
+		const spent = item.refires[name] ?? 0;
+		if (spent < allowed) return put({ kind: "retry", name, reason }, { refires: { ...item.refires, [name]: spent + 1 } });
 		const failed = put({ kind: "failed", name, reason });
 		return state.mode.kind === "running"
 			? { ...failed, mode: { kind: "stopped", cause: { kind: "exception", key: item.key, name, reason } } }
@@ -178,8 +185,11 @@ function settle(state: State, item: Item, outcome: Outcome): State {
 			return put({ kind: "done", value: outcome.value, handoff: outcome.handoff });
 		case "raise": {
 			const box = state.boxes[item.box];
-			if (box?.kind === "agent" && item.attempt >= box.bound) {
-				return fail("bound_exceeded", `raised \`${outcome.type}\` in session ${item.attempt} of at most ${box.bound}: ${outcome.detail}`);
+			if (box?.kind === "agent" && item.chain >= box.bound) {
+				return fail(
+					"bound_exceeded",
+					`raised \`${outcome.type}\` again after ${item.chain - 1} answered raises (bound ${box.bound}): ${outcome.detail}`,
+				);
 			}
 			return put({ kind: "raised", type: outcome.type, detail: outcome.detail, handoff: outcome.handoff });
 		}
@@ -264,17 +274,25 @@ export function reduce(state: State, action: Action): State {
 		case "fired": {
 			const box = state.boxes[action.box];
 			if (!box) return state;
+			const earlier = state.items[action.key];
 			const item: Item = {
 				key: action.key,
 				box: action.box,
 				attempt: action.attempt,
+				chain: earlier === undefined ? 1 : earlier.phase.kind === "raised" ? earlier.chain + 1 : earlier.chain,
 				fingerprint: markOf(state, box),
 				phase: { kind: "running" },
-				refires: state.items[action.key]?.refires ?? 0,
+				refires: earlier?.refires ?? {},
 				continuation: action.continuation,
 				answer: undefined,
+				session: undefined,
 			};
 			return { ...state, items: { ...state.items, [action.key]: item } };
+		}
+		case "spawned": {
+			const item = state.items[action.key];
+			if (!item || item.attempt !== action.attempt) return state;
+			return { ...state, items: { ...state.items, [action.key]: { ...item, session: action.session } } };
 		}
 		case "settled": {
 			const item = state.items[action.key];

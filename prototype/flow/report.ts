@@ -8,6 +8,11 @@ import { type Item, markOf, type State } from "./state.ts";
 export type Marks = Readonly<Record<string, string>>;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** The start of a reason; the item's own line carries all of it. */
+const brief = (text: string): string => {
+	const line = oneLine(text);
+	return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+};
 
 function itemLabel(state: State, survey: Survey, item: Item): string {
 	const box = state.boxes[item.box];
@@ -19,7 +24,7 @@ function itemLabel(state: State, survey: Survey, item: Item): string {
 	const phase = item.phase;
 	switch (phase.kind) {
 		case "running":
-			return `running, session ${item.attempt}${suffix}`;
+			return `running, session ${item.attempt}${item.session === undefined ? "" : ` (history://${item.session})`}${suffix}`;
 		case "done":
 			return `done in session ${item.attempt}${suffix}`;
 		case "raised": {
@@ -94,8 +99,8 @@ export function headline(state: State, survey: Survey): string[] {
 			const cause = state.mode.cause;
 			const why =
 				cause.kind === "exception"
-					? `\`${cause.key}\` failed with \`${cause.name}\`, which its box does not handle: ${oneLine(cause.reason)}`
-					: `stopped by the caller: ${oneLine(cause.reason)}`;
+					? `\`${cause.key}\` failed with \`${cause.name}\`, which its box does not handle: ${brief(cause.reason)}`
+					: `stopped by the caller: ${brief(cause.reason)}`;
 			lines.push(`flow STOPPED · ${counts}`, `cause: ${why}`);
 			break;
 		}
