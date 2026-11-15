@@ -46,6 +46,9 @@ function outcomeOf(data: JsonObject): Outcome | undefined {
 		case "raise":
 			outcome = { kind: "raise", type: fields.text("type"), detail: fields.text("detail"), handoff: fields.json("handoff") };
 			break;
+		case "rejected":
+			outcome = { kind: "rejected", output: fields.text("output") };
+			break;
 		case "failed":
 			outcome = { kind: "failed", name: fields.text("name"), reason: fields.text("reason") };
 			break;

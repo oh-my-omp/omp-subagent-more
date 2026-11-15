@@ -60,7 +60,7 @@ export type AgentBox = Common & {
 export type CommandBox = Common & {
 	readonly kind: "command";
 	readonly command: string;
-	/** The box whose item this command checks: a non-zero exit reopens that item instead of stopping the flow. */
+	/** The box whose item this command checks: when the command rejects the item's result, the item is reopened. */
 	readonly checks: string | undefined;
 };
 

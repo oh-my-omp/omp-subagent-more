@@ -408,7 +408,7 @@ describe("checks", () => {
 	const CHECKED: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "input.slices[]" }, out: OUT, bound: 2 };
 	const CHECK: Json = { command: "check {{work}}", in: { work: "work[]" }, checks: "work" };
 	const AFTER: Json = { command: "sum {{checks}}", in: { checks: "check" } };
-	const exit = (output: string): Outcome => ({ kind: "failed", name: "exit", reason: output });
+	const reject = (output: string): Outcome => ({ kind: "rejected", output });
 
 	/** Two slices done, both checks in flight. */
 	function checking(boxes: Readonly<Record<string, Json>> = { work: CHECKED, check: CHECK, after: AFTER }) {
@@ -423,10 +423,10 @@ describe("checks", () => {
 		return flow;
 	}
 
-	test("a check that exits non-zero reopens the item it checks, which continues in a new session with the output", () => {
+	test("a check that rejects reopens the item it checks, which continues in a new session with the output", () => {
 		const flow = checking();
 		flow.store.settle("check#0", 1, done("ok"));
-		flow.store.settle("check#1", 1, exit("expected 3, got 2"));
+		flow.store.settle("check#1", 1, reject("expected 3, got 2"));
 		expect(flow.store.state.mode.kind).toBe("running");
 
 		const again = flow.store.advance();
@@ -437,8 +437,8 @@ describe("checks", () => {
 	test("what was computed from the reopened item's result is gone and is produced again from the new one", () => {
 		const flow = checking();
 		flow.store.settle("check#0", 1, done("ok"));
-		flow.store.settle("check#1", 1, exit("no"));
-		// The failed check is gone with the result it judged; the check of the other item stands.
+		flow.store.settle("check#1", 1, reject("no"));
+		// The rejecting check is gone with the result it judged; the check of the other item stands.
 		expect(Object.keys(flow.store.state.items).sort()).toEqual(["check#0", "work#0", "work#1"]);
 
 		flow.fire();
@@ -450,24 +450,25 @@ describe("checks", () => {
 		expect(after.map((firing) => [firing.key, firing.inputs.checks])).toEqual([["after", ["ok", "ok"]]]);
 	});
 
-	test("reopenings count towards the checked box's `bound`; once spent, the failed check stops the flow", () => {
+	test("reopenings count towards the checked box's `bound`; a rejection of the last allowed session raises `bound_exceeded`", () => {
 		const flow = checking();
-		flow.store.settle("check#1", 1, exit("no"));
+		flow.store.settle("check#1", 1, reject("no"));
 		flow.fire();
 		flow.store.settle("work#1", 2, done(2));
 		flow.fire();
-		flow.store.settle("check#1", 1, exit("still no"));
-		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { kind: "exception", key: "check#1", name: "exit" } });
+		flow.store.settle("check#1", 1, reject("still no"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { kind: "exception", key: "check#1", name: "bound_exceeded" } });
 		expect(flow.store.state.items["work#1"]?.phase.kind).toBe("done");
 		expect(flow.store.state.items["check#1"]?.phase).toMatchObject({ kind: "failed", reason: expect.stringContaining("still no") });
 	});
 
-	test("`handle.exit` runs the check again before the item is reopened", () => {
+	test("a check that could not run raises `exit` like any command: `handle.exit` runs it again, and nothing is reopened", () => {
 		const flow = checking({ work: CHECKED, check: { ...(CHECK as object), handle: { exit: 1 } } });
-		flow.store.settle("check#1", 1, exit("flaky"));
+		flow.store.settle("check#1", 1, failed("exit"));
 		expect(flow.fire()).toEqual(["check#1@2"]);
-		flow.store.settle("check#1", 2, exit("no"));
-		expect(flow.fire()).toEqual(["work#1@2"]);
+		flow.store.settle("check#1", 2, failed("exit"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { kind: "exception", key: "check#1", name: "exit" } });
+		expect(flow.store.state.items["work#1"]?.phase).toMatchObject({ kind: "done", value: 1 });
 	});
 
 	test("a check of a box with one item reopens that item", () => {
@@ -484,7 +485,7 @@ describe("checks", () => {
 		flow.fire();
 		flow.store.settle("work", 1, done({ files: ["a"] }));
 		flow.fire();
-		flow.store.settle("check", 1, exit("no"));
+		flow.store.settle("check", 1, reject("no"));
 		expect(flow.fire()).toEqual(["work@2"]);
 	});
 
@@ -503,17 +504,17 @@ describe("checks", () => {
 		expect(problems(CHECK)).toEqual([]);
 	});
 
-	test("the full report says which item a failed check reopens", () => {
+	test("the full report says which item a check's rejection reopens", () => {
 		const flow = checking();
-		expect(flow.store.everything()).toContain("wire check ← work[] · exit reopens work");
+		expect(flow.store.everything()).toContain("wire check ← work[] · a rejection reopens work");
 		flow.store.changes();
-		flow.store.settle("check#1", 1, exit("expected 3,\n got 2"));
+		flow.store.settle("check#1", 1, reject("expected 3,\n got 2"));
 		expect(flow.store.changes()).toContain("~ work#1: reopened after session 1 by check `check`: expected 3, got 2");
 	});
 
 	test("a log with a reopening folds to the same state", () => {
 		const flow = checking();
-		flow.store.settle("check#1", 1, exit("no"));
+		flow.store.settle("check#1", 1, reject("no"));
 		flow.fire();
 		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-check-")), "flow.jsonl");
 		for (const action of flow.log) appendLog(file, action);

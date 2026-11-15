@@ -15,6 +15,8 @@ import { type Box, type Json, parseBox } from "./defs.ts";
 export type Outcome =
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raise"; readonly type: string; readonly detail: string; readonly handoff: Json }
+	/** A check ran and rejected the result it checks. This is the check's verdict, not an exception. */
+	| { readonly kind: "rejected"; readonly output: string }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
 
@@ -205,27 +207,27 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 		const allowed = state.boxes[item.box]?.handle[name] ?? 0;
 		const spent = item.refires[name] ?? 0;
 		if (spent < allowed) return put({ kind: "retry", name, reason: said }, { refires: { ...item.refires, [name]: spent + 1 } });
-		let reason = said;
-		// A check that exits non-zero is a verdict on the item it checks: that item continues in a new
-		// session, and what was computed from its result, this check included, is gone with the result.
-		const checkedAt = name === "exit" ? checkedKey(state.boxes, item.key) : undefined;
+		const failed = put({ kind: "failed", name, reason: said });
+		return state.mode.kind === "running"
+			? { ...failed, mode: { kind: "stopped", cause: { kind: "exception", key: item.key, name, reason: said } } }
+			: failed;
+	};
+	// A check's rejection is the flow's own way back to the work it checks: that item continues in a
+	// new session, and what was computed from its result, this check included, is gone with the result.
+	const reject = (output: string): State => {
+		const checkedAt = checkedKey(state.boxes, item.key);
 		const checked = checkedAt === undefined ? undefined : state.items[checkedAt];
 		const checkedBox = checked === undefined ? undefined : state.boxes[checked.box];
-		if (checked?.phase.kind === "done" && checkedBox?.kind === "agent") {
-			if (checked.chain < checkedBox.bound) {
-				const gone = dependents(state, new Set(), new Set([checked.key]));
-				const reopened: Item = {
-					...checked,
-					phase: { kind: "reopened", check: item.box, output: said, handoff: checked.phase.handoff },
-				};
-				return { ...state, items: { ...without(state.items, gone), [checked.key]: reopened } };
-			}
-			reason = `\`${checked.key}\` has taken its ${checkedBox.bound} sessions (bound), so this check no longer reopens it. ${said}`;
+		if (checked?.phase.kind !== "done" || checkedBox?.kind !== "agent") return fail("exit", output);
+		if (checked.chain >= checkedBox.bound) {
+			return fail(
+				"bound_exceeded",
+				`\`${item.box}\` rejected the result of \`${checked.key}\` in its last allowed session (bound ${checkedBox.bound}): ${output}`,
+			);
 		}
-		const failed = put({ kind: "failed", name, reason });
-		return state.mode.kind === "running"
-			? { ...failed, mode: { kind: "stopped", cause: { kind: "exception", key: item.key, name, reason } } }
-			: failed;
+		const gone = dependents(state, new Set(), new Set([checked.key]));
+		const reopened: Item = { ...checked, phase: { kind: "reopened", check: item.box, output, handoff: checked.phase.handoff } };
+		return { ...state, items: { ...without(state.items, gone), [checked.key]: reopened } };
 	};
 	switch (outcome.kind) {
 		case "done":
@@ -240,6 +242,8 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 			}
 			return put({ kind: "raised", type: outcome.type, detail: outcome.detail, handoff: outcome.handoff });
 		}
+		case "rejected":
+			return reject(outcome.output);
 		case "failed":
 			return fail(outcome.name, outcome.reason);
 		case "cancelled":

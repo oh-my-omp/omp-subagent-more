@@ -45,7 +45,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`raises\` | agent | Exception types a session may raise instead of returning a result. |
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
-| \`bound\` | agent | Most sessions one item may take through answered raises and failed checks: the first, and one per answer or failed check. 3 when absent. |
+| \`bound\` | agent | Most sessions one item may take through answered raises and rejections by a check: the first, and one per answer or rejection. 3 when absent. |
 | \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
 | \`prepare\` | agent | A command run in the session's workspace before its first turn, for what the session needs and no model should spend a turn on (\`bun install\`). \`{{name}}\` is replaced by the input's text as one quoted shell word. When it fails, the session does not start. |
@@ -64,15 +64,23 @@ A box takes at most one reference of the last two kinds. References are resolved
 
 ## Checks
 
-A command box that names an agent box in \`checks\` declares how its \`exit\` exception is handled: by reopening the work it checked.
+A command box that names an agent box in \`checks\` is a check of that box's work. It is part of the flow's wiring: the way back from a result to the work that produced it.
 
 \`\`\`json
 { "command": "bun test", "in": { "work": "work[]" }, "checks": "work" }
 \`\`\`
 
-When the command exits non-zero, the item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow does not stop. A reopening counts towards the checked box's \`bound\`; once that is spent, the exception is unhandled and stops the flow like any other.
+The command's exit code is its verdict:
 
-The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`. A \`handle.exit\` count on the check runs the command again that many times before the item is reopened.
+| Exit code | Meaning |
+|---|---|
+| 0 | The check accepts. The output is the box's result. |
+| 1–125 | The check rejects. The item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow goes on; no exception is raised. |
+| 126 and above | The command could not run or was killed. This is the \`exit\` exception, as for any command box; nothing is reopened. |
+
+Each reopening is one of the checked box's \`bound\` sessions. A rejection of the result of an item's last allowed session raises \`bound_exceeded\`.
+
+The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`.
 
 ## Sessions
 
@@ -93,8 +101,8 @@ A worktree holds no ignored files of your checkout (installed dependencies, buil
 | \`session\` | The session failed, aborted itself, or ended without yielding; or its \`prepare\` command failed. |
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |
-| \`bound_exceeded\` | An item raised in its last allowed session. |
-| \`exit\` | A command exited non-zero. Handled when the box \`checks\` an item that can still be reopened. |
+| \`bound_exceeded\` | An item raised in its last allowed session, or a check rejected the result of an item's last allowed session. |
+| \`exit\` | A command exited non-zero; for a check, with 126 or above. |
 | \`timeout\` | A command timed out. |
 | \`host\` | Starting or reading the session threw. |`;
 

@@ -476,8 +476,11 @@ async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing,
 	);
 	if (result.cancelled) return { kind: "cancelled" };
 	if (result.timedOut) return failed("timeout", clipOutput(output.trim()));
-	if (result.exitCode !== 0) return failed("exit", `exit code ${result.exitCode ?? "unknown"}:\n${clipOutput(output.trim())}`);
-	return { kind: "done", value: output.trimEnd(), handoff: null };
+	if (result.exitCode === 0) return { kind: "done", value: output.trimEnd(), handoff: null };
+	const said = `exit code ${result.exitCode ?? "unknown"}:\n${clipOutput(output.trim())}`;
+	// A check that ran says no with 1–125; from 126 on the shell reports a command that could not run or was killed.
+	const ran = typeof result.exitCode === "number" && result.exitCode >= 1 && result.exitCode <= 125;
+	return box.checks !== undefined && ran ? { kind: "rejected", output: said } : failed("exit", said);
 }
 
 /** A session that answers a raise is also told where the raising item keeps its notes. */
