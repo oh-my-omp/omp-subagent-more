@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { applyOverlay, inheritSourceWorkspace, overlayFilePath, rejection, writeOverlay } from "../extensions/fork-task/workspace.ts";
+import {
+	applyOverlay,
+	inheritKeptBranch,
+	inheritSourceWorkspace,
+	keptTaskBranch,
+	overlayFilePath,
+	rejection,
+	writeOverlay,
+} from "../extensions/fork-task/workspace.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -53,6 +61,57 @@ describe("inheritSourceWorkspace rejections", () => {
 
 	test("rejection text carries the code", () => {
 		expect(rejection("overlay-conflict", "x")).toBe('workspace "source" rejected (overlay-conflict): x');
+	});
+});
+
+describe("a task branch OMP kept because it could not merge it", () => {
+	const commit = (root: string, message: string): Promise<void> =>
+		git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", message);
+
+	/** A checkout whose branch `omp/task/Worker` changes `a.txt` and adds `b.txt`, while the checkout itself stays at the first commit. */
+	async function withKeptBranch(): Promise<string> {
+		const root = await repo();
+		await git(root, "checkout", "-q", "-b", "omp/task/Worker");
+		await fs.writeFile(path.join(root, "a.txt"), "two\n");
+		await fs.writeFile(path.join(root, "b.txt"), "new\n");
+		await git(root, "add", "b.txt");
+		await commit(root, "task");
+		await git(root, "checkout", "-q", "-");
+		return root;
+	}
+
+	test("is found by the session's id, and only while it exists", async () => {
+		const root = await withKeptBranch();
+		expect(await keptTaskBranch("Worker", root)).toBe("omp/task/Worker");
+		expect(await keptTaskBranch("Other", root)).toBeUndefined();
+	});
+
+	test("hands its changes on as a patch that applies to the checkout", async () => {
+		const root = await withKeptBranch();
+		const inherited = await inheritKeptBranch("omp/task/Worker", root);
+		expect(inherited.kind).toBe("inherit");
+		const child = path.join(dir, `child-${crypto.randomUUID()}.jsonl`);
+		await writeOverlay(child, inherited.kind === "inherit" ? inherited.patch : "");
+		expect(await applyOverlay(child, root)).toEqual({ kind: "applied" });
+		expect(await fs.readFile(path.join(root, "a.txt"), "utf8")).toBe("two\n");
+		expect(await fs.readFile(path.join(root, "b.txt"), "utf8")).toBe("new\n");
+	});
+
+	test("carries only what the branch added when the checkout has moved on since", async () => {
+		const root = await withKeptBranch();
+		await fs.writeFile(path.join(root, "c.txt"), "later\n");
+		await git(root, "add", "c.txt");
+		await commit(root, "later");
+		const inherited = await inheritKeptBranch("omp/task/Worker", root);
+		expect(inherited.kind === "inherit" ? inherited.patch : "").not.toContain("c.txt");
+		expect(inherited.kind === "inherit" ? inherited.patch : "").toContain("b.txt");
+	});
+
+	test("is refused when its changes no longer apply to the checkout", async () => {
+		const root = await withKeptBranch();
+		await fs.writeFile(path.join(root, "a.txt"), "changed here\n");
+		await commit(root, "conflicting");
+		expect(await inheritKeptBranch("omp/task/Worker", root)).toMatchObject({ kind: "rejected", code: "overlay-conflict" });
 	});
 });
 
