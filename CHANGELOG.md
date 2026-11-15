@@ -2,20 +2,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- Added a `flow` tool exposing box state, lifecycle operations and raise answering, with lifecycle and eval documentation topics
-- Added an eval-kernel `flow` helper that issues flow calls, prints verdicts and throws on refused calls
-- Added host-side flow driving that runs ready tasks, records session outcomes and settles each flow on stop or rest
-
-### Changed
-
-- Changed box `isolated` to a tri-state setting: `false` shares the caller's workspace on purpose and an absent value leaves isolation to the host's default for the agent
-- Changed raise session bounds to count only sessions chained through answered raises, so failed attempts no longer consume the budget
-- Changed exception refire budgets to count separately per handled exception name
-- Changed flow output to truncate stopped-flow reasons and show session history links on running task labels
-- Changed session instructions to forbid `yield`'s error argument and to answer raises as ordinary data rather than through the `ask` tool
-
 ## [0.1.0] - 2026-11-12
 
 ### Added
