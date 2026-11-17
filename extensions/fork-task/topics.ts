@@ -1,7 +1,7 @@
 // fork_task's call instructions kept out of its description, served by its `docTopics()` as
 // xd://fork_task/<topic> and pointed to by the last lines of that description.
-// Checked against: agent/extensions/fork-task/index.ts, replica.ts, source-channel.ts and workspace.ts; pi-coding-agent@18.17.0
-// src/task/index.ts, src/task/settings.ts, src/task/discovery.ts, src/task/isolation-runner.ts, src/task/worktree.ts, src/eval/js/tool-bridge.ts, src/thread/subagent-worker.ts.
+// Host modules these topics describe, read from the current published pi-coding-agent release; re-check them when that release changes.
+// src/task/index.ts, src/task/settings.ts, src/task/discovery.ts, src/task/isolation-runner.ts, src/task/worktree.ts, src/task/types.ts, src/task/steps.ts, src/eval/js/tool-bridge.ts, src/thread/subagent-worker.ts.
 
 interface Topic {
 	readonly name: string;
@@ -18,7 +18,7 @@ const TOPICS: readonly Topic[] = [
 - Requires background jobs (\`async.enabled\`), the native \`task\` tool, batch mode and a persisted session; a missing prerequisite is named in the error.
 - At \`task.maxRecursionDepth\`: when the caller's \`taskDepth\` + 1 reaches the cap, \`fork_task\` returns a tool error before staging anything; the child would have no \`task\` tool to replicate.
 - No inherited-size or cost limit exists: no item checks the inherited token count or the source's cost.
-- Not fork fields: \`solutionSpace\`, \`sourceSession\`, \`model\`, \`tools\`.
+- Not fork fields: \`steps\`, \`solutionSpace\`, \`sourceSession\`, \`model\`, \`tools\`. \`steps\` is the host \`task\` item's alternative to \`task\` (a host item takes one of the two, never both); a fork item takes one \`task\`, so put every step's instructions into that \`task\`, in order. An item that sends only \`steps\` is refused before anything is staged, the error naming the missing \`task\`.
 - Source errors before dispatch name an unregistered source, a parked source OMP kept no request for (it parked in an earlier process, or its last request got no response; wake it with \`write agent://<id>\`, then fork) or whose transcript moved past that request, a source in another thread that did not answer (retry), a source that has sent no request in this process, an unknown, disabled or internal \`agent\`, or a source with no persisted transcript.
 - A \`source\` fork's inherited changes are applied before the child's first turn, after OMP captured the child's baseline, and handed back together with the child's changes (\`task.isolation.merge\`); the source's workspace is only read, and the source keeps it. Refusals happen before dispatch, create no child, and start with \`workspace "source" rejected (<code>)\`:
 
