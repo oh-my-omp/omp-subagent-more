@@ -9,6 +9,7 @@
 	},
 	"files": [
 		"extensions",
+		"omomp-shared",
 		"agents",
 		"skills",
 		"CHANGELOG.md",
@@ -26,7 +27,7 @@
 	"scripts": {
 		"check": "biome check . && tsc --noEmit",
 		"format": "biome check --write .",
-		"test": "bun test tests"
+		"test": "bun test"
 	},
 	"peerDependencies": {
 		"@oh-my-pi/pi-agent-core": "*",
