@@ -14,5 +14,5 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["extensions/**/*.ts", "prototype/**/*.ts", "tests/**/*.ts"]
+	"include": ["extensions/**/*.ts", "omomp-shared/**/*.ts", "prototype/**/*.ts", "tests/**/*.ts"]
 }

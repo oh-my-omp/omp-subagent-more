@@ -1,5 +1,6 @@
 {
 	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"extends": ["./omomp-shared/biome.base.json"],
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -8,35 +9,15 @@
 	"files": {
 		"includes": [
 			"extensions/**/*.ts",
+			"omomp-shared/**/*.ts",
 			"prototype/**/*.ts",
 			"prototype/**/*.js",
 			"skills/**/*.js",
 			"tests/**/*.ts",
 			"biome.json",
+			"omomp-shared.json",
 			"package.json",
 			"tsconfig.json"
 		]
-	},
-	"formatter": {
-		"indentStyle": "tab",
-		"lineWidth": 140
-	},
-	"javascript": {
-		"formatter": {
-			"quoteStyle": "double",
-			"semicolons": "always",
-			"trailingCommas": "all"
-		}
-	},
-	"linter": {
-		"rules": {
-			"preset": "recommended",
-			"suspicious": {
-				"noExplicitAny": "error"
-			},
-			"style": {
-				"noNonNullAssertion": "off"
-			}
-		}
 	}
 }
