@@ -1,0 +1,4 @@
+{
+	"directory": "omomp-shared",
+	"files": ["biome.base.json", "context-delta.ts", "i18n.ts"]
+}
