@@ -160,7 +160,16 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		state.running?.stop();
 		const subagents = liveSubagents(ctx.agent.id, ctx.sessionManager.getSessionFile());
 		if (subagents.length === 0) return undefined;
-		const inquiry = startInquiry(subagents);
+		const inquiry = startInquiry(
+			subagents.map((subagent) => ({
+				id: subagent.id,
+				ask: async (signal: AbortSignal) => {
+					const text = await subagent.ask(signal);
+					pi.logger.info("omp-subagent-more subagent answered", { id: subagent.id, at: new Date().toISOString() });
+					return text;
+				},
+			})),
+		);
 		let unsubscribe: (() => void) | undefined;
 		const running: Running = {
 			inquiry,
@@ -189,6 +198,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		state.running = undefined;
 		const entry = event.compactionEntry;
 		const compactedAt = Date.parse(entry.timestamp);
+		pi.logger.info("omp-subagent-more summary returned", { compactionId: entry.id, at: new Date().toISOString() });
 		const text = finishInquiry(running.inquiry, GRACE_MS)
 			.then((replies) => {
 				running.stop();
