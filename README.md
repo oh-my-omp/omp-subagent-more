@@ -2,37 +2,38 @@
 
 [中文](README.zh-CN.md)
 
-An [Oh My Pi](https://github.com/can1357/oh-my-pi) plugin for subagent work:
-
-- **`fork_task`**: native `task` subagents that start from a copy of the caller's conversation, or of another agent named by an item's `from`. Its parameters are described on the tool itself; limits and batching are in `xd://fork_task/limits` and `xd://fork_task/batch`.
-- **`fork:self`**: the internal agent every fork child is dispatched as. It is not meant to be named in `task` calls.
-- **report-limit**: a check on every `fork_task` call that blocks items dispatched to `task:*` (or with `agent` omitted) whose shared `context` or `task` caps the length of the worker's report. Long reports belong in a file such as `local://<name>.md`.
-- **Orchestration in eval** (skill `omp-subagent-more`): after `%load skill://omp-subagent-more/orchestrate.js` in a JS cell, `orchestrate(spec)` runs items of one or more subagent stages, each stage checked against its schema. A subagent that needs a decision yields `needs_input`; `drive()` returns at once with the question, and `answer(id, text)` sends the reply to the same subagent. Items do not wait for each other. Usage: `read skill://omp-subagent-more`.
-
-## Install
-
-```bash
-omp plugin install https://github.com/oh-my-omp/omp-subagent-more#release
-```
-
-`fork_task` needs OMP's async subagents: `async.enabled: true` in `config.yml`.
-
-Machines that run [omp-config](https://github.com/oh-my-omp/omp-config) get this plugin from omp-config's updater, which installs it and then removes omp-config's old local `fork-task` extension in the same update. Do not install it by hand there: with both copies loaded, OMP registers `fork_task` twice.
-
-omp-config's light mode (`omp-light`) disables the extension `fork-task` by name, which is this plugin's entry; light sessions have no `fork_task`.
-
-## report-limit model
-
-The check asks the model role `@omp-subagent-more`; assign it in `/model` with "+ New role". Unassigned, it uses the `default` role chain. Each judgment has 25 seconds for the whole chain. No model, a failed request or an answer that does not parse lets the call run. Every judged call logs one `omp-subagent-more report-limit verdicts` line.
-
-## Development
-
-```bash
-bun install
-bun run check   # biome check . && tsc --noEmit
-bun run test    # bun test tests
-```
-
-The tests drive the pure parts (staging rewrites, replica copies, workspace records and rejection codes, the report-limit verdicts, the orchestration state transitions over a fake eval prelude) with fixed inputs and no model. Hooks, worker threads and the spawn path need a real OMP session.
-
-A pull request stages its change and writes the entry under `## [Unreleased]` in `CHANGELOG.md` with [lgit](https://github.com/can1357/llm-git): `git add` it, then run `uvx --from lgit-cli lgit` instead of `git commit`. A daily run at 02:00 GMT+9 promotes `## [Unreleased]` into a version section, tags it and moves the `release` branch, which is what `#release` installs.
+- **Conversation forks (`fork_task`)**
+  - `fork_task` tool — Does: dispatches native `task` children that continue a copied conversation under the source's exact system prompt, tools and message prefix, so forks of one source share the provider's cached prefix. When: when the model calls `fork_task` (a top-level tool, `loadMode: "essential"`); needs `async.enabled: true` and a persisted session. Example: `fork_task({ context: "…", tasks: [{ task: "Write tests for src/auth", name: "Tests", isolated: true }] })` returns a child id such as `Tests_3f2a`.
+  - `from` source — Does: forks another registered agent's conversation (live, idle or parked) instead of the caller's; a parked source is forked from the request it kept at park without waking it. When: when an item sets `from`. Example: `{ from: "ReadmeConfig", task: "…" }`.
+  - `agent` role binding — Does: gives the child that agent's model binding (`task.agentModelOverrides`, else the definition's `model`) and its definition prompt as a `<role agent="…">` block at the head of the assignment, while keeping the source's tools. When: when an item sets `agent`. Example: `{ agent: "reviewer", task: "…" }` puts `<role agent="reviewer">…</role>` before the shared `context`.
+  - `effort` mapping — Does: maps `lo`/`med`/`hi` onto the target model's own thinking range (lowest, middle, highest supported level). When: when an item sets `effort`; no effect while `task.enableEffort` is false. Example: `{ effort: "hi", task: "…" }`.
+  - `shake` elision — Does: runs the same `session.shake("elide")` as `/shake` on the inherited transcript, keeping the newest tokens and `skill://`/`local://PLAN.md` reads, and appends the summary to the tool result. When: at staging, when an item sets `shake: true`. Example: the result ends with `[fork_task] <name>: <shake summary>`.
+  - `outputSchema` / `schemaMode` — Does: passes a JSON Schema (given as JSON text) and its enforcement mode to the child's `yield`; invalid JSON refuses the whole call before staging. When: at dispatch. Example: `outputSchema: '{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}'`, error `tasks[0].outputSchema is not valid JSON: …`.
+  - Depth and prerequisite guard — Does: refuses before staging when the caller's `taskDepth` + 1 reaches `task.maxRecursionDepth`, when `task` is unavailable, or without background jobs. When: at the start of every `fork_task` call. Example: ``fork_task: requires background jobs (`async.enabled: true`).``
+- **What a fork child sees**
+  - `fork:self` agent — Does: the internal agent definition every fork child is dispatched as; its prompt and tools are replaced by the source's and its model is pinned. When: on every `fork_task` dispatch; never named in `task` calls. Example: `agents/fork-self.md`, `name: fork:self`.
+  - Fork notice — Does: appends a `<system-notice cause="fork_task">` after the copied conversation stating that the history is background only, the job is the following assignment, runtime verification is required before handoff, and where the child's workspace is. When: written into the staged child transcript before the child's first turn. Example: `Above: the conversation of the parent agent that spawned you, copied as background. You continue under its system prompt and tools.`
+  - Staging into the artifact store — Does: moves the staged conversation into the parent's artifact store under the pre-allocated spawn key so the executor opens the fork, and refuses to overwrite an existing transcript. When: on the host's `before_subagent_spawn` hook for `task` invocations. Example: block reason `fork_task: <path>.jsonl already exists; refusing to overwrite it.`
+  - Request replication — Does: installs the source's captured request (system prompt, tool list, message prefix) on the child session; a missing snapshot blocks the child before any model call instead of running a different contract. When: on `before_agent_start` of the child session. Example: `the fork's request snapshot is no longer available; create a fresh fork from the parent`.
+  - Own-`yield` reminder — Does: tells a child running on the source's model that its `yield` is not in its tool list (kept as the parent's for cache reuse) and must be called from an eval cell, with the tool's description and JSON Schema. When: as a context delta on `before_agent_start`, and again after a tool batch on `tool_result` when compaction dropped it. Example: ``Call it from a JavaScript `eval` cell, never as a direct tool call: `await tool.yield({ data: … })` ``.
+  - Bridged `yield` forwarding — Does: re-emits a `yield` run through the eval bridge as a `tool_execution_end` event so the task executor sees the child's result. When: on `tool_result` in a cloned child when the call is not in the agent loop's pending calls. Example: `emitExternalEvent({ type: "tool_execution_end", toolName: "yield", … })`.
+  - Cross-thread source channel — Does: answers requests from other threads of this process for a source's latest request. When: started when the extension loads. Example: `BroadcastChannel("omp-fork-task/source")`.
+- **Workspace inheritance (`workspace: "source"`)**
+  - Source overlay — Does: applies the uncommitted changes the `from` agent made in its own isolated workspace to the child's isolated copy, handed back together with the child's changes. When: checked before dispatch; applied on the child's `before_agent_start`, after its workspace start is recorded and before its first turn. Example: `{ from: "Impl_1a2b", workspace: "source", task: "…" }`.
+  - Rejection codes — Does: refuses the whole call before dispatch with a coded reason (`child-not-isolated`, `source-not-isolated`, `source-running`, `source-handed-back`, `nested-repo`, `overlay-conflict`); a late `overlay-conflict` stops the child before its first model call. When: during staging, or at the child's first turn for late conflicts. Example: `workspace "source" rejected (source-running)`.
+  - Workspace start records — Does: records each isolated subagent's workspace start so inherited changes can be read later. When: on the first `before_agent_start` of every subagent transcript. Example: `<tmp>/omp-fork-task/starts/<pid>/`.
+- **Topics**
+  - `xd://fork_task/limits` — Does: lists prerequisites, unsupported fields, source errors and the `workspace "source"` rejection table. When: when the model reads it; the description's last lines point to it. Example: ``Not fork fields: `solutionSpace`, `sourceSession`, `model`, `tools`.``
+  - `xd://fork_task/batch` — Does: explains templated fork batches from eval. When: when the model reads it. Example: `await tool.fork_task(...)` from an eval cell; results arrive in the conversation, not in the cell.
+- **Report-limit check**
+  - Report-limit judgment — Does: blocks a `fork_task` call when the shared `context` or an item's `task` (items with `agent` `task:*` or omitted) caps the length of the worker's report, asking the model one question per item under a 25 s deadline. When: on every `fork_task` `tool_call`, before it runs. Example: block reason ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``.
+  - `@omp-subagent-more` model role — Does: the model the judgment asks first, then the `default` role chain; no model, a failed request or an unparsable answer lets the call run. When: at each judgment. Example: assign it in `/model` → "+ New role"; the model must answer `report-limit: true` or `report-limit: false`.
+  - Verdict cache and log — Does: remembers only `clear` verdicts per process (sha256 of trimmed context and task) and logs one line per judged call. When: after each judgment. Example: log line `omp-subagent-more report-limit verdicts`.
+- **Per-process records and cleanup**
+  - Replica, overlay, parked and start directories — Does: keeps each child's request copy, inherited overlay, parked sources' latest request and workspace starts per process. When: written during staging and spawn. Example: `<tmp>/omp-fork-task/replicas/<pid>/`, `overlays/<pid>/`, `parked/<pid>/`.
+  - Startup sweep — Does: removes those directories of processes that no longer exist. When: on `session_start` of a main session. Example: a crashed omp's `replicas/<pid>/` is deleted at the next start.
+  - Shutdown cleanup — Does: removes this process's records on main-session shutdown and the staged conversations of a session's undispatched forks on any session shutdown. When: on `session_shutdown`. Example: `fork_task: removing per-process records failed` is logged on failure.
+- **Eval orchestration (skill `omp-subagent-more`)**
+  - `orchestrate(spec)` — Does: runs items made of subagent stages, each stage one `agent()` call checked against its `data` JSON Schema with `schemaMode: "strict"`; items do not wait for each other. When: after a JS cell runs `%load skill://omp-subagent-more/orchestrate.js`. Example: `const run = orchestrate({ items: [{ id: "auth", stages: [{ task: "Read src/auth…", data: {…} }] }] })`.
+  - `run.drive()` / `run.status()` — Does: advances every item and returns `{ done, failed, needs_input, running }` when all settle or a new question appears; `status()` returns the view without advancing. When: called by the orchestrating cell, again after a background-result wake-up. Example: `const view = await run.drive();`.
+  - `needs_input` protocol and `run.answer()` — Does: a stage yields `{"kind": "needs_input", "question": "…", "options": […]}` for an open decision, and `answer(id, text)` sends the reply to the same subagent. When: when a stage reaches a decision the assignment leaves open. Example: `await run.answer("auth", "Keep the old API.");`.
