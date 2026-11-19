@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- When a session compacts, every live subagent below it (running or idle) is asked, the same way `/btw` asks, what it is responsible for, its goal and how it is doing it. Replies that arrive before the summary, or within 10 s after it, are placed in a `<subagent-progress>` block right after the compaction summary in every later request of that session and recorded once as an `omp-subagent-more.subagent-progress` session entry; a subagent still silent 10 s after the summary is cancelled and left out, and with no reply nothing is added ([#19](https://github.com/oh-my-omp/omp-subagent-more/issues/19))
+
 ### Changed
 
 - `xd://fork_task/limits` lists `steps` among the host `task` fields a fork item does not take: a host item takes `steps` in place of `task`, and a fork item takes one `task`; the list no longer names `sourceSession`.

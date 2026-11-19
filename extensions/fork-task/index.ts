@@ -56,6 +56,7 @@ import { createReportLimit } from "./report-limit.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
+import { registerSubagentProgress } from "./subagent-progress.ts";
 import { sweepDeadProcessDirs } from "./sweep.ts";
 import { forkTaskTopics, TOPIC_POINTERS } from "./topics.ts";
 import {
@@ -812,6 +813,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 	pi.on("session_start", sessionStart.bind(null, rt));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
 	pi.on("turn_start", () => rt.deltas.turnStarted());
+	registerSubagentProgress(pi, warn);
 	const reportLimit = createReportLimit({
 		info: (message, data) => pi.logger.info(message, data),
 		warn: (message, data) => pi.logger.warn(message, data),
