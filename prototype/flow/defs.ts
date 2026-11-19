@@ -1,13 +1,3 @@
-// Flow definitions: boxes written as plain data and parsed once at the store boundary.
-//
-// A box is an agent box (`agent`, `brief`, `out`) or a command box (`command`). `in` maps
-// input names to references, written as name paths:
-//   "input.issue"       a value supplied from outside the flow
-//   "scout.slices"      a field of the result of box `scout`
-//   "scout.slices[]"    one item of this box per element of that array
-//   "work!question"     one item of this box per item of `work` that raised `question`;
-//                       its result answers the raise, and `work` continues in a new session
-// A box takes at most one reference of the last two kinds.
 import { createHash } from "node:crypto";
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -24,43 +14,31 @@ export type Ref = {
 	readonly text: string;
 	readonly source: RefSource;
 	readonly path: readonly string[];
-	/** The owning box gets one item per element (`[]`) or per raising item (`!type`). */
 	readonly multi: boolean;
 };
 
 type Common = {
 	readonly inputs: Readonly<Record<string, Ref>>;
-	/** Named runtime exceptions this box answers by firing the item again, with the number of times. */
 	readonly handle: Readonly<Record<string, number>>;
-	/** Most items of this box in flight at once. */
 	readonly limit: number | undefined;
-	/** Identity of the definition: a value produced under another fingerprint is stale. */
 	readonly fingerprint: string;
 };
 
 export type AgentBox = Common & {
 	readonly kind: "agent";
-	/** The agent definition whose system prompt and tools the sessions run with. */
 	readonly agent: string;
-	/** The agent whose model setting the sessions use; absent: that of `agent`. */
 	readonly model: string | undefined;
 	readonly brief: string;
-	/** JSON Schema of the box's result. */
 	readonly out: JsonObject;
-	/** Exception types the agent may raise instead of returning a result. */
 	readonly raises: readonly string[];
-	/** `true`: each session in its own worktree; `false`: sessions share the caller's workspace on purpose; absent: the host decides. */
 	readonly isolated: boolean | undefined;
-	/** A command run in the session's workspace before the session's first turn. */
 	readonly prepare: string | undefined;
-	/** Most sessions one item may take through answered raises: the first, and one per answer. */
 	readonly bound: number;
 };
 
 export type CommandBox = Common & {
 	readonly kind: "command";
 	readonly command: string;
-	/** The box whose item this command checks: when the command rejects the item's result, the item is reopened. */
 	readonly checks: string | undefined;
 };
 
@@ -74,7 +52,6 @@ export const isName = (text: string): boolean => NAME.test(text);
 export const isArray = (value: Json): value is readonly Json[] => Array.isArray(value);
 export const isObject = (value: Json): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** JSON text with object keys in sorted order, so equal data has equal text. */
 export function stableText(value: Json): string {
 	if (isArray(value)) return `[${value.map(stableText).join(",")}]`;
 	if (isObject(value)) {
@@ -88,7 +65,6 @@ const fingerprintOf = (value: Json): string => createHash("sha256").update(stabl
 
 export function parseJson(text: string): Result<Json> {
 	try {
-		// JSON.parse yields JSON data by construction; no runtime check can add to that.
 		return { ok: true, value: JSON.parse(text) as Json };
 	} catch (error) {
 		return { ok: false, problems: [`not JSON: ${error instanceof Error ? error.message : String(error)}`] };
@@ -137,7 +113,6 @@ const AGENT_KEYS: Record<string, true> = {
 };
 const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true };
 
-/** One box from its plain-data form; every problem found is reported, not only the first. */
 export function parseBox(name: string, raw: Json): Result<Box> {
 	const problems: string[] = [];
 	const say = (text: string): void => {
@@ -256,13 +231,10 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	};
 }
 
-/** The text an input stands for: a string as written, anything else as JSON. */
 export const textOf = (value: Json): string => (typeof value === "string" ? value : JSON.stringify(value, null, 1));
 
-/** `{{name}}` replaced by the input's text, passed through `quote`. */
 export function fill(template: string, inputs: Readonly<Record<string, Json>>, quote: (text: string) => string = (text) => text): string {
 	return template.replace(PLACEHOLDER, (_whole, name: string) => quote(textOf(inputs[name] ?? null)));
 }
 
-/** One POSIX shell word holding `text` exactly. */
 export const shellWord = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;

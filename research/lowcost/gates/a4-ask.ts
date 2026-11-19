@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Every specifier is selected at run time: SRC is the checkout under test and the
-// host packages are resolved from it, so the driver reads that checkout's host version.
 const SRC = process.env.SRC!;
 const fromCheckout = (specifier: string) => pathToFileURL(Bun.resolveSync(specifier, SRC)).href;
 const { parseHtmlForm } = await import(fromCheckout("@oh-my-pi/pi-tui/html-form/parse"));
@@ -21,8 +19,6 @@ const lineOf = (details: unknown, extra: Record<string, unknown> = {}) => {
 	return answers === null ? null : formatAskAnswers(answers);
 };
 
-// The native answers are the host's own: the form is parsed and answered with the
-// host package the checkout depends on, so the fixture cannot drift from its shape.
 const form = parseHtmlForm(`<form>
 <fieldset><legend>Database</legend>
 <label><input type="radio" name="db" value="sqlite" checked> SQLite</label>
@@ -33,8 +29,6 @@ const form = parseHtmlForm(`<form>
 const answers = formAnswers(form, { db: "sqlite", ticks: "no" });
 const native = { answers };
 const nativeLine = answers.map((answer: { question: string; answer: string }) => `${answer.question} → ${answer.answer}`).join("\n");
-// Same field shape as the host's `OptionNote`; only the form dialog produces notes,
-// so this part of the fixture is written here.
 const noted = {
 	answers: answers.filter((answer: { name: string }) => answer.name === "db"),
 	notes: [

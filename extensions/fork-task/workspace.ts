@@ -1,10 +1,3 @@
-// `workspace: "source"`: a fork starts from the uncommitted changes its source
-// made in its own isolated workspace. OMP keeps an isolated run's baseline only
-// inside its runner, so every isolated subagent records its own start
-// (`recordStart`, at its first turn, when its workspace still equals OMP's
-// baseline); a fork diffs the source's workspace against that record, and its
-// child applies the diff before its first turn, after OMP captured the child's
-// baseline, so the inherited changes are handed back with the child's own.
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -31,18 +24,15 @@ export type RejectionCode =
 
 export const rejection = (code: RejectionCode, detail: string): string => `workspace "source" rejected (${code}): ${detail}`;
 
-/** What a `workspace: "source"` fork inherits, or why it is refused. */
 export type Inheritance =
 	| { readonly kind: "inherit"; readonly patch: string }
 	| { readonly kind: "rejected"; readonly code: RejectionCode; readonly detail: string };
 
-/** The source as the registry and its transcript describe it at fork time. */
 export type InheritSource = {
 	readonly id: string;
 	readonly file: string;
 	readonly cwd: string;
 	readonly running: boolean;
-	/** OMP captured this run's changes into a patch or branch for its parent. */
 	readonly handedBack: boolean;
 };
 
@@ -64,36 +54,27 @@ const baselineSchema = z.object({
 
 const headerSchema = z.object({ type: z.literal("session"), cwd: z.string() }).passthrough();
 
-/** This OMP process's start records, shared by its main and worker threads. */
 export function startsRoot(): string {
 	return path.join(STAGING_ROOT, "starts", String(process.pid));
 }
 
-/** The start record of the session at `sessionFile`: written by `recordStart`, read by `inheritSourceWorkspace`. */
 function startFilePath(sessionFile: string): string {
 	return path.join(startsRoot(), `${createHash("sha256").update(sessionFile).digest("hex")}.json`);
 }
 
-/** This OMP process's overlay directory, shared by its main and worker threads. */
 export function overlaysRoot(): string {
 	return path.join(STAGING_ROOT, "overlays", String(process.pid));
 }
 
-/** Where the parent's spawn hook leaves the changes the child at `childFile` inherits; the same path in every thread. */
 export function overlayFilePath(childFile: string): string {
 	return path.join(overlaysRoot(), `${createHash("sha256").update(childFile).digest("hex")}.patch`);
 }
 
-/**
- * The cwd in the `session` header of the transcript at `sessionFile`, if it exists. OMP may write
- * other records (a padded `title` line) before the header, so lines are read until it appears.
- */
 export async function headerCwd(sessionFile: string): Promise<string | undefined> {
 	let handle: fs.FileHandle;
 	try {
 		handle = await fs.open(sessionFile);
 	} catch {
-		// No such transcript: the session has no persisted parent.
 		return undefined;
 	}
 	try {
@@ -108,12 +89,6 @@ export async function headerCwd(sessionFile: string): Promise<string | undefined
 	}
 }
 
-/**
- * Whether the subagent `id` whose transcript is `sessionFile` runs in an
- * isolated workspace of its own: OMP places a task child's transcript at
- * `<parent transcript minus .jsonl>/<id>.jsonl` and its isolation under
- * `taskIsolationBaseDir(<parent repo root>, id)`, marked by a live owner.
- */
 async function isolationOf(sessionFile: string, cwd: string, id: string): Promise<Isolation> {
 	const parentCwd = await headerCwd(`${path.dirname(sessionFile)}.jsonl`);
 	if (parentCwd === undefined) return { kind: "shared" };
@@ -123,7 +98,6 @@ async function isolationOf(sessionFile: string, cwd: string, id: string): Promis
 		parentRoot = await getRepoRoot(parentCwd);
 		root = await getRepoRoot(cwd);
 	} catch {
-		// Not a git checkout: OMP isolates only git checkouts.
 		return { kind: "shared" };
 	}
 	if (path.resolve(root) === path.resolve(parentRoot)) return { kind: "shared" };
@@ -131,11 +105,6 @@ async function isolationOf(sessionFile: string, cwd: string, id: string): Promis
 	return { kind: "isolated", root, parentRoot };
 }
 
-/**
- * Record the start of an isolated subagent's workspace, once per session file
- * and process. Called at the session's first turn, before an inherited
- * overlay is applied, so the record equals OMP's own baseline of the run.
- */
 export async function recordStart(sessionFile: string, cwd: string, id: string): Promise<void> {
 	const file = startFilePath(sessionFile);
 	if ((await readOptional(file)) !== undefined) return;
@@ -158,11 +127,6 @@ async function gitApply(root: string, patch: string, check: boolean): Promise<Gi
 	return code === 0 ? { kind: "ok" } : { kind: "failed", message: stderr.trim() || `git apply exited with ${code}` };
 }
 
-/**
- * Decide what a fork of `source` inherits into an isolated copy of the
- * caller's checkout at `callerCwd`. Checks run in the order of the codes'
- * table in the fork_task docs; the source's workspace is only read.
- */
 export async function inheritSourceWorkspace(source: InheritSource, callerCwd: string): Promise<Inheritance> {
 	const rejected = (code: RejectionCode, detail: string): Inheritance => ({ kind: "rejected", code, detail });
 	if (source.running) return rejected("source-running", `agent \`${source.id}\` is still running; fork it once it stopped.`);
@@ -203,11 +167,6 @@ export async function inheritSourceWorkspace(source: InheritSource, callerCwd: s
 	return { kind: "inherit", patch: delta.rootPatch };
 }
 
-/**
- * What a session inherits from the patch OMP kept of an isolated run it released without
- * handing its changes back: nothing when there is no such patch, the patch when it applies to
- * the checkout at `callerCwd`, a rejection when it does not.
- */
 export async function inheritReleasedPatch(patchFile: string, callerCwd: string): Promise<Inheritance | undefined> {
 	const patch = await readOptional(patchFile);
 	if (patch === undefined) return undefined;
@@ -234,16 +193,11 @@ async function gitText(root: string, args: readonly string[]): Promise<string | 
 	return code === 0 ? stdout : undefined;
 }
 
-/** The task branch OMP keeps of an isolated run whose changes it could not merge into the checkout at `callerCwd`, if there is one. */
 export async function keptTaskBranch(agentId: string, callerCwd: string): Promise<string | undefined> {
 	const branch = `omp/task/${agentId}`;
 	return (await gitText(callerCwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])) === undefined ? undefined : branch;
 }
 
-/**
- * What a session inherits from a kept task branch: the branch's changes since it left the
- * history of the checkout at `callerCwd`, when they apply to that checkout.
- */
 export async function inheritKeptBranch(branch: string, callerCwd: string): Promise<Inheritance> {
 	const rejected = (detail: string): Inheritance => ({ kind: "rejected", code: "overlay-conflict", detail });
 	const base = (await gitText(callerCwd, ["merge-base", "HEAD", branch]))?.trim();
@@ -262,7 +216,6 @@ export type OverlayResult =
 	| { readonly kind: "applied" }
 	| { readonly kind: "failed"; readonly message: string };
 
-/** Apply the changes the child at `childFile` inherits, once: the overlay file is consumed. */
 export async function applyOverlay(childFile: string, cwd: string): Promise<OverlayResult> {
 	const file = overlayFilePath(childFile);
 	const patch = await readOptional(file);

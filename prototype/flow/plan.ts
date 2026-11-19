@@ -1,6 +1,3 @@
-// What a state implies, computed from the state and its definitions only: which items each box
-// expects, which of them can start now, which values no longer match their definition, and what
-// in the definitions cannot work.
 import { type Box, isArray, isObject, type Json, type Ref } from "./defs.ts";
 import { answerKey, type Continuation, type Earlier, type Item, isFanned, itemKey, markOf, type State } from "./state.ts";
 
@@ -10,27 +7,19 @@ export type Firing = {
 	readonly attempt: number;
 	readonly inputs: Readonly<Record<string, Json>>;
 	readonly continuation: Continuation | null;
-	/** The last ended session of the same item, whose work this session starts from. */
 	readonly earlier: Earlier | undefined;
 };
 
 export type Raised = { readonly key: string; readonly type: string; readonly detail: string; readonly handler: string | undefined };
 
 export type Survey = {
-	/** Definition errors: nothing runs while there is one. */
 	readonly problems: readonly string[];
-	/** Items whose value was produced under an earlier definition of their box. */
 	readonly stale: readonly string[];
-	/** Items of boxes that are no longer defined. */
 	readonly illegal: readonly string[];
-	/** What a running flow starts next, within each box's `limit`. */
 	readonly ready: readonly Firing[];
 	readonly running: readonly string[];
-	/** Raises nothing has answered yet. */
 	readonly raised: readonly Raised[];
-	/** Outside inputs that are referenced and not supplied. */
 	readonly needs: readonly string[];
-	/** Boxes whose items cannot be told yet: an input of theirs has no value. */
 	readonly waiting: readonly string[];
 };
 
@@ -57,11 +46,9 @@ const handlersOf = (boxes: Readonly<Record<string, Box>>, box: string, type: str
 		.map(([name]) => name)
 		.sort();
 
-/** The box whose result answers a raise of `type` by `box`: the one that takes that raise as an input. */
 export const handlerOf = (boxes: Readonly<Record<string, Box>>, box: string, type: string): string | undefined =>
 	handlersOf(boxes, box, type)[0];
 
-/** Definition errors that can be told without running anything. */
 export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 	const problems: string[] = [];
 	for (const [name, box] of Object.entries(boxes)) {
@@ -85,7 +72,6 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 			if (handlers.length > 1) problems.push(`${name}!${type}: answered by more than one box (${handlers.join(", ")})`);
 		}
 	}
-	// A box that needs its own result, directly or through others, can never start.
 	const done = new Set<string>();
 	const visit = (name: string, trail: readonly string[]): void => {
 		if (trail.includes(name)) {
@@ -102,7 +88,6 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 	return problems;
 }
 
-/** Why `name` cannot check `checked`: a failed check has to name exactly one item of an agent box to reopen. */
 function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, checked: string, inputs: readonly Ref[]): string[] {
 	const target = boxes[checked];
 	if (!target) return [`${name}: checks → no box \`${checked}\``];
@@ -118,7 +103,6 @@ function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, check
 	return [];
 }
 
-/** The answer to an item's raise: one given from outside, else the result of the box wired to it. */
 export function answerOf(state: State, item: Item): Json | undefined {
 	if (item.phase.kind !== "raised") return undefined;
 	if (item.answer !== undefined) return item.answer;
@@ -172,7 +156,6 @@ export function survey(state: State): Survey {
 				return result.kind === "value" ? walk(result.value, ref.path) : MISSING;
 			}
 			case "raise":
-				// A raise port has no single value; `expandBox` reads the raising items themselves.
 				return MISSING;
 			default: {
 				const unreachable: never = ref.source;
@@ -309,7 +292,6 @@ export function survey(state: State): Survey {
 	};
 }
 
-/** The value a key names: an input, an item, or the whole result of a box. */
 export function lookup(state: State, key: string): Json | undefined {
 	if (key.startsWith("input.")) return state.inputs[key.slice("input.".length)];
 	const phase = state.items[key]?.phase;

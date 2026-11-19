@@ -1,8 +1,3 @@
-// What one session of an agent box is told and what it must hand back.
-//
-// A session returns exactly one object through `yield`: the result, or one of the exception
-// types its box declares. Either way it carries a handoff, because the next session of the item
-// (after an answer, or after a failure) starts fresh and has nothing else of this one.
 import { type AgentBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
 import type { Continuation, Outcome } from "./state.ts";
@@ -18,7 +13,6 @@ const HANDOFF_SCHEMA: JsonObject = {
 	},
 };
 
-/** JSON Schema of the object a session of `box` yields. */
 export function yieldSchema(box: AgentBox): JsonObject {
 	const raising = box.raises.length > 0;
 	return {
@@ -34,11 +28,8 @@ export function yieldSchema(box: AgentBox): JsonObject {
 	};
 }
 
-/** What the host arranged for one session besides the box's inputs. */
 export type Surroundings = {
-	/** The notes file of the session's item. */
 	readonly board: string;
-	/** An earlier session of the item ended without handing its work back, and its changes are in this session's workspace. */
 	readonly inherited: boolean;
 };
 
@@ -70,7 +61,6 @@ function continuationText(continuation: Continuation): string {
 	}
 }
 
-/** The assignment of one session: the box's brief with its inputs, what came before, and how to finish. */
 export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
 	const parts = [fill(box.brief, firing.inputs).trim()];
 	if (around.inherited) {
@@ -105,7 +95,6 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 	return parts.join("\n\n");
 }
 
-/** A session's yielded data as the outcome of its attempt; data outside the protocol is a named runtime exception. */
 export function interpret(box: AgentBox, data: Json | undefined): Outcome {
 	const protocol = (reason: string): Outcome => ({ kind: "failed", name: "protocol", reason });
 	if (data === undefined || !isObject(data)) return protocol("the session ended without yielding an object");

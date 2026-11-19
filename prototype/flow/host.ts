@@ -1,21 +1,3 @@
-// The `flow` tool: the store of prototype/flow behind one OMP tool, and the effects the store
-// leaves to its host. Load it into a session with `omp -e prototype/flow/host.ts`.
-//
-// One flow belongs to one session; its log is `flow.jsonl` among the session's own files.
-//
-// While a flow runs, one background job of the calling session drives it: it starts what the
-// store says is ready, records how each session ended, and settles when the flow stops or
-// comes to rest. Its result is the store's verdict, so the caller is woken once per stop, not
-// once per session. The sessions themselves are spawned through the session's `task` tool,
-// one fresh subagent each; their own completion notices are acknowledged here, since the store
-// is what reads them.
-//
-// A session of an isolated box starts from what the last ended session of the same item left
-// and did not hand back: the patch OMP kept when it released that run, or the changes in its
-// still-open workspace. The changes travel the way fork_task's `workspace: "source"` does: an
-// overlay written at spawn and applied before the child's first turn. Every agent item also
-// has a notes file of its own beside the log, which only sessions of that item are told about.
-
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -104,7 +86,6 @@ type Request =
 	| { readonly kind: "status" }
 	| { readonly kind: "value"; readonly keys: readonly string[] };
 
-/** The fields each `op` takes besides `op`; the value says whether the field is required. */
 const FIELDS: Record<Op, Partial<Record<"boxes" | "name" | "value" | "keys" | "reason", "required" | "optional">>> = {
 	define: { boxes: "required" },
 	supply: { name: "required", value: "required" },
@@ -180,37 +161,28 @@ function parseRequest(params: Params): Result<Request> {
 	return problems.length > 0 ? { ok: false, problems } : { ok: true, value: request };
 }
 
-/** A session or command the driver started and has not seen end. */
 type Running = { readonly key: string; readonly attempt: number; readonly abort: AbortController };
 
 type Flow = {
 	readonly store: Store;
-	/** The calling session's own directory: the log, the notes files and its subagents' transcripts live in it. */
 	readonly dir: string;
 	readonly running: Map<string, Running>;
-	/** Wakes the driver: something it should look at has changed. */
 	kick: () => void;
 	driving: boolean;
 };
 
-/** What the spawn hook does for one session the flow is about to start. */
 type Prepared = {
-	/** Changes the session inherits. */
 	readonly overlay: string | undefined;
 	readonly model: string | string[] | undefined;
-	/** The box's `prepare` command with its inputs filled in. */
 	readonly prepare: string | undefined;
 };
 
-/** Where the parent leaves the `prepare` command of the child at `childFile`; the child's thread reads it before its first turn. */
 const prepareFilePath = (childFile: string): string => `${overlayFilePath(childFile)}.prepare`;
 
 type Runtime = {
 	readonly pi: ExtensionAPI;
 	readonly flows: Map<string, Flow>;
-	/** Sessions about to be spawned, by `spawnId(dir, name)`; the spawn hook takes its entry. */
 	readonly spawns: Map<string, Prepared>;
-	/** Subagent transcripts whose workspace start this module has handled. */
 	readonly started: Set<string>;
 };
 
@@ -227,7 +199,6 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 	const file = path.join(dir, "flow.jsonl");
 	const log = readLog(file);
 	const store = new Store(log, (action) => appendLog(file, action));
-	// A log that already has actions was written by an earlier process; none of its sessions is alive in this one.
 	if (log.length > 0) store.recover();
 	const flow: Flow = { store, dir, running: new Map(), kick: () => {}, driving: false };
 	rt.flows.set(sessionFile, flow);
@@ -236,11 +207,8 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 
 const markOfData = (data: unknown): string => createHash("sha256").update(JSON.stringify(data)).digest("hex").slice(0, 12);
 
-/** The named agents as the `task` tool would resolve them now. */
 type Agents = {
-	/** Under `definitionKey` and `modelKey`; `null` for an agent the task tool would not run. */
 	readonly marks: Record<string, string | null>;
-	/** The model setting of each agent that has one of its own: the user's override, else its definition's. */
 	readonly models: ReadonlyMap<string, string | string[]>;
 };
 
@@ -264,16 +232,13 @@ async function lookUpAgents(parent: AgentSession, names: readonly string[]): Pro
 	return { marks, models };
 }
 
-/** Agent names a `define` call mentions, so their marks are known before the call is judged. */
 const agentsIn = (boxes: Readonly<Record<string, Json>>): string[] =>
 	Object.values(boxes).flatMap((box) =>
 		isObject(box) ? [box.agent, box.model].flatMap((name) => (typeof name === "string" ? [name] : [])) : [],
 	);
 
-/** The notes file of an item: one per item, beside the flow's log. */
 const boardOf = (flow: Flow, key: string): string => path.join(flow.dir, "flow-boards", `${encodeURIComponent(key)}.md`);
 
-/** Removes the notes files of items that no longer exist, so an item produced again starts with empty notes. */
 function pruneBoards(flow: Flow): void {
 	const dir = path.join(flow.dir, "flow-boards");
 	if (!fs.existsSync(dir)) return;
@@ -283,16 +248,9 @@ function pruneBoards(flow: Flow): void {
 	}
 }
 
-/**
- * What a session of an isolated box starts from besides the caller's checkout: the changes
- * the last ended session of the same item left without handing them back. `undefined` when
- * there is nothing to carry over.
- */
 async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): Promise<Inheritance | undefined> {
-	// A session that yielded has handed its changes to the caller's checkout, unless the user keeps them as patches.
 	if (earlier.yielded && cfgTaskIsolationApply.get(parent.settings)) return undefined;
 	const callerCwd = parent.sessionManager.getCwd();
-	// A session whose changes OMP could not merge left them on its task branch.
 	const kept = await keptTaskBranch(earlier.session, callerCwd);
 	if (kept !== undefined) return inheritKeptBranch(kept, callerCwd);
 	const released = await inheritReleasedPatch(path.join(flow.dir, `${earlier.session}.patch`), callerCwd);
@@ -305,13 +263,11 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 		{ id: earlier.session, file, cwd, running: ref?.status === "running", handedBack: false },
 		callerCwd,
 	);
-	// A session that ran in the caller's own checkout left its changes there.
 	return open.kind === "rejected" && open.code === "source-not-isolated" ? undefined : open;
 }
 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
-/** A failed command's output as the session it reopens reads it: the start and the end, where the failure is named. */
 const clipOutput = (text: string): string =>
 	text.length > 8000 ? `${text.slice(0, 2000)}\n… ${text.length - 8000} characters left out …\n${text.slice(-6000)}` : text;
 
@@ -327,7 +283,6 @@ function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 					return failed("schema", `${structured.error ?? "the yielded object does not match the schema"} (${where})`);
 				return failed("protocol", `the session ended without yielding an object (${where})`);
 			}
-			// The yielded payload is JSON a model sent as tool arguments; a round trip gives it the store's type.
 			const data = parseJson(JSON.stringify(structured.data ?? null));
 			return data.ok ? interpret(box, data.value) : failed("protocol", `${data.problems.join("; ")} (${where})`);
 		}
@@ -344,7 +299,6 @@ function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 	}
 }
 
-/** A subagent name no other session has: it is the last segment of the id OMP gives the session, which the spawn hook matches. */
 const sessionName = (firing: Firing): string =>
 	`Flow${firing.key.replace(/[^A-Za-z0-9]+/g, "_").slice(0, 20)}_s${firing.attempt}_${randomUUID().slice(0, 4)}`;
 
@@ -389,8 +343,6 @@ async function runAgent(
 		schemaMode: "strict",
 		...(box.isolated === undefined ? {} : { isolated: box.isolated }),
 	};
-	// The task tool returns once the session's job is registered; the spawn hook runs later, inside that job.
-	// So what was prepared for the session stays until the session has ended.
 	const prepared = spawnId(flow.dir, name);
 	const prepare = box.prepare === undefined ? undefined : fill(box.prepare, firing.inputs, shellWord);
 	rt.spawns.set(prepared, { overlay, model, prepare });
@@ -412,8 +364,6 @@ async function spawnAndWait(
 	const taskTool = parent.getToolByName("task");
 	const manager = parent.asyncJobManager;
 	if (!taskTool || !manager) return failed("spawn", "the `task` tool or background jobs are unavailable in this session");
-	// The id belongs to no model tool call: the task tool only looks up launches a streamed call of that id prepared.
-	// The tool, or a hook around it, may refuse the dispatch by throwing; that is the session not starting.
 	const result = await taskTool
 		.execute(`flow-${randomUUID()}`, {
 			context: "One session of a flow of small assignments. The assignment is complete in itself.",
@@ -428,7 +378,6 @@ async function spawnAndWait(
 		const said = result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 		return failed("spawn", clip(said || "the task tool started no background job"));
 	}
-	// The store reads the job row itself; the host's own completion notice to the caller would be a second, unasked report.
 	manager.acknowledgeDeliveries([id]);
 	const session = job.agentId ?? id;
 	flow.store.spawned(firing.key, firing.attempt, session);
@@ -441,7 +390,6 @@ async function spawnAndWait(
 	signal.removeEventListener("abort", cancel);
 	const outcome = outcomeOfJob(box, job, session);
 	if (outcome.kind !== "done" && outcome.kind !== "raise") return outcome;
-	// OMP merges a yielded session's changes into the caller's checkout itself, and says in the session's result when it could not.
 	const refusal = handBackFailure(job.resultText ?? "");
 	if (refusal === undefined) return outcome;
 	return failed(
@@ -450,17 +398,11 @@ async function spawnAndWait(
 	);
 }
 
-/**
- * What OMP says went wrong handing an isolated session's changes back, read from the result it
- * gives for the session: its merge summary carries a notification exactly when changes that
- * were to be applied were not.
- */
 function handBackFailure(resultText: string): string | undefined {
 	const open = resultText.lastIndexOf("<merge-summary>");
 	const close = resultText.indexOf("</merge-summary>", open);
 	if (open < 0 || close < 0) return undefined;
 	const summary = resultText.slice(open + "<merge-summary>".length, close);
-	// The result is rendered into a harness block, which writes the `<` of a notification tag as an entity.
 	const plain = summary.replaceAll("&lt;", "<");
 	if (!plain.includes("<system-notification>")) return undefined;
 	return plain.replace(/<\/?system-notification>/g, "").trim();
@@ -478,12 +420,10 @@ async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing,
 	if (result.timedOut) return failed("timeout", clipOutput(output.trim()));
 	if (result.exitCode === 0) return { kind: "done", value: output.trimEnd(), handoff: null };
 	const said = `exit code ${result.exitCode ?? "unknown"}:\n${clipOutput(output.trim())}`;
-	// A check that ran says no with 1–125; from 126 on the shell reports a command that could not run or was killed.
 	const ran = typeof result.exitCode === "number" && result.exitCode >= 1 && result.exitCode <= 125;
 	return box.checks !== undefined && ran ? { kind: "rejected", output: said } : failed("exit", said);
 }
 
-/** A session that answers a raise is also told where the raising item keeps its notes. */
 function withBoard(flow: Flow, box: AgentBox, firing: Firing): Firing {
 	const source = partsOf(firing.key).source;
 	if (!source) return firing;
@@ -496,10 +436,6 @@ function withBoard(flow: Flow, box: AgentBox, firing: Firing): Firing {
 	return { ...firing, inputs };
 }
 
-/**
- * Hands a session the flow is starting what was prepared for it: the changes it inherits,
- * written where the child applies them before its first turn, and the model setting its box names.
- */
 async function beforeSubagentSpawn(
 	rt: Runtime,
 	event: BeforeSubagentSpawnEvent,
@@ -525,11 +461,6 @@ async function beforeSubagentSpawn(
 	return prepared.model === undefined ? undefined : { model: prepared.model };
 }
 
-/**
- * In every subagent, once per transcript: record where its isolated workspace starts, so a later
- * session can tell what it changed, then apply the changes it inherits. A session whose
- * inherited changes do not apply does not run: its assignment assumes them.
- */
 async function beforeAgentStart(rt: Runtime, _event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<undefined> {
 	const file = ctx.sessionManager.getSessionFile();
 	if (ctx.agent.kind !== "sub" || !file || rt.started.has(file)) return;
@@ -550,7 +481,6 @@ async function beforeAgentStart(rt: Runtime, _event: BeforeAgentStartEvent, ctx:
 	});
 }
 
-/** Runs the `prepare` command left for the session at `file`, once; returns why the session cannot start when it fails. */
 async function prepareWorkspace(file: string, cwd: string): Promise<string | undefined> {
 	const left = prepareFilePath(file);
 	if (!fs.existsSync(left)) return undefined;
@@ -584,7 +514,6 @@ async function fire(rt: Runtime, parent: AgentSession, flow: Flow, firing: Firin
 	flow.kick();
 }
 
-/** Runs the flow until it is no longer running and nothing it started is still alive. */
 async function drive(rt: Runtime, parent: AgentSession, flow: Flow): Promise<void> {
 	for (;;) {
 		const { promise: kicked, resolve } = Promise.withResolvers<void>();
@@ -597,7 +526,6 @@ async function drive(rt: Runtime, parent: AgentSession, flow: Flow): Promise<voi
 	}
 }
 
-/** Makes sure one job drives the flow; returns the id of a job it started. */
 function ensureDriver(rt: Runtime, parent: AgentSession, flow: Flow): string | undefined {
 	if (flow.driving) {
 		flow.kick();
@@ -710,7 +638,6 @@ export default function flow(pi: ExtensionAPI): void {
 	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), started: new Set() };
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
-	// `docTopics` serves xd://flow/<topic>; OMP keeps it on the tool object, though ToolDefinition does not declare it.
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "flow",
 		label: tr("Flow", "流程"),

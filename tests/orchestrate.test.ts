@@ -1,18 +1,10 @@
-// Drives skills/omp-subagent-more/orchestrate.js against a scripted stand-in for
-// the eval prelude: agent(), wait() and output() as OMP exposes them, with
-// handles whose job keeps only the first result, a published <id>.md/.json per
-// run, and the superseded banner while a later run is going. Runs settle on the
-// real clock in milliseconds: drive() polls OMP on real time, and the order of
-// settling across items is what the barrier test observes.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-// A side-effect script, as %load runs it: it defines globalThis.orchestrate and reads the prelude globals only when called.
 import "../skills/omp-subagent-more/orchestrate.js";
 
 type Value = unknown;
-/** One run of a fake subagent: settles `ms` after it starts with a yield value or an error. */
 type Run = { readonly ms: number; readonly value?: Value; readonly error?: string };
 
 type Spawn = { readonly task: string; readonly options: Record<string, unknown> };
@@ -20,7 +12,6 @@ type Spawn = { readonly task: string; readonly options: Record<string, unknown> 
 let outDir: string;
 let spawns: Spawn[];
 let sent: { id: string; text: string }[];
-/** Scripts by the `label` prefix (item id) of the spawn: one list of runs per stage spawn, consumed in order. */
 let scripts: Map<string, Run[][]>;
 let expire: Set<string>;
 let refuse: Set<string>;
@@ -32,7 +23,6 @@ class FakeAgent {
 	private runs: Run[];
 	private run = 0;
 	private startedAt = Date.now();
-	/** The job row: the first settled run only, as OMP's handle bridge keeps it. */
 	private first: { value?: Value; error?: string } | undefined;
 
 	constructor(runs: Run[]) {
@@ -51,7 +41,6 @@ class FakeAgent {
 		return Date.now() - this.startedAt >= this.current().ms;
 	}
 
-	/** Publish the current run's output once it settled, as OMP writes <id>.md and its .json sidecar. */
 	async publish(): Promise<void> {
 		if (!this.settled()) return;
 		const run = this.current();
@@ -248,7 +237,6 @@ describe("orchestrate", () => {
 		const order = spawns.map((spawn) => spawn.options.label);
 		expect(order.indexOf("fast.2")).toBeLessThan(order.indexOf("lag.2"));
 		expect(order.indexOf("fast.2")).toBeGreaterThan(-1);
-		// fast.2 was spawned while lag.1 was still running: before lag.2 existed.
 		expect(order).toEqual(["fast.1", "lag.1", "fast.2", "lag.2"]);
 	});
 

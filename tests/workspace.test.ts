@@ -25,7 +25,6 @@ async function git(cwd: string, ...args: string[]): Promise<void> {
 	if ((await child.exited) !== 0) throw new Error(await new Response(child.stderr).text());
 }
 
-/** A git checkout with one committed file `a.txt`. */
 async function repo(): Promise<string> {
 	const root = path.join(dir, "repo");
 	await fs.mkdir(root);
@@ -68,7 +67,6 @@ describe("a task branch OMP kept because it could not merge it", () => {
 	const commit = (root: string, message: string): Promise<void> =>
 		git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", message);
 
-	/** A checkout whose branch `omp/task/Worker` changes `a.txt` and adds `b.txt`, while the checkout itself stays at the first commit. */
 	async function withKeptBranch(): Promise<string> {
 		const root = await repo();
 		await git(root, "checkout", "-q", "-b", "omp/task/Worker");

@@ -1,7 +1,3 @@
-// Flow spec for oh-my-omp/omp-config#323. Load after loop.js and flow.js:
-//   %load .tmp/lowcost/flow-323.js
-// It defines globalThis.flow323({id, lanes, plan?, signoffLanes?}) → registers the issue with fl.
-// The roles' standing instructions live in .omp/agents/loop-*.md; the texts here carry only this issue.
 (() => {
 	const ISSUE = "/tmp/ghc/oh-my-omp-omp-config-323";
 	const ROOT = "/tmp/delivering-issues/oh-my-omp-omp-config-323";

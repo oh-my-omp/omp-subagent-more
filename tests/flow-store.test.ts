@@ -1,5 +1,3 @@
-// The flow store without a host: commands in, firings out, sessions settled by the test.
-// Each test states a property of the design that a run with real sessions depends on.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -20,7 +18,6 @@ const SCOUT: Json = { agent: "task:low", brief: "Slice {{issue}}", in: { issue: 
 const WORK: Json = { agent: "task:low", brief: "Do {{slice}}", in: { slice: "scout.slices[]" }, out: OUT };
 const GATE: Json = { command: "check {{results}}", in: { results: "work" } };
 
-/** An agent as observed outside the flow: the mark of its definition and the mark of its model setting. */
 const agent = (name: string, definition: string, model: string): Record<string, string> => ({
 	[definitionKey(name)]: definition,
 	[modelKey(name)]: model,
@@ -33,7 +30,6 @@ function open(log: Action[] = []) {
 	return { store, log, keys, fire: () => keys(store.advance()) };
 }
 
-/** A flow of scout → work per slice → gate, run until both slices are in flight. */
 function fanned() {
 	const flow = open();
 	flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: WORK, gate: GATE } });
@@ -118,16 +114,13 @@ describe("sessions of one item", () => {
 		flow.store.submit({ kind: "run" });
 		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([undefined]);
 
-		// Session A ran and died without yielding.
 		flow.store.spawned("work", 1, "A");
 		flow.store.settle("work", 1, failed("session"));
 		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([{ session: "A", yielded: false }]);
 
-		// The second attempt never became a session: what A left is still what the item has.
 		flow.store.settle("work", 2, failed("spawn"));
 		expect(flow.store.advance().map((firing) => firing.earlier)).toEqual([{ session: "A", yielded: false }]);
 
-		// Session C yields a raise; the session that continues after the answer follows C.
 		flow.store.spawned("work", 3, "C");
 		flow.store.settle("work", 3, { kind: "raise", type: "question", detail: "?", handoff: HANDOFF });
 		flow.store.submit({ kind: "answer", key: "work", value: "yes" });
@@ -183,7 +176,6 @@ describe("runtime exceptions", () => {
 			boxes: { work: { agent: "task:mid", brief: "Do {{slice}}", in: { slice: "scout.slices[]" }, out: OUT } },
 		});
 
-		// The value work#0 produced came from the earlier definition: the store names it and waits for a decision.
 		const refused = flow.store.submit({ kind: "run" });
 		expect(refused.refusals).toHaveLength(1);
 		expect(refused.refusals[0]).toStartWith("work#0: produced under an earlier definition");
@@ -284,14 +276,11 @@ describe("definitions and values", () => {
 		flow.store.settle("b", 1, done(1));
 		flow.fire();
 
-		// The tier is bound to another model: only the box that uses the tier's setting is affected.
 		flow.store.observe(agent("task:low", "low-1", "cheaper"));
 		expect(flow.store.survey().stale).toEqual(["a"]);
-		// The worker's own model setting changes: only the box that uses it is affected.
 		flow.store.submit({ kind: "keep", keys: ["a"] });
 		flow.store.observe(agent("worker", "prompt-1", "own-2"));
 		expect(flow.store.survey().stale).toEqual(["b"]);
-		// The worker's prompt changes: both ran it.
 		flow.store.observe(agent("worker", "prompt-2", "own-2"));
 		expect(flow.store.survey().stale).toEqual(["a", "b"]);
 	});
@@ -410,7 +399,6 @@ describe("checks", () => {
 	const AFTER: Json = { command: "sum {{checks}}", in: { checks: "check" } };
 	const reject = (output: string): Outcome => ({ kind: "rejected", output });
 
-	/** Two slices done, both checks in flight. */
 	function checking(boxes: Readonly<Record<string, Json>> = { work: CHECKED, check: CHECK, after: AFTER }) {
 		const flow = open();
 		flow.store.submit({ kind: "define", boxes });
@@ -438,7 +426,6 @@ describe("checks", () => {
 		const flow = checking();
 		flow.store.settle("check#0", 1, done("ok"));
 		flow.store.settle("check#1", 1, reject("no"));
-		// The rejecting check is gone with the result it judged; the check of the other item stands.
 		expect(Object.keys(flow.store.state.items).sort()).toEqual(["check#0", "work#0", "work#1"]);
 
 		flow.fire();
@@ -621,7 +608,6 @@ describe("command boxes", () => {
 });
 
 describe("the log on disk", () => {
-	/** A run that leaves every kind of action in its log. */
 	function eventful(file: string) {
 		const log: Action[] = [];
 		const store = new Store(log, (action) => {

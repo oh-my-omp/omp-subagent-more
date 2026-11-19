@@ -1,6 +1,3 @@
-// Gate: the parsed shape is tied to the host's AskToolDetails at compile time. A copy of the
-// module is compiled against a copy of the host types; renaming a field the parser depends on
-// must make tsc fail. SRC = checkout. Nothing in the checkout is written.
 import { cpSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 const src = process.env.SRC;

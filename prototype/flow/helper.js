@@ -1,6 +1,3 @@
-// Loaded into an eval JavaScript kernel with %load. Defines globalThis.flow: each function
-// turns JavaScript values into one `tool.flow` call, prints the verdict the call returned, and
-// throws when the call was refused. It keeps nothing: the flow's state is the tool's.
 (() => {
 	const call = async (args) => {
 		const result = await tool.flow(args);

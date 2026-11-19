@@ -1,10 +1,8 @@
-// The action log on disk: one JSON action per line, appended as it happens.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isArray, isObject, type Json, type JsonObject, parseJson } from "./defs.ts";
 import type { Action, Continuation, Outcome } from "./state.ts";
 
-/** Reads the fields of one logged object; a field of the wrong type makes `failed` true. */
 class Fields {
 	failed = false;
 	constructor(readonly data: JsonObject) {}
@@ -77,7 +75,6 @@ function continuationOf(data: JsonObject): Continuation | undefined {
 	return fields.failed ? undefined : continuation;
 }
 
-/** One logged line as the action it records, or nothing when it is not one. */
 export function actionOf(data: Json): Action | undefined {
 	if (!isObject(data)) return undefined;
 	const fields = new Fields(data);
@@ -144,10 +141,6 @@ export function actionOf(data: Json): Action | undefined {
 	return fields.failed ? undefined : action;
 }
 
-/**
- * The actions a log file holds, in order. A last line cut short by a crash is dropped; any other
- * line that is not an action means the file is not a log this code wrote, and reading it fails.
- */
 export function readLog(file: string): Action[] {
 	if (!fs.existsSync(file)) return [];
 	const lines = fs
@@ -168,7 +161,6 @@ export function readLog(file: string): Action[] {
 	return actions;
 }
 
-/** Appends one action to the log file as its own line. */
 export function appendLog(file: string, entry: Action): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.appendFileSync(file, `${JSON.stringify(entry)}\n`);

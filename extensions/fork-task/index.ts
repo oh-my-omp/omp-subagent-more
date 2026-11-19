@@ -1,102 +1,6 @@
-// ============================================================================
-// fork_task — native `task` subagents that start from a copy of the caller's
-// conversation, or of another agent's named by an item's `from`.
-//
-// Registers fork_task plus before_subagent_spawn, before_agent_start, tool_call,
-// session_start (main only) and session_shutdown hooks in main and sub sessions, and one BroadcastChannel
-// listener per thread (source-channel.ts). Reads the source agent's persisted
-// session; writes temporary JSONL under the OS temp directory and moves it
-// into the caller's artifact store; writes each child's replica copy under
-// `<tmp>/omp-fork-task/replicas/<pid>/`, each isolated subagent's workspace
-// start under `<tmp>/omp-fork-task/starts/<pid>/`, a parked session's latest
-// request under `<tmp>/omp-fork-task/parked/<pid>/` and a
-// `workspace: "source"` child's inherited changes under
-// `<tmp>/omp-fork-task/overlays/<pid>/`. Main-session shutdown deletes all four
-// of this process's directories (park disposes a sub session too, so a sub
-// shutdown never deletes what its fork children still need). Main-session
-// startup sweeps the `replicas/`, `overlays/`, `parked/` and `starts/`
-// directories of processes that no longer exist (sweep.ts); live processes'
-// directories stay. The overlay is consumed at the child's
-// first turn (workspace.ts). Inherited changes that do not apply stop the
-// child before its first model call; a failed start record only warns.
-// Execution failures warn and return tool errors; user aborts reject for host
-// cancellation accounting. Spawn preparation failures block the child and warn,
-// while park-record, startup-sweep and shutdown cleanup failures warn without
-// rejecting.
-//
-// Every item replicates its source's actual model request: the caller's, or
-// that of the agent `from` names, live or parked. replica.ts captures each session's
-// provider-neutral Context through Agent.streamFn; the child reuses that
-// system prompt, tool list, message prefix and (on the source's model) its
-// request controls, so forks of one source share the provider cache prefix.
-// The shared `context`, an `agent` role and the assignment reach the child
-// only as its new user message, never as system text. Child tools execute
-// against the child's session. On the source's model, when the source
-// declares `eval`, the child declares the source's tool list byte for byte:
-// its own `yield` stays undeclared, introduced by a `before_agent_start` /
-// `tool_result` delta reminder (`omp-subagent-more/fork-task`) and called from an
-// `eval` cell through the bridge; the `tool_result` hook reports that bridged
-// call to the session as a `yield` tool execution (`emitExternalEvent`), and a
-// tool choice forcing `yield` forces `eval` instead. Otherwise `yield` follows
-// the source's tools.
-//
-// `agent` selects the model binding (`task.agentModelOverrides`, else the
-// definition's `model`) and puts that definition's prompt in a <role> block
-// of the assignment; without `agent` the child runs the source's model and
-// thinking level. Every child is dispatched as internal `fork:self`, so its
-// tool surface is the source's, not the named agent's. Forks without `agent`
-// share cwd by default, forks with `agent` are isolated by default. No
-// inheritance-size or cost gate exists.
-// At the maximum dispatch depth (caller `taskDepth` + 1 reaches `task.maxRecursionDepth`) the call returns a tool error before staging.
-//
-// report-limit (report-limit.ts, `tool_call`, every session): items whose
-// `agent` is `task:*` or omitted are judged by the model role
-// `@omp-subagent-more`, then the `default` chain (role-chain.ts), on whether the
-// shared `context` or the item's `task` caps the worker's report length; any
-// flagged item blocks the whole call. Hook errors, no model and no verdict
-// warn and let the call run.
-//
-// The spawn itself is the built-in `task` tool, called with the same batch
-// shape, so each child is an ordinary task subagent: Agent Hub row,
-// `agent://`/`history://`, idle/park/revive lifecycle, isolation and its
-// merge-back. Only the child's starting transcript, model, prompt and tools
-// differ:
-//
-//   1. At call time the source's persisted conversation (the caller's, or the
-//      registered agent `from` names, resolved like `history://<id>`; a parked
-//      agent is read from its closed transcript, not revived) is forked
-//      into a staging JSONL (inherited cost zeroed, a dangling in-flight tool call
-//      paired with a synthetic aborted result, the source's todo list cleared),
-//      followed by a fork notice. `shake: true` then runs the same
-//      `session.shake("elide")` that `/shake` runs, writing its recovery
-//      artifact into the parent's artifact store — the store the whole agent
-//      tree shares and the child adopts.
-//   2. Source runtime state is removed so the executor, not the copy, decides
-//      the child's contract: `session_init` (a copied init makes the persisted
-//      roster treat the file as another live generation and fails the spawn),
-//      model / thinking / service-tier changes, and the shake helper's own
-//      bookkeeping. Removed entries' children are re-parented.
-//   3. The header cwd is the parent's (the caller's) cwd for shared children,
-//      whatever the source's cwd was (revival reopens the file by path and reads
-//      its cwd from there); isolated children get a blank cwd so
-//      `SessionManager.open` binds them to the worktree.
-//   4. `before_subagent_spawn` fires after the task tool pre-allocates the
-//      child id (async dispatch) and before the executor opens
-//      `<artifactsDir>/<id>.jsonl`; the staging file is moved there so the
-//      executor opens the fork instead of an empty session. Each item gets a
-//      unique name, so the allocated id is predictable and matched exactly.
-//
 // Relies on omp internals (AgentRegistry, the executor's session-file path and
 // hook ordering, session entry types, subagent worker threads); re-verify after
-// every omp upgrade. OMP may run a session in a subagent worker thread, which
-// loads its own copy of this module. Every child reads its replica from the
-// copy file at its first turn, and a thread that hosts no child keeps none of
-// it. A `from` source this thread does not host is asked over source-channel.ts,
-// and its own thread answers with its latest request; a parked source's kept
-// request is a file every thread of the process reads, removed at main-session
-// shutdown or swept by a later main session's startup once its process is gone
-// (sweep.ts).
-// ============================================================================
+// every omp upgrade.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -251,13 +155,6 @@ Forked workers must run relevant scoped checks and real runtime verification bef
 
 Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy; adding completion tools can invalidate caches on providers without append-only tool support.`;
 
-/**
- * Where the forked transcript and replicated request come from. `caller` is
- * the session calling fork_task; `agent` is another live registered agent
- * named by `from`; `parked` is such an agent without a live session, forked
- * from the request it kept at park and its transcript, without reviving it.
- * The two may run in workspaces other than the parent's.
- */
 type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
 	| { readonly kind: "agent"; readonly id: string; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
@@ -321,29 +218,16 @@ const forkNotice = (source: ForkSource, parentCwd: string, isolated: boolean, in
 	].join("\n");
 };
 
-/** Agent definition every fork is dispatched as; its prompt and tools are replaced by the source's. */
 const FORK_AGENT = "fork:self";
 
-/**
- * The borrowed `ask` tool of each child session file, the one live part of a
- * replica. Every child reads the plain-data copy `replica-file.ts` holds (the
- * same file in every thread) at its first turn, so a replica is never retained
- * for a child this thread does not host; only the tool, which must stay in the
- * parent's thread, outlives that read. Copies live until the main session
- * shuts down — a sub session's park runs the same shutdown event, so a revived
- * child keeps its replicated contract.
- */
 const replicaAsks = new Map<string, AgentTool>();
 
 type PendingFork = {
-	/** Exact requested name; the allocated id's last dot-segment. */
 	readonly name: string;
 	readonly artifactsDir: string;
 	readonly staging: string;
 	readonly replica: Replica;
-	/** Spawn model patterns; undefined leaves the native default. */
 	readonly model: string | string[] | undefined;
-	/** Root-repository changes the child applies before its first turn (`workspace: "source"`). */
 	readonly overlay: string | undefined;
 };
 
@@ -353,14 +237,12 @@ type StagedFork = {
 	readonly shakeSummary?: string;
 };
 
-/** This thread's copy for `childFile`, read on demand, plus the borrowed `ask` it still holds. */
 async function portableReplica(childFile: string): Promise<Replica | undefined> {
 	const copy = await readReplicaFile(replicaFilePath(childFile));
 	if (!copy) return undefined;
 	return { ...copy, ask: replicaAsks.get(childFile) };
 }
 
-/** Mirrors the task tool's `sanitizeAgentId`, so the requested name is the allocated id. */
 function sanitizeName(value: string | undefined): string | undefined {
 	const sanitized = value
 		?.trim()
@@ -379,7 +261,6 @@ async function moveFile(from: string, to: string): Promise<void> {
 	}
 }
 
-/** The timestamp of the last assistant message on the branch, which the latest request produced. */
 function lastResponse(manager: SessionManager): number | undefined {
 	const branch = manager.getBranchView();
 	for (let index = branch.length - 1; index >= 0; index--) {
@@ -410,11 +291,9 @@ async function stageFork(
 			repairInterruptedTail: true,
 		});
 		let shakeSummary: string | undefined;
-		// Only a shake adds entries finalizeStaging must leave out; without one, every entry predates it.
 		let preShakeIds: ReadonlySet<string> | undefined;
 		let notice: ForkNotice;
 		try {
-			// A parked source's kept request is current only while its transcript still ends at that request's response.
 			if (source.kind === "parked" && lastResponse(manager) !== source.request.response) {
 				throw new Error(
 					`agent \`${source.id}\`'s transcript has moved past the request it kept at park, or is still being written while it parks; retry the fork.`,
@@ -432,8 +311,6 @@ async function stageFork(
 			await manager.flush();
 			if (shake) {
 				preShakeIds = new Set(manager.getEntries().map((entry) => entry.id));
-				// Recovery artifacts go to the store the child will adopt, so the
-				// `artifact://` ids written into the transcript resolve for it.
 				const parentArtifacts = parent.sessionManager.getArtifactManager();
 				if (parentArtifacts) manager.adoptArtifactManager(parentArtifacts);
 				const { session: shaker } = await createAgentSession({
@@ -474,16 +351,6 @@ async function stageFork(
 
 type SourceResolution = { readonly kind: "error"; readonly message: string } | ForkSource;
 
-/**
- * Resolve `from` to the source to fork: omitted (or naming the caller) forks
- * the caller; otherwise a registered non-advisor agent, matched like
- * `history://<id>` (exact, then case-insensitive) after the caller root's
- * persisted roster is loaded. A live source's latest request is captured and
- * then its transcript flushed, so the transcript holds every replicated
- * message: in this thread directly, or by the thread hosting it when that is
- * another one. A parked source stays parked and is forked from the request it
- * kept at park and its closed transcript.
- */
 async function resolveSource(from: string | undefined, parent: AgentSession, parentFile: string): Promise<SourceResolution> {
 	const requested = from?.trim();
 	const caller = async (): Promise<SourceResolution> => {
@@ -525,12 +392,10 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 		if (!file) return { kind: "error", message: `agent \`${ref.id}\` has no persisted transcript to fork.` };
 		return { kind: "agent", id: ref.id, request: live.source, file, cwd: session.sessionManager.getCwd() };
 	}
-	// Hosted by another thread of this process (a subagent worker, or the main thread seen from a worker).
 	const file = ref.sessionFile ?? session.sessionManager.getSessionFile();
 	if (!file) return { kind: "error", message: `agent \`${ref.id}\` has no persisted transcript to fork.` };
 	const shared = await askSource(file);
 	if (!shared) {
-		// It may have parked between the registry read and the ask.
 		const kept = await parkedRequest(file);
 		if (kept) return parked(ref.id, file, kept);
 		return { kind: "error", message: `agent \`${ref.id}\` runs in another OMP thread that did not answer for it; retry the fork.` };
@@ -540,13 +405,11 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 	return { kind: "agent", id: ref.id, request: { ...request, ask: undefined }, file, cwd };
 }
 
-/** What an item's `agent` contributes: nothing, or a role prompt and model binding. */
 type RoleResolution =
 	| { readonly kind: "none" }
 	| { readonly kind: "role"; readonly block: string; readonly model: string | string[] | undefined }
 	| { readonly kind: "error"; readonly message: string };
 
-/** Agent definitions as the task tool discovers them, loaded once per fork_task call. */
 function roleResolver(parent: AgentSession): (agent: string | undefined) => Promise<RoleResolution> {
 	let definitions: Promise<AgentDefinition[]> | undefined;
 	return async (agent) => {
@@ -571,11 +434,6 @@ function roleResolver(parent: AgentSession): (agent: string | undefined) => Prom
 	};
 }
 
-/**
- * What a `workspace: "source"` item inherits. The child must get an isolated
- * workspace of its own, and the source must be another agent; the rest is
- * decided from the source's registry entry and workspace.
- */
 async function sourceInheritance(source: ForkSource, isolated: boolean, callerCwd: string): Promise<Inheritance> {
 	if (!isolated) {
 		return {
@@ -612,20 +470,12 @@ async function sourceInheritance(source: ForkSource, isolated: boolean, callerCw
 	}
 }
 
-/**
- * Per-load runtime state of the fork factory, shared by the hooks and the
- * tool's execute: created fresh by each `forkTask` call so a rebind (a child
- * OMP on the parent's thread, a worker-thread copy) gets its own copy.
- * Module-level functions below receive it as their first argument.
- */
 type ForkTaskRuntime = {
 	readonly pi: ExtensionAPI;
 	readonly warn: (message: string, error: unknown) => void;
 	readonly pending: PendingFork[];
-	/** Child sessions whose per-call hook is installed, with their own `yield` when the source's tools lack it. */
 	readonly cloned: WeakMap<AgentSession, OwnYield | undefined>;
 	readonly deltas: DeltaStream;
-	/** Subagent transcripts whose workspace start this module copy has handled; dropped when the session ends. */
 	readonly started: Set<string>;
 };
 
@@ -635,12 +485,6 @@ async function discardPending(rt: ForkTaskRuntime, entry: PendingFork): Promise<
 	await fs.rm(path.dirname(entry.staging), { recursive: true, force: true });
 }
 
-/**
- * Move the staged conversation into the parent's artifact store under the
- * pre-allocated spawn key so the executor opens the fork, not an empty
- * session. An existing target blocks the spawn instead of overwriting; any
- * failure blocks the child and warns.
- */
 async function beforeSubagentSpawn(
 	rt: ForkTaskRuntime,
 	event: BeforeSubagentSpawnEvent,
@@ -668,7 +512,6 @@ async function beforeSubagentSpawn(
 		await moveFile(entry.staging, target);
 		await discardPending(rt, entry);
 		await writeReplicaFile(replicaFilePath(target), entry.replica);
-		// The copy is every thread's source of the replica; only the borrowed tool stays here.
 		if (entry.replica.ask) replicaAsks.set(target, entry.replica.ask);
 		if (entry.overlay) await writeOverlay(target, entry.overlay);
 		return entry.model === undefined ? undefined : { model: entry.model };
@@ -678,11 +521,6 @@ async function beforeSubagentSpawn(
 	}
 }
 
-/**
- * The reminder that introduces a child's own `yield` while the request runs on
- * the source's model, whose wire tool list leaves it out (replica.ts
- * `wireTools`); none on another model, which declares it.
- */
 function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delta {
 	const model = session.model;
 	if (!ownYield || !model || !sameModel(model, ownYield.sourceModel)) return { kind: "none" };
@@ -701,12 +539,6 @@ function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delt
 	};
 }
 
-/**
- * Report a `yield` an `eval` cell ran through the bridge as the tool execution
- * the task executor and session watch for: bridged calls emit no agent-loop
- * events, so without this the run would never see its result. A `yield` the
- * loop runs itself is pending in the agent state and already reported.
- */
 function forwardBridgedYield(rt: ForkTaskRuntime, session: AgentSession, event: ToolResultEvent): void {
 	if (event.toolName !== "yield" || session.agent.state.pendingToolCalls.has(event.toolCallId)) return;
 	try {
@@ -722,10 +554,6 @@ function forwardBridgedYield(rt: ForkTaskRuntime, session: AgentSession, event: 
 	}
 }
 
-/**
- * In a cloned child: report a bridged `yield`, and re-introduce the child's
- * own `yield` after a tool batch when compaction dropped the reminder mid-turn.
- */
 function toolResult(rt: ForkTaskRuntime, event: ToolResultEvent, ctx: ExtensionContext): { additionalContext: string } | undefined {
 	const session = callerSession(ctx);
 	if (!session || !rt.cloned.has(session)) return;
@@ -734,13 +562,6 @@ function toolResult(rt: ForkTaskRuntime, event: ToolResultEvent, ctx: ExtensionC
 	return rt.deltas.afterTools(ctx, yieldDelta(ownYield, session));
 }
 
-/**
- * Per subagent transcript: record the isolated workspace start, apply a
- * `workspace: "source"` overlay before the first turn (a failed apply blocks
- * the child before its first model call), then install the replicated
- * request. A failed replication also blocks the child rather than running a
- * different contract.
- */
 async function beforeAgentStart(
 	rt: ForkTaskRuntime,
 	_event: BeforeAgentStartEvent,
@@ -754,7 +575,6 @@ async function beforeAgentStart(
 	if (ctx.agent.kind === "sub" && file && !rt.started.has(file)) {
 		rt.started.add(file);
 		const cwd = ctx.sessionManager.getCwd();
-		// The start is recorded before an inherited overlay lands, so it matches OMP's own baseline of this run.
 		await recordStart(file, cwd, ctx.agent.id).catch((error: unknown) => rt.warn("fork_task: recording the workspace start failed", error));
 		let failure: string | undefined;
 		try {
@@ -775,7 +595,6 @@ async function beforeAgentStart(
 	}
 	try {
 		observeRequests(session, rt.warn);
-		// Every child reads the copy `beforeSubagentSpawn` wrote; this thread does not keep the replica.
 		const replica = file ? await portableReplica(file) : undefined;
 		if (!replica) {
 			if (ctx.agent.name === FORK_AGENT) {
@@ -796,12 +615,6 @@ async function beforeAgentStart(
 	}
 }
 
-/**
- * On main-session startup remove the `replicas/`, `overlays/`, `parked/` and
- * `starts/` directories of processes that no longer exist (the main session of
- * a crashed or killed omp never reached its shutdown). Live processes'
- * directories stay.
- */
 async function sessionStart(rt: ForkTaskRuntime, _event: SessionStartEvent, ctx: ExtensionContext): Promise<void> {
 	if (ctx.agent.kind !== "main") return;
 	await sweepDeadProcessDirs(
@@ -811,14 +624,11 @@ async function sessionStart(rt: ForkTaskRuntime, _event: SessionStartEvent, ctx:
 }
 
 /**
- * On main-session shutdown remove this process's replica copies, overlays,
- * parked-source and workspace-start records; on any session shutdown drop the
- * staged conversations of the forks that parent spawned. A sub session's park
+ * A sub session's park
  * emits the same event, so it must not drop what its fork children still need.
  */
 async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
 	if (ctx.agent.kind === "main") {
-		// The process's replica copies, overlays, parked sources and workspace starts belong to the agent tree this main session ends.
 		for (const root of [replicasRoot(), overlaysRoot(), parkedRoot(), startsRoot()]) {
 			await fs
 				.rm(root, { recursive: true, force: true })
@@ -827,7 +637,6 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 	}
 	const parentFile = ctx.sessionManager.getSessionFile();
 	if (!parentFile) return;
-	// A session that ended no longer needs its start record remembered; a revived one re-checks the record file.
 	rt.started.delete(parentFile);
 	const artifactsDir = parentFile.slice(0, -".jsonl".length);
 	for (const entry of rt.pending.filter((p) => p.artifactsDir === artifactsDir)) {
@@ -839,11 +648,6 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 	}
 }
 
-/**
- * Recursion depth of a live session: one per subagent link up the registry
- * parent chain (the main session has none). Revive derives `taskDepth` the same
- * way (`task/persisted-revive.ts`); `AgentSession` does not expose the field.
- */
 function taskDepthOf(session: AgentSession): number {
 	const registry = AgentRegistry.global();
 	let ref = registry.list().find((candidate) => candidate.session === session);
@@ -857,10 +661,6 @@ function taskDepthOf(session: AgentSession): number {
 	return depth;
 }
 
-/**
- * The wire schema carries `tasks[].outputSchema` as JSON text, so the definition
- * has no untyped node; the `task` tool takes the parsed JSON Schema.
- */
 function parseOutputSchema(text: string, index: number): unknown {
 	try {
 		return JSON.parse(text);
@@ -869,13 +669,6 @@ function parseOutputSchema(text: string, index: number): unknown {
 	}
 }
 
-/**
- * Stage each item's fork (resolve the source, capture its request, write the
- * staging JSONL), then dispatch the whole batch through the native `task`
- * tool. A `workspace: "source"` rejection refuses before dispatch; staging or
- * dispatch leftovers are discarded. Failures warn and return a tool error;
- * user aborts re-throw for host cancellation accounting.
- */
 async function executeForkTask(
 	rt: ForkTaskRuntime,
 	toolCallId: string,
@@ -897,7 +690,6 @@ async function executeForkTask(
 	};
 	try {
 		const params = paramsSchema.parse(rawParams);
-		// Parse every item's JSON text before staging anything, so one bad value refuses the whole call.
 		const items = params.tasks.map((item, index) => ({
 			item,
 			outputSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
@@ -906,8 +698,6 @@ async function executeForkTask(
 		if (!parent) return fail("fork_task: could not resolve the calling session in the agent registry.");
 		const maxRecursionDepth = cfgTaskMaxRecursionDepth.get(parent.settings);
 		const callerDepth = taskDepthOf(parent);
-		// The host's executor strips `task` from a child whose depth reaches the cap (`atMaxDepth`); a fork
-		// dispatched here would be that child, so refuse before staging anything.
 		if (maxRecursionDepth >= 0 && callerDepth + 1 >= maxRecursionDepth) {
 			return fail(
 				`fork_task: reached the maximum dispatch depth (current taskDepth ${callerDepth}, task.maxRecursionDepth ${maxRecursionDepth}); a forked child would start at the cap and cannot dispatch subagents.`,
@@ -915,8 +705,6 @@ async function executeForkTask(
 		}
 		const taskTool = parent.getToolByName("task");
 		if (!taskTool) return fail("fork_task: the `task` tool is unavailable in this session (recursion depth or settings).");
-		// Only async dispatch pre-allocates the child id before the spawn hook;
-		// sync dispatch reports the bare label, which misses nested id prefixes.
 		if (!parent.asyncJobManager || cfgAsyncEnabled.get(parent.settings) !== true) {
 			return fail("fork_task: requires background jobs (`async.enabled: true`).");
 		}
@@ -930,7 +718,6 @@ async function executeForkTask(
 		const notes: string[] = [];
 		const tasks: TaskItem[] = [];
 		const resolveRole = roleResolver(parent);
-		/** The first `workspace: "source"` rejection; nothing is dispatched then. */
 		let refused: string | undefined;
 		try {
 			for (const [index, { item, outputSchema }] of items.entries()) {
@@ -944,8 +731,6 @@ async function executeForkTask(
 					caller: parent,
 				});
 				const name = `${sanitizeName(item.name) ?? "Fork"}_${randomUUID().slice(0, 4)}`;
-				// Without a role the fork continues the source in its workspace unless explicitly isolated;
-				// inheriting the source's workspace needs an isolated child, so `workspace: "source"` defaults to one.
 				const isolated = !planMode && (item.isolated ?? (role.kind === "role" || item.workspace === "source"));
 				const inheritance =
 					item.workspace === "source" ? await sourceInheritance(source, isolated, parent.sessionManager.getCwd()) : undefined;
@@ -969,7 +754,6 @@ async function executeForkTask(
 				if (shakeSummary) notes.push(`${name}: ${shakeSummary}`);
 				tasks[index] = {
 					name,
-					// The replicated system prompt is the source's: role, shared context and assignment form the new user message.
 					task: [role.kind === "role" ? role.block : "", params.context.trim(), item.task].filter((part) => part.length > 0).join("\n\n"),
 					agent: FORK_AGENT,
 					...(planMode ? {} : { isolated }),
@@ -987,10 +771,8 @@ async function executeForkTask(
 			return fail(refused);
 		}
 
-		// The native task tool requires `context`; it lands only in the child's base prompt, which replication never sends.
 		const result = await taskTool.execute(toolCallId, { context: params.context, tasks }, signal, onUpdate);
 
-		// Items the task tool never scheduled (validation errors) leave nothing staged.
 		const parsed = progressSchema.safeParse(result.details);
 		const scheduled = new Set(parsed.success ? parsed.data.progress.map((p) => p.index) : []);
 		for (const [index, entry] of staged.entries()) {
@@ -1010,7 +792,6 @@ async function executeForkTask(
 	}
 }
 
-/** The OMP model role the report-limit judgment uses first: the plugin's own name; unbound, the `default` chain answers. */
 const REPORT_LIMIT_ROLE = "omp-subagent-more";
 
 export default function forkTask(pi: ExtensionAPI): void {
@@ -1065,7 +846,6 @@ export default function forkTask(pi: ExtensionAPI): void {
 		}
 	});
 
-	// `docTopics` serves xd://fork_task/<topic>; OMP keeps it on the tool object, though ToolDefinition does not declare it.
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "fork_task",
 		label: tr("Fork Task", "分叉任务"),

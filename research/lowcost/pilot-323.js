@@ -1,7 +1,3 @@
-// Pilot item for oh-my-omp/omp-config#323. Load after loop.js with a cell that is only:
-//   %load .tmp/lowcost/pilot-323.js
-// It defines globalThis.pilot323(id, ladder) → registers the lc item (state adopted from disk when present).
-// The roles' standing instructions live in .omp/agents/loop-*.md; the texts here carry only this issue.
 (() => {
 	const ISSUE = "/tmp/ghc/oh-my-omp-omp-config-323";
 	const ROOT = "/tmp/delivering-issues/oh-my-omp-omp-config-323";
@@ -106,7 +102,6 @@
 	};
 	globalThis.pilot323 = async (id, ladder) => {
 		const repo = `${ROOT}/${id}/repo`;
-		// The untouched clone names the base commit; a worker's checkout has already moved past it.
 		const base = (await globalThis.lc.exec("git rev-parse HEAD", `${ROOT}/base`)).out.trim();
 		return globalThis.lc.register({
 			id,

@@ -1,6 +1,3 @@
-// Deterministic probe battery for omp-config#323 commits: runtime behavior of askAnswers/formatAskAnswers
-// and whether a host type change really fails tsc. No model is involved in the scoring.
-// Usage: bun .tmp/lowcost/eval/battery.ts <label>=<repo>@<sha> ...   → prints one JSON line per label.
 import { cpSync, mkdirSync, symlinkSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const ROOT = "/tmp/delivering-issues/oh-my-omp-omp-config-323";
@@ -14,8 +11,6 @@ const db = { name: "db", question: "Database", answer: "SQLite" };
 const bf = { name: "bf", question: "Backfill", answer: "no" };
 const note = (over: Details = {}) => ({ name: "db", question: "Database", option: "SQLite", value: "sqlite", text: "only if backups stay", ...over });
 
-// kind C: stated by the contract's results or decision table. kind I: follows from contract wording
-// ("空白答案", "每个作答问题一行") but is not fed by the issue's driver.
 const cases: { id: string; kind: "C" | "I"; input: unknown; over?: Record<string, unknown>; expect: string | null }[] = [
 	{ id: "native_basic", kind: "C", input: { answers: [db, bf] }, expect: "Database → SQLite\nBackfill → no" },
 	{ id: "timedOut_true", kind: "C", input: { answers: [bf], timedOut: true }, expect: null },
@@ -35,7 +30,6 @@ const cases: { id: string; kind: "C" | "I"; input: unknown; over?: Record<string
 	{ id: "multiline_answer_one_line", kind: "I", input: { answers: [{ ...db, answer: "l1\nl2" }] }, expect: "Database → l1 l2" },
 	{ id: "note_on_blank", kind: "I", input: { answers: [{ ...db, answer: "" }], notes: [note()] }, expect: null },
 ];
-// Legacy shapes: the expected value is whatever the base commit returns ([保持]).
 const legacy: { id: string; input: unknown }[] = [
 	{ id: "legacy_batch_custom", input: { results: [{ question: "Database", options: ["SQLite"], multi: false, selectedOptions: ["SQLite"], customInput: "in WAL" }] } },
 	{ id: "legacy_single", input: { question: "Database", options: ["SQLite"], multi: false, selectedOptions: ["SQLite"] } },
@@ -43,14 +37,12 @@ const legacy: { id: string; input: unknown }[] = [
 	{ id: "legacy_no_selection", input: { question: "Database", options: ["SQLite"], multi: false, selectedOptions: [] } },
 	{ id: "legacy_multi_batch", input: { results: [{ question: "A", options: ["x", "y"], multi: true, selectedOptions: ["x", "y"] }, { question: "B", options: ["z"], multi: false, selectedOptions: ["z"] }] } },
 ];
-// Recorded only: inputs no producer emits, or points the contract leaves open.
 const recorded: { id: string; input: unknown }[] = [
 	{ id: "legacy_single_timedOut", input: { question: "Q", options: ["a"], multi: false, selectedOptions: ["a"], timedOut: true } },
 	{ id: "both_keys", input: { answers: [db], results: [{ question: "Database", options: ["Postgres"], multi: false, selectedOptions: ["Postgres"] }] } },
 	{ id: "malformed_entry", input: { answers: [{ name: "x" }, db] } },
 ];
 
-// Host type variants: each one MUST make tsc fail in the module if the compile-time link is real.
 const ASK = "tools/ask.d.ts";
 const DATA = "html-form/data.d.ts";
 const variants: { id: string; file: string; from: string; to: string }[] = [
@@ -122,7 +114,6 @@ await Promise.all(
 			else failed[item.id] = { got, want };
 		}
 		const observed = Object.fromEntries(recorded.map((item) => [item.id, render(mod, message(item.input))]));
-		// Type link: the control must compile, then each variant must not.
 		const control = tsc(dir);
 		const link: Record<string, string> = {};
 		let detected = 0;

@@ -3,7 +3,6 @@ import { type Answer, type Ask, createReportLimit, parseAnswer, VERDICTS_LOG } f
 
 type Logged = { readonly level: "info" | "warn"; readonly message: string; readonly data: Record<string, unknown> };
 
-/** A check with captured logs, and a scripted model: each prompt containing a key answers with its text. */
 function harness(answers: ReadonlyArray<readonly [string, Answer]>) {
 	const logs: Logged[] = [];
 	const prompts: string[] = [];
@@ -49,7 +48,6 @@ describe("report-limit on fork_task", () => {
 		expect(await h.inspect({ context: "ctx", tasks: [{ task: "do it" }] })).toBeNull();
 		expect(await h.inspect({ context: "  ctx ", tasks: [{ task: "do it\n" }] })).toBeNull();
 		expect(h.prompts).toHaveLength(1);
-		// A changed task is a new prompt.
 		expect(await h.inspect({ context: "ctx", tasks: [{ task: "do it twice" }] })).toBeNull();
 		expect(h.prompts).toHaveLength(2);
 	});

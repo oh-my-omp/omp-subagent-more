@@ -1,21 +1,4 @@
-// Staged issue flow for eval JS cells. Load after loop.js (it reuses lc.exec/outcome/send/gates):
-//   %load .tmp/lowcost/loop.js
-//   %load .tmp/lowcost/flow.js
-// It defines globalThis.fl.
-//
-// An issue is delivered by small tasks, never by one agent holding the whole flow. Every task
-// is a node; when a node's agent yields, the node kind's `expand` turns the returned object into
-// the next nodes (a flatMap over agent results): a scout's slices become implement nodes, its
-// open points become one ruling request, a worker's `followups` become new slices, a worker's
-// question becomes a ruling request followed by a resume of that same worker.
-//
-// Correctness is decided by runtime behavior only: gates are commands the program runs on a
-// commit, and a ruling arrives as runtime cases that the program adds to the gates. There is no
-// review loop. One guardian per issue rules on open points and signs off once at the end.
-//
-// Declarations (fl.kinds, fl.specs, functions) are replaced by reloading. Lifecycle is plain
-// data in fl.issues, mirrored to <dir>/<issue>/state.json with an append-only ledger.jsonl and
-// the issue's board.md. Nothing here waits: fl.step() looks once and returns.
+// Load after loop.js (it reuses lc.exec/outcome/send/gates).
 (() => {
 	const lc = globalThis.lc;
 	const fl = (globalThis.fl ??= {});
@@ -37,7 +20,6 @@
 		return fs.existsSync(path) ? fs.readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
 	};
 
-	// ── nodes ────────────────────────────────────────────────────────────────
 	fl.add = (state, kind, input = {}, after = []) => {
 		const id = `n${++state.seq}`;
 		state.nodes[id] = { id, kind, input, after, status: "queued", ref: null, result: null };
@@ -57,7 +39,6 @@
 		}
 	};
 
-	// ── gates: commands the program runs; a pass is recorded per lane and head ─
 	fl.runGates = async (state, laneId, by) => {
 		const spec = fl.specs.get(state.id);
 		const lane = state.lanes[laneId];
@@ -81,7 +62,6 @@
 		return { pass, head, gates: results };
 	};
 
-	// ── schemas (flat objects: `kind` selects which fields apply) ─────────────
 	fl.schemas = {
 		scout: {
 			type: "object",
@@ -93,7 +73,6 @@
 			required: ["slices", "open_points", "gate_gaps"],
 			additionalProperties: false,
 		},
-		// One schema for every request the guardian answers in its single session.
 		guardian: {
 			type: "object",
 			properties: {
@@ -138,14 +117,10 @@
 		},
 	};
 
-	// ── node kinds: how to start one, and what its result expands into ───────
-	// start(state, node) → {session: "new", agent, brief, schema, tools?} | {session: "send", ref, brief} | {session: "program", run}
-	// expand(state, node, value) → void (adds nodes with fl.add)
 	fl.kinds = {
 		scout: {
 			start: (state, node) => ({ session: "new", agent: state.roles.scout, brief: fl.specs.get(state.id).scoutBrief(state), schema: fl.schemas.scout }),
 			expand: async (state, node, value) => {
-				// A file git ignores can never be part of a commit: drop it, and a slice left without files.
 				const repo = Object.values(state.lanes)[0].repo;
 				const slices = [];
 				const dropped = [];
@@ -205,7 +180,6 @@
 					fl.add(state, "work", { lane: node.input.lane, slice: node.input.slice, resume: 'Your yield did not follow the protocol. Yield {"kind":"done", …} with `head`, {"kind":"help", …} with `points`, or {"kind":"blocked", …} with `reason`.' });
 					return;
 				}
-				// The worker's own claim is never used: the pass the gate tool recorded on this head is.
 				const head = (await lc.exec("git rev-parse HEAD", lane.repo)).out.trim();
 				const dirty = (await lc.exec("git status --porcelain", lane.repo)).out.trim();
 				let gate = lane.passedHead === head && !dirty ? { pass: true, head, gates: [], reused: true } : await fl.runGates(state, node.input.lane, "program");
@@ -227,7 +201,6 @@
 					return;
 				}
 				lane.done = [...(lane.done ?? []), node.input.slice];
-				// Dynamic split: work the worker found and left becomes new slices of the same lane.
 				for (const [index, followup] of (value.followups ?? []).entries()) {
 					const id = `${node.input.slice}.f${index + 1}`;
 					state.slices.push({ id, title: followup.title, files: followup.files, depends_on: [node.input.slice], rows: [], done_when: followup.done_when, source: `followup of ${node.input.slice}` });
@@ -255,12 +228,10 @@
 		},
 	};
 	fl.rulingText = (rulings) => `Rulings on your points:\n${rulings.map((ruling) => `- ${ruling.point} [${ruling.outcome}]: ${ruling.decision}${(ruling.cases ?? []).map((item) => `\n  case ${item.name}: ${item.input} → ${item.expect}`).join("")}`).join("\n")}\n\nThey bind like the contract, and their cases are now part of the gates. Continue the slice and yield again.`;
-	// Next slice of a lane whose dependencies that lane has finished; when none is left, sign off.
 	fl.advanceLane = (state, laneId, after = []) => {
 		const lane = state.lanes[laneId];
 		const done = new Set(lane.done ?? []);
 		const next = state.slices.find((slice) => !done.has(slice.id) && slice.depends_on.every((dep) => done.has(dep)));
-		// Every slice gets a fresh worker session: no agent accumulates the whole issue.
 		if (next) {
 			fl.add(state, "work", { lane: laneId, slice: next.id }, after);
 			return;
@@ -274,8 +245,6 @@
 		for (const laneId of Object.keys(state.lanes)) fl.advanceLane(state, laneId, after);
 	};
 
-	// ── step: collect what running nodes published, expand, start what is ready ─
-	// Caps are per agent definition across every issue: a provider's concurrency limit does not know about issues.
 	fl.running = (state, agentName) => [...fl.issues.values()].flatMap((issue) => Object.values(issue.nodes)).filter((node) => node.status === "running" && node.agent === agentName).length;
 	fl.startNode = async (state, node) => {
 		const plan = fl.kinds[node.kind].start(state, node);
@@ -289,7 +258,6 @@
 		} else {
 			if (fl.caps[plan.agent] !== undefined && fl.running(state, plan.agent) >= fl.caps[plan.agent]) return false;
 			const since = Date.now();
-			// The guardian is created once; a second request before it exists waits for the next step.
 			if (plan.guardian && Object.values(state.nodes).some((other) => other.status === "running" && other.kind === "rule")) return false;
 			const handle = await globalThis.agent(plan.brief, { agent: plan.agent, label: `${state.id}:${node.kind}:${node.id}`, schema: plan.schema, schemaMode: "strict", ...(plan.tools ? { tools: plan.tools } : {}) });
 			node.ref = { id: handle.id, agent: plan.agent, since, sawRunning: false };
@@ -348,9 +316,6 @@
 		};
 	};
 
-	// ── register an issue; adopts <dir>/<issue>/state.json when it exists ─────
-	// spec: {id, base, lanes:{[lane]:{repo, agent}}, roles:{scout, guardian}, signoffLanes:[lane], gates(state)→gate[],
-	//        scoutBrief, guardianIntro, ruleBrief, workBrief, signoffBrief, plan?:{slices, open_points, gate_gaps}}
 	fl.register = async (spec) => {
 		const fs = await fl.fs();
 		fl.specs.set(spec.id, spec);

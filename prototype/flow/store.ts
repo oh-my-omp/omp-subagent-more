@@ -1,16 +1,9 @@
-// The store: the one writer of a flow's action log.
-//
-// A caller's request is a command. The store judges it against the current state and the
-// definitions alone; a legal command becomes actions, appended to the log and folded into the
-// state, and an illegal one changes nothing and says why. Whatever needs the outside world
-// (starting a session, running a command) happens elsewhere and comes back as `settle`.
 import { isName, type Json, parseBox, stableText } from "./defs.ts";
 import { type Firing, lint, type Survey, survey } from "./plan.ts";
 import { delta, headline, type Marks, marksOf, wiring } from "./report.ts";
 import { type Action, definitionKey, EMPTY, markOf, modelKey, type Outcome, reduce, type State } from "./state.ts";
 
 export type Command =
-	/** Boxes in plain-data form; `null` drops a box. */
 	| { readonly kind: "define"; readonly boxes: Readonly<Record<string, Json>> }
 	| { readonly kind: "supply"; readonly name: string; readonly value: Json }
 	| { readonly kind: "retract"; readonly keys: readonly string[] }
@@ -22,13 +15,10 @@ export type Command =
 
 export type Verdict = {
 	readonly accepted: boolean;
-	/** Why the command was refused; empty when accepted. */
 	readonly refusals: readonly string[];
-	/** Where the flow stands, then what changed since the last verdict. */
 	readonly lines: readonly string[];
 };
 
-/** A session the outside world still runs although its item no longer waits for it. */
 export type Live = { readonly key: string; readonly attempt: number };
 
 function judge(state: State, command: Command): { readonly actions: readonly Action[]; readonly refusals: readonly string[] } {
@@ -99,8 +89,6 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 					`${key}: produced under an earlier definition of its box; keep it (the value stands) or retract it (it is produced again)`,
 				);
 			}
-			// An exception that stopped the flow has to be handled before the flow goes on: by a changed
-			// definition of the box, by retracting the item, or by saying it may fire again as it is.
 			for (const item of Object.values(state.items)) {
 				const box = state.boxes[item.box];
 				if (item.phase.kind !== "failed" || !box || markOf(state, box) !== item.fingerprint) continue;
@@ -120,7 +108,6 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 	}
 }
 
-/** What the caller may do next, told from the state alone; `run` and `stop` are asked of the same judge that would decide them. */
 export function moves(state: State): string[] {
 	const found = survey(state);
 	const legal = (command: Command): boolean => judge(state, command).refusals.length === 0;
@@ -147,7 +134,6 @@ export class Store {
 	#seen: Marks = {};
 	readonly #append: (action: Action) => void;
 
-	/** A store over an existing log; `append` receives every later action, in order. */
 	constructor(log: Iterable<Action>, append: (action: Action) => void) {
 		for (const action of log) this.#state = reduce(this.#state, action);
 		this.#append = append;
@@ -166,14 +152,12 @@ export class Store {
 		this.#state = reduce(this.#state, action);
 	}
 
-	/** Agent names the definitions use, as a definition or for a model setting, for the caller to look up outside the flow. */
 	agentNames(): string[] {
 		return [
 			...new Set(Object.values(this.#state.boxes).flatMap((box) => (box.kind === "agent" ? [box.agent, box.model ?? box.agent] : []))),
 		].sort();
 	}
 
-	/** Records marks as they are now, under `definitionKey` and `modelKey`; `null` for one that does not exist. */
 	observe(agents: Readonly<Record<string, string | null>>): void {
 		const changed: Record<string, string | null> = {};
 		for (const [name, mark] of Object.entries(agents)) {
@@ -182,14 +166,12 @@ export class Store {
 		if (Object.keys(changed).length > 0) this.#dispatch({ kind: "observed", agents: changed });
 	}
 
-	/** Judges a command and, when legal, applies it. */
 	submit(command: Command): Verdict {
 		const { actions, refusals } = judge(this.#state, command);
 		for (const action of actions) this.#dispatch(action);
 		return { accepted: refusals.length === 0, refusals, lines: this.changes() };
 	}
 
-	/** Where the flow stands, and what changed since the last time this was asked. */
 	changes(): string[] {
 		const found = survey(this.#state);
 		const marks = marksOf(this.#state, found);
@@ -198,7 +180,6 @@ export class Store {
 		return lines;
 	}
 
-	/** Where the flow stands, with every box, input and item. */
 	everything(): string[] {
 		const found = survey(this.#state);
 		return [...headline(this.#state, found), ...this.#next(), ...wiring(this.#state), ...delta({}, marksOf(this.#state, found))];
@@ -209,7 +190,6 @@ export class Store {
 		return open.length > 0 ? [`next: ${open.join(" | ")}`] : [];
 	}
 
-	/** While the flow runs: records what starts now and returns it; records that the flow came to rest when nothing can. */
 	advance(): readonly Firing[] {
 		if (this.#state.mode.kind !== "running") return [];
 		const found = survey(this.#state);
@@ -220,17 +200,14 @@ export class Store {
 		return found.ready;
 	}
 
-	/** The id under which the session of an attempt can be read outside the flow. */
 	spawned(key: string, attempt: number, session: string): void {
 		this.#dispatch({ kind: "spawned", key, attempt, session });
 	}
 
-	/** The end of one session, however it ended. */
 	settle(key: string, attempt: number, outcome: Outcome): void {
 		this.#dispatch({ kind: "settled", key, attempt, outcome });
 	}
 
-	/** Of the sessions still alive outside, those whose result nothing waits for: the flow stopped, or their item is gone. */
 	orphans(live: readonly Live[]): readonly Live[] {
 		const stopped = this.#state.mode.kind === "stopped";
 		return live.filter(({ key, attempt }) => {
@@ -239,7 +216,6 @@ export class Store {
 		});
 	}
 
-	/** After a restart nothing of the earlier process is alive: its running items end as cancelled. */
 	recover(): void {
 		for (const item of Object.values(this.#state.items)) {
 			if (item.phase.kind === "running") this.settle(item.key, item.attempt, { kind: "cancelled" });

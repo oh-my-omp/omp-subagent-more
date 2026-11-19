@@ -1,7 +1,3 @@
-// Tables of the delivery plan, generated from the catalog (acceptance rows parsed from the issue
-// bodies) and the scout results. Load after scout-all.js:
-//   %load .tmp/lowcost/plan-tables.js   → defines globalThis.planTables()
-// It only reads files; nothing is dispatched.
 (() => {
 	const SESSION = "~/.omp/agent/sessions/-Ext-code-omomp-omp-config/2026-11-14T19-28-16-207Z_01a1db88-294f-7611-840e-4299ba2a5305";
 	const LOCKFILES = new Set(["bun.lock", "package-lock.json", "pnpm-lock.yaml"]);
@@ -32,12 +28,10 @@
 						requests += 1;
 					}
 				} catch {
-					// a partially written last line of a transcript that is still open
 				}
 			}
 			return { cost, requests };
 		};
-		// A slice the flow keeps: it changes at least one file that is not a lockfile (the program refreshes dependencies).
 		const kept = (slice) => slice.files.some((file) => !LOCKFILES.has(file.split("/").pop()));
 		const trees = [];
 		const totals = { children: 0, scouted: 0, slices: 0, dropped: 0, open: 0, openProduced: 0, gaps: 0, command: 0, interactive: 0, scoutCost: 0, scoutSeconds: 0 };

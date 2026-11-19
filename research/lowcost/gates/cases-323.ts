@@ -1,11 +1,7 @@
-// Gate: runtime cases that came out of rulings. CASES = path of cases.json, SRC = checkout.
-// A case: input = the `details` object of an ask tool result as JSON text; expect = the exact
-// formatAskAnswers(askAnswers(message)) string as JSON text, or null when askAnswers returns null.
 import { readFileSync } from "node:fs";
 const src = process.env.SRC;
 const casesPath = process.env.CASES;
 if (!src || !casesPath) throw new Error("SRC and CASES are required");
-// The module under test is chosen at run time by SRC.
 const mod = await import(`${src}/agent/extensions/_shared/ask-answers.ts`);
 const cases: { name: string; input: string; expect: string; ruling?: string }[] = JSON.parse(readFileSync(casesPath, "utf8"));
 let failed = 0;

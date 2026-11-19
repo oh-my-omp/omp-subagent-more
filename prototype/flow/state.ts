@@ -1,45 +1,24 @@
-// The state of a flow is a fold over its actions; nothing else is stored.
-//
-// An item is one unit of a box's work: the box itself, one element of a fanned-out input
-// (`box#3`), or the answer to one raise (`box<work#1@2>`: `work#1` raised in its session 2).
-// Every session of an item is a new attempt; no attempt continues an earlier session.
-//
-// A value that changes takes the values computed from it with it: supplying an input again or
-// retracting an item removes every item that depends on it.
-//
-// What an agent box runs is its own definition, the definition of the agent it names, and the
-// model setting it uses. The last two live outside the flow, so the state holds a mark of each
-// as last observed, and an item records all three under which it ran.
 import { type Box, type Json, parseBox } from "./defs.ts";
 
 export type Outcome =
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raise"; readonly type: string; readonly detail: string; readonly handoff: Json }
-	/** A check ran and rejected the result it checks. This is the check's verdict, not an exception. */
 	| { readonly kind: "rejected"; readonly output: string }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
 
-/** An ended session of an item: a later session of the same item starts from what it left. */
 export type Earlier = { readonly session: string; readonly yielded: boolean };
 
-/** What a session that follows an earlier one of its item is given besides the box's inputs; `previous` is the earlier handoff. */
 export type Continuation =
-	/** The earlier session raised, and this is the answer. */
 	| { readonly kind: "answer"; readonly answer: Json; readonly previous: Json }
-	/** The earlier session finished, and the check box `check` failed on its result with this output. */
 	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json };
 
 export type Action =
-	/** Boxes in plain-data form; `null` drops a box. */
 	| { readonly kind: "defined"; readonly boxes: Readonly<Record<string, Json>> }
 	| { readonly kind: "supplied"; readonly name: string; readonly value: Json }
-	/** Marks of agent definitions as observed outside the flow; `null` when there is no such agent. */
 	| { readonly kind: "observed"; readonly agents: Readonly<Record<string, string | null>> }
-	/** Item keys and `input.<name>` entries. */
 	| { readonly kind: "retracted"; readonly keys: readonly string[] }
 	| { readonly kind: "kept"; readonly keys: readonly string[] }
-	/** Failed items the caller lets fire again as they are. */
 	| { readonly kind: "retried"; readonly keys: readonly string[] }
 	| { readonly kind: "answered"; readonly key: string; readonly value: Json }
 	| { readonly kind: "started" }
@@ -53,7 +32,6 @@ export type Action =
 			readonly attempt: number;
 			readonly continuation: Continuation | null;
 	  }
-	/** Where the session of an attempt can be read from outside the flow. */
 	| { readonly kind: "spawned"; readonly key: string; readonly attempt: number; readonly session: string }
 	| { readonly kind: "settled"; readonly key: string; readonly attempt: number; readonly outcome: Outcome };
 
@@ -61,10 +39,8 @@ export type Phase =
 	| { readonly kind: "running" }
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raised"; readonly type: string; readonly detail: string; readonly handoff: Json }
-	/** A check on the item's result failed: the item continues in a new session that is given the check's output. */
 	| { readonly kind: "reopened"; readonly check: string; readonly output: string; readonly handoff: Json }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
-	/** A runtime exception the box handles: the item fires again. */
 	| { readonly kind: "retry"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
 
@@ -72,25 +48,18 @@ export type Item = {
 	readonly key: string;
 	readonly box: string;
 	readonly attempt: number;
-	/** Mark of what the latest attempt ran under. */
 	readonly fingerprint: string;
 	readonly phase: Phase;
-	/** Sessions of this item that followed one another through answered raises and failed checks, this one included. */
 	readonly chain: number;
-	/** How many times each handled runtime exception has already made this item fire again. */
 	readonly refires: Readonly<Record<string, number>>;
 	readonly continuation: Continuation | null;
-	/** An answer to the item's raise given from outside the flow. */
 	readonly answer: Json | undefined;
-	/** Id of the latest attempt's session, once it has one. */
 	readonly session: string | undefined;
-	/** The last session of this item that ran to an end, and whether it ended by yielding. */
 	readonly last: Earlier | undefined;
 };
 
 export type StopCause =
 	| { readonly kind: "exception"; readonly key: string; readonly name: string; readonly reason: string }
-	/** Stopped from outside the flow: by its caller, or because the process driving it ended. */
 	| { readonly kind: "halt"; readonly reason: string };
 
 export type Mode = { readonly kind: "idle" } | { readonly kind: "running" } | { readonly kind: "stopped"; readonly cause: StopCause };
@@ -99,7 +68,6 @@ export type State = {
 	readonly raw: Readonly<Record<string, Json>>;
 	readonly boxes: Readonly<Record<string, Box>>;
 	readonly inputs: Readonly<Record<string, Json>>;
-	/** Marks as last observed, under `definitionKey(agent)` and `modelKey(agent)`. */
 	readonly agents: Readonly<Record<string, string>>;
 	readonly items: Readonly<Record<string, Item>>;
 	readonly mode: Mode;
@@ -107,12 +75,9 @@ export type State = {
 
 export const EMPTY: State = { raw: {}, boxes: {}, inputs: {}, agents: {}, items: {}, mode: { kind: "idle" } };
 
-/** Where the mark of an agent's own definition (prompt, tools) is kept. */
 export const definitionKey = (agent: string): string => `definition ${agent}`;
-/** Where the mark of an agent's model setting is kept. */
 export const modelKey = (agent: string): string => `model ${agent}`;
 
-/** Identity of what a box runs now: an item produced under another mark is stale. */
 export const markOf = (state: State, box: Box): string =>
 	box.kind === "agent"
 		? `${box.fingerprint}+${state.agents[definitionKey(box.agent)] ?? "unknown"}+${state.agents[modelKey(box.model ?? box.agent)] ?? "unknown"}`
@@ -139,11 +104,9 @@ export function partsOf(key: string): KeyParts {
 	return { box: key, index: undefined, source: undefined };
 }
 
-/** A box whose items are the elements of an array input. */
 export const isFanned = (box: Box | undefined): boolean =>
 	box !== undefined && Object.values(box.inputs).some((ref) => ref.multi && ref.source.kind !== "raise");
 
-/** The item a check item checks: the item of the same index when the checked box is fanned, else its only item. */
 export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): string | undefined {
 	const parts = partsOf(key);
 	const box = boxes[parts.box];
@@ -152,7 +115,6 @@ export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): s
 	return parts.index === undefined ? undefined : itemKey(box.checks, parts.index);
 }
 
-/** Item keys whose inputs came from a changed input or item, transitively. */
 function dependents(state: State, changedInputs: ReadonlySet<string>, changedItems: ReadonlySet<string>): Set<string> {
 	const gone = new Set(changedItems);
 	const goneBoxes = new Set([...gone].map((key) => partsOf(key).box));
@@ -212,8 +174,6 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 			? { ...failed, mode: { kind: "stopped", cause: { kind: "exception", key: item.key, name, reason: said } } }
 			: failed;
 	};
-	// A check's rejection is the flow's own way back to the work it checks: that item continues in a
-	// new session, and what was computed from its result, this check included, is gone with the result.
 	const reject = (output: string): State => {
 		const checkedAt = checkedKey(state.boxes, item.key);
 		const checked = checkedAt === undefined ? undefined : state.items[checkedAt];
@@ -266,7 +226,6 @@ export function reduce(state: State, action: Action): State {
 					delete boxes[name];
 					continue;
 				}
-				// The store refuses a definition with problems before it is logged; one that got here parses.
 				const parsed = parseBox(name, data);
 				if (!parsed.ok) continue;
 				raw[name] = data;
@@ -353,7 +312,6 @@ export function reduce(state: State, action: Action): State {
 		}
 		case "settled": {
 			const item = state.items[action.key];
-			// A session that outlived its item (retracted, or fired again since) has nothing to report to.
 			if (!item || item.attempt !== action.attempt || item.phase.kind !== "running") return state;
 			return settle(state, item, action.outcome);
 		}

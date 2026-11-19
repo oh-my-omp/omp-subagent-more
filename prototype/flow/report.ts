@@ -1,14 +1,10 @@
-// The store's verdict in words: what a state holds and what changed since the caller last saw it.
-// It reports what the store concluded, never the values that were written into it.
 import { stableText } from "./defs.ts";
 import { handlerOf, type Survey } from "./plan.ts";
 import { type Item, markOf, type State } from "./state.ts";
 
-/** One line per box, input and item; two states differ exactly where their marks differ. */
 export type Marks = Readonly<Record<string, string>>;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
-/** The start of a reason; the item's own line carries all of it. */
 const brief = (text: string): string => {
 	const line = oneLine(text);
 	return line.length > 160 ? `${line.slice(0, 160)}…` : line;
@@ -57,7 +53,6 @@ export function marksOf(state: State, survey: Survey): Marks {
 	return marks;
 }
 
-/** The graph the definitions imply: where each box's inputs come from and who answers what it raises. */
 export function wiring(state: State): string[] {
 	return Object.keys(state.boxes)
 		.sort()
@@ -78,7 +73,6 @@ export function wiring(state: State): string[] {
 
 const ordered = (keys: Iterable<string>): string[] => [...keys].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-/** What differs between two sets of marks, one line each. */
 export function delta(before: Marks, after: Marks): string[] {
 	const lines: string[] = [];
 	for (const key of ordered(new Set([...Object.keys(before), ...Object.keys(after)]))) {
@@ -92,7 +86,6 @@ export function delta(before: Marks, after: Marks): string[] {
 	return lines;
 }
 
-/** Where the flow stands and what, if anything, keeps it from going on. */
 export function headline(state: State, survey: Survey): string[] {
 	const count = (kind: Item["phase"]["kind"]): number => Object.values(state.items).filter((item) => item.phase.kind === kind).length;
 	const counts = [

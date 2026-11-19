@@ -1,8 +1,3 @@
-// Scout every child issue of the three trees: the first stage of the flow, run for all issues at
-// once so the plan rests on returned slices/open points/gate gaps instead of guesses.
-//   %load .tmp/lowcost/scout-all.js      → defines globalThis.sc
-// sc.step() starts scouts up to sc.cap and collects finished ones into .tmp/lowcost/scouts/<key>.json.
-// Nothing waits; call sc.step() when a scout result wakes the session.
 (() => {
 	const lc = globalThis.lc;
 	const fl = globalThis.fl;

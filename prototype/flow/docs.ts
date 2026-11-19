@@ -1,4 +1,3 @@
-// What the model is told about the `flow` tool: its purpose, and the topics served at xd://flow/<topic>.
 import * as path from "node:path";
 
 export const DESCRIPTION = `Runs a flow of boxes (fresh subagent sessions and shell commands, wired to each other by name) from one append-only store, and answers every call with the store's verdict. Use it to split work into many small sessions whose results feed later ones. Call it from \`eval\` cells to hand values computed in code (a \`gh\` result, a parsed file) to the flow without retyping them.
@@ -147,7 +146,6 @@ An item records what it ran under: its box, the definition of the box's \`agent\
 
 An item that raised waits for its answer while the rest of the flow goes on. The answer is the result of the box that takes \`<box>!<type>\` as an input, or the value of an \`answer\` call when no box does. A flow that comes to rest with a raise nobody answers reports it as \`raised and unanswered\`; \`answer\` it and \`run\` again.`;
 
-/** The topics of xd://flow, with the helper's path as it is on this machine. */
 export function flowTopics(): Readonly<Record<string, string>> {
 	const helper = path.join(import.meta.dir, "helper.js");
 	return {

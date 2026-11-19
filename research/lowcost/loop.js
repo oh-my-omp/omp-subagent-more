@@ -1,22 +1,3 @@
-// Low-cost issue loop for eval JS cells. Load (and reload at any time) with a cell that is only:
-//   %load .tmp/lowcost/loop.js
-// It defines globalThis.lc.
-//
-// Two things are kept apart, because the eval kernel is a REPL and can also die:
-//   declarations  lc.<function> and lc.specs (briefs, gates, schemas). Reloading this file or an
-//                 item file replaces them; nothing running is touched.
-//   lifecycle     lc.items: one plain-data state per item, mirrored to <dir>/<id>.json, plus the
-//                 append-only <dir>/ledger.jsonl and the item's whiteboard file. Subagents are
-//                 referenced by agent id only, read through output() and messaged through
-//                 agent://<id>, so a new kernel adopts running agents with lc.register().
-// Nothing here waits: lc.step() looks at every item once, reacts to what its agents published
-// and returns. Call it when a subagent result wakes the session.
-//
-// One item = one issue worked in its own checkout with its own whiteboard. A worker yields
-//   {kind:"done", handoff} | {kind:"help", category, question, tried, evidence} | {kind:"blocked", reason, evidence}
-// and each yield is answered to the SAME worker (gate feedback, review findings, a ruling), so it
-// keeps its context. A worker that runs out of bounces is replaced by the next tier of the
-// item's ladder, which starts from the whiteboard. The adjudicator only rules; it never implements.
 (() => {
 	const lc = (globalThis.lc ??= {});
 	lc.specs ??= new Map();
@@ -55,7 +36,6 @@
 		(await lc.fs()).appendFileSync(state.whiteboard, `\n## ${now()} · ${author} · ${section}\n\n${String(text).trim()}\n`);
 	};
 
-	// ── deterministic gates (declarations; each runs in the item's checkout) ──
 	lc.gates = {
 		command: (name, command, options = {}) => ({
 			name,
@@ -123,7 +103,6 @@
 		return { pass, head, gates: results };
 	};
 
-	// ── kernel tools of an item: thin names, bodies looked up on every call ──
 	lc.toolNames = (id) => ({ gate: `gate_${id}`, wb: `wb_${id}` });
 	lc.defineTools = (id) => {
 		const names = lc.toolNames(id);
@@ -151,10 +130,8 @@
 		});
 	};
 
-	// ── protocol ─────────────────────────────────────────────────────────────
 	lc.HELP_CATEGORIES = ["contract_gap", "gate_unclear", "environment", "scope_conflict", "review_dispute"];
-	// One flat object: `kind` selects the shape and the kernel checks the fields of that
-	// kind. Object unions in a tool schema are rejected or rewritten by some providers.
+	// Object unions in a tool schema are rejected or rewritten by some providers.
 	lc.workerSchema = (handoff) => ({
 		type: "object",
 		properties: {
@@ -191,7 +168,6 @@
 		additionalProperties: false,
 	};
 
-	// The protocol itself is the loop:worker-* agent definition (.omp/agents); the brief adds only what differs per item.
 	lc.workerProtocol = (state) => {
 		const names = lc.toolNames(state.id);
 		return [
@@ -224,7 +200,6 @@
 			? { kind: "review", verdicts: value.verdicts, findings: value.findings }
 			: { kind: "failed", reason: `reviewer yielded outside its schema: ${JSON.stringify(value)?.slice(0, 300)}` };
 
-	// ── agents by id: what agent://<id> holds now, or null while it works ─────
 	lc.newRef = (id, extra = {}) => ({ id, since: Date.now(), sawRunning: false, ...extra });
 	lc.outcome = async (ref, classify) => {
 		let entry;
@@ -270,7 +245,6 @@
 		await globalThis.tool.write({ path: `agent://${ref.id}`, content: String(text) });
 	};
 
-	// ── messages back to the worker ──────────────────────────────────────────
 	lc.gateFeedback = (result) =>
 		`The acceptance gates did not pass on ${result.head}, so the assignment is not complete:\n${result.gates.filter((gate) => !gate.pass).map((gate) => `- ${gate.name}: ${gate.detail}`).join("\n")}\n\nFix it, commit, run the gate tool, then yield again. If you cannot find the cause, yield {"kind": "help", "category": "gate_unclear", …}.`;
 	// Only blockers go back: a worker that is also handed the minor findings rewrites code no check asked it to touch.
@@ -281,7 +255,6 @@
 			? `Ruling on your question:\n${ruling.ruling}\n\nWhat to do now:\n${ruling.instruction}\n\nIt is recorded on the whiteboard. Continue the assignment and yield again.`
 			: 'No ruling could be obtained. If you can continue without it, do so; otherwise yield {"kind": "blocked", …}.';
 
-	// ── transitions ──────────────────────────────────────────────────────────
 	lc.spawnWorker = async (id) => {
 		const spec = lc.specs.get(id);
 		const state = lc.items.get(id);
@@ -346,7 +319,6 @@
 		const state = lc.items.get(id);
 		const tier = spec.review.tierFor(state.worker.tier);
 		const since = Date.now();
-		// A follow-up review gets the previous one, so it re-judges what failed and reads only the delta for the rest.
 		const handle = await globalThis.agent(spec.review.brief(state, head, state.reviews.at(-1)), { agent: tier, label: `${id}:review`, schema: lc.reviewSchema, schemaMode: "strict" });
 		state.reviewer = { id: handle.id, tier, head, since, sawRunning: false };
 		state.phase = "reviewing";
@@ -364,7 +336,6 @@
 		if (outcome.kind === "malformed") return lc.send(state.worker, `Your yield was not accepted: ${outcome.reason}. Call \`yield\` again with the complete object.`);
 		if (outcome.kind === "help") {
 			await lc.wb(state, `worker:${tier}`, "HELP", `(${outcome.category}) ${outcome.question}\n\nTried:\n${outcome.tried.map((entry) => `- ${entry}`).join("\n")}\n\nEvidence:\n${outcome.evidence.map((entry) => `- ${entry}`).join("\n")}`);
-			// The orchestrator owns the environment: it restores the kernel tools itself once before a ruling is asked for.
 			if (outcome.category === "environment" && state.envHelps < 1) {
 				state.envHelps += 1;
 				lc.defineTools(id);
@@ -372,7 +343,6 @@
 			}
 			return lc.requestRuling(id, { from: `worker:${tier}`, ...outcome });
 		}
-		// done
 		state.handoff = outcome.handoff;
 		const head = await lc.headOf(state);
 		const reusable = state.passedHead === head && (await lc.dirtyOf(state)) === "";
@@ -422,7 +392,6 @@
 		const open = outcome.findings.filter((finding) => finding.severity === "ruling_needed");
 		const failed = outcome.verdicts.filter((verdict) => verdict.verdict === "fail");
 		const pass = blockers.length === 0 && failed.length === 0 && open.length === 0;
-		// A failed check without a finding cannot be acted on: the worker gets nothing to fix and the adjudicator nothing to rule on.
 		if (failed.length > 0 && blockers.length === 0 && open.length === 0 && !reviewer.resent) {
 			reviewer.resent = true;
 			await lc.note(id, "review_incomplete", { tier: reviewer.tier, failed: failed.map((verdict) => verdict.id) });
@@ -436,7 +405,6 @@
 			state.result = { tier, head: reviewer.head };
 			return lc.note(id, "end", { status: "passed", tier, head: reviewer.head });
 		}
-		// An open point the code decided goes to the adjudicator first; its ruling then reaches the worker together with the review's defects.
 		if (open.length > 0) {
 			state.pendingReview = blockers.length > 0 || failed.length > 0 ? outcome : undefined;
 			return lc.requestRuling(id, {
@@ -455,7 +423,6 @@
 		return lc.nextTier(id, `${tier} did not clear the review in ${state.reviewBounces + 1} rounds`);
 	};
 
-	// ── driving: one look at every item, never a wait ────────────────────────
 	lc.stepItem = async (id) => {
 		const state = lc.items.get(id);
 		try {
@@ -501,7 +468,6 @@
 		return lc.view();
 	};
 
-	/** Declares an item. Its lifecycle state is adopted from disk when it exists, else created. */
 	lc.register = async (spec) => {
 		const fs = await lc.fs();
 		lc.specs.set(spec.id, spec);

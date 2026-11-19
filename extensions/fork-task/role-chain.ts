@@ -1,13 +1,3 @@
-/**
- * One completion over the chat models of OMP model roles, in order: each role's
- * own chain (`modelRoles.<role>`, `retry.fallbackChains.<role>`, then OMP's
- * defaults for a built-in role), resolved from the calling session's live
- * settings at every call so a `/model` change applies to the next request. An
- * unassigned custom role (`omp-subagent-more`) contributes nothing; on-device
- * and native judgment models are skipped. Each model's attempt gets the time
- * left to the deadline divided over the models not yet tried, so a hanging or
- * failing provider costs only its share and the chain moves on.
- */
 import { completeSimple, type Model } from "@oh-my-pi/pi-ai";
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-catalog";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -19,7 +9,6 @@ import { errorText } from "./errors.ts";
 
 type Effort = (typeof THINKING_EFFORTS)[number];
 
-/** Effort used when a role entry has no `:level` suffix. */
 export const MEDIUM_EFFORT: Effort =
 	THINKING_EFFORTS.find((effort) => effort === "medium") ??
 	(() => {
@@ -28,7 +17,6 @@ export const MEDIUM_EFFORT: Effort =
 type Level = "off" | Effort;
 type Candidate = { readonly model: Model; readonly level: Level | undefined };
 
-/** Outcome of one pass over the chain; `failures` holds one `provider/id: reason` line per model that failed. */
 export type ChainReply =
 	| { readonly kind: "text"; readonly text: string; readonly model: string; readonly failures: readonly string[] }
 	| { readonly kind: "no-model" }
@@ -38,7 +26,6 @@ export type ChainReply =
 
 const label = (model: Model): string => `${model.provider}/${model.id}`;
 
-/** Text blocks of an assistant reply's content, joined; thinking and tool calls are dropped. */
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -71,10 +58,6 @@ function candidates(ctx: ExtensionContext, roles: readonly string[]): Candidate[
 	return out;
 }
 
-/**
- * Asks the models of `roles` in order until one answers with `stopReason: "stop"`;
- * a reply cut off by `length` or ending in `toolUse` is a failed attempt.
- */
 export async function completeRoles(
 	ctx: ExtensionContext,
 	roles: readonly string[],

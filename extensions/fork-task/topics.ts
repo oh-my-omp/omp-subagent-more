@@ -1,8 +1,3 @@
-// fork_task's call instructions kept out of its description, served by its `docTopics()` as
-// xd://fork_task/<topic> and pointed to by the last lines of that description.
-// Host modules these topics describe, read from the current published pi-coding-agent release; re-check them when that release changes.
-// src/task/index.ts, src/task/settings.ts, src/task/discovery.ts, src/task/isolation-runner.ts, src/task/worktree.ts, src/task/types.ts, src/task/steps.ts, src/eval/js/tool-bridge.ts, src/thread/subagent-worker.ts.
-
 interface Topic {
 	readonly name: string;
 	readonly when: string;
@@ -46,13 +41,11 @@ const TOPICS: readonly Topic[] = [
 	},
 ];
 
-/** The pointer lines that end fork_task's description. */
 export const TOPIC_POINTERS = [
 	"Topics — read the one a call needs before making it:",
 	...TOPICS.map((topic) => `- \`xd://fork_task/${topic.name}\` — ${topic.when}`),
 ].join("\n");
 
-/** fork_task's `docTopics()`: topic name → body. */
 export function forkTaskTopics(): Readonly<Record<string, string>> {
 	return Object.fromEntries(TOPICS.map((topic) => [topic.name, topic.body]));
 }

@@ -1,21 +1,5 @@
-/**
- * report-limit: a `tool_call` check on `fork_task`, in every session. Items whose
- * `agent` is `task:*` or omitted are judged; the question is whether the shared
- * `context` or the item's `task` caps the length of the report the worker
- * returns. Items are judged concurrently, one model request each, under one
- * 25 s deadline (below the harness's 30 s `tool_call` handler timeout). Any
- * flagged item blocks the whole call with one reason naming the flagged items.
- *
- * Only `clear` verdicts are remembered (per process, keyed by sha256 over the
- * trimmed context and task), so a flagged dispatch resent unchanged is judged
- * and blocked again. No model, a failed or timed-out request, or an answer that
- * does not parse is `unknown`: it is logged and lets the call run. Every call
- * that judged at least one item logs one `omp-subagent-more report-limit verdicts`
- * line with each item's verdict.
- */
 import { z } from "@oh-my-pi/pi-coding-agent";
 
-/** Log message of the per-call verdict line, named after this plugin so it is not mistaken for another check's verdicts. */
 export const VERDICTS_LOG = "omp-subagent-more report-limit verdicts";
 
 export const DEADLINE_MS = 25_000;
@@ -26,7 +10,6 @@ type Item = z.infer<typeof itemSchema>;
 
 export type Verdict = { readonly kind: "flagged" } | { readonly kind: "clear" } | { readonly kind: "unknown"; readonly why: string };
 
-/** A model answer to the question, or why none came back. */
 export type Answer = { readonly kind: "text"; readonly text: string } | { readonly kind: "failed"; readonly why: string };
 
 export const SYSTEM_PROMPT = [
@@ -44,7 +27,6 @@ export const SYSTEM_PROMPT = [
 export const renderPrompt = (context: string | undefined, task: string): string =>
 	["<shared-context>", context?.trim() || "(none)", "</shared-context>", "<assignment>", task.trim(), "</assignment>"].join("\n");
 
-/** Length-framed sha256 over the trimmed fragments `renderPrompt` joins, so fragment boundaries cannot collide. */
 export function digest(context: string | undefined, task: string): string {
 	const contextText = context?.trim() || "(none)";
 	const taskText = task.trim();
@@ -67,10 +49,8 @@ export const blockReason = (labels: string): string =>
 
 export type Log = (message: string, data: Record<string, unknown>) => void;
 
-/** The model call, for one rendered prompt; `signal` aborts at the shared deadline `deadlineAt` (epoch ms). */
 export type Ask = (systemPrompt: string, prompt: string, signal: AbortSignal, deadlineAt: number) => Promise<Answer>;
 
-/** One process's check: `inspect` returns the block reason, or null to let the call run. */
 export function createReportLimit(log: { info: Log; warn: Log }) {
 	const cleared = new Set<string>();
 
@@ -97,7 +77,6 @@ export function createReportLimit(log: { info: Log; warn: Log }) {
 			const call = callSchema.safeParse(input);
 			if (!call.success) return null;
 			const { context, tasks } = call.data;
-			// Task-series workers, and forks that keep the source's agent.
 			const judged = tasks.flatMap((item, index) =>
 				item.agent === undefined || item.agent.startsWith("task:") ? [{ item, label: `\`${item.name ?? `item ${index + 1}`}\`` }] : [],
 			);

@@ -1,7 +1,3 @@
-/**
- * The staging rewrite: the forked transcript loses the parent's runtime state
- * before the child opens it. Pure file transformation, no OMP state.
- */
 import * as fs from "node:fs/promises";
 import { z } from "@oh-my-pi/pi-coding-agent";
 
@@ -20,7 +16,6 @@ const sessionEntrySchema = z
 	.passthrough();
 type SessionEntryRecord = z.infer<typeof sessionEntrySchema>;
 
-/** Parent runtime state that must not seed the child's own contract. */
 const RUNTIME_STATE_TYPES: Record<string, true> = {
 	session_init: true,
 	model_change: true,
@@ -30,16 +25,9 @@ const RUNTIME_STATE_TYPES: Record<string, true> = {
 
 const SESSION_EXIT_CUSTOM_TYPE = "session_exit";
 
-/** Rewrite output buffered before each chunk write, so a staged file is never held whole. */
 const FLUSH_CHARS = 1 << 18;
-/** Bytes read per batch by the staging rewrite. */
 const CHUNK_BYTES = 1 << 22;
 
-/**
- * A UTF-8 file's lines as byte-sized batches: a rewrite visits every line while
- * holding only one batch, and a multi-byte character split across reads is
- * carried into the next batch.
- */
 async function* readLineBatches(handle: fs.FileHandle, bytes = CHUNK_BYTES): AsyncGenerator<string[]> {
 	const buffer = Buffer.allocUnsafe(bytes);
 	const decoder = new TextDecoder();
@@ -56,15 +44,6 @@ async function* readLineBatches(handle: fs.FileHandle, bytes = CHUNK_BYTES): Asy
 	if (carry.length > 0) yield [carry];
 }
 
-/**
- * Rewrite the staged JSONL: drop parent runtime state and the shake helper's
- * bookkeeping, re-parent what depended on dropped entries, and set the header
- * cwd the child must bind to. One pass, one record at a time: a JSONL session
- * appends an entry after the entries it references, so a dropped entry is
- * known before the rewrite reaches a `parentId` or `firstKeptEntryId` that
- * names it. `preShakeIds` is undefined when no shake ran: nothing was added
- * to drop then.
- */
 export async function finalizeStaging(
 	file: string,
 	options: { cwd: string; isolated: boolean; preShakeIds: ReadonlySet<string> | undefined },
@@ -75,7 +54,6 @@ export async function finalizeStaging(
 	try {
 		target = await fs.open(temp, "w");
 	} catch (error) {
-		// The rewrite never starts; release the reader without masking the open failure.
 		await source.close().catch(() => {});
 		throw error;
 	}
@@ -87,7 +65,6 @@ export async function finalizeStaging(
 		chunk.length = 0;
 		chunkLength = 0;
 		let written = 0;
-		// A short write keeps its own cursor; loop so a chunk is never half written.
 		while (written < bytes.length) {
 			const { bytesWritten } = await target.write(bytes, written, bytes.length - written);
 			if (bytesWritten === 0) throw new Error(`fork_task: writing ${temp} made no progress`);
@@ -138,7 +115,6 @@ export async function finalizeStaging(
 					pendingDropped.push(entry.id);
 					continue;
 				}
-				// `firstKeptEntryId` may name a dropped entry: move it to the next surviving entry.
 				for (const id of pendingDropped) nextSurviving.set(id, entry.id);
 				pendingDropped = [];
 				const next: SessionEntryRecord = { ...entry };
@@ -155,7 +131,6 @@ export async function finalizeStaging(
 	} catch (error) {
 		failure = error;
 	}
-	// Close both handles whatever happened; a close failure never hides the rewrite's own error.
 	for (const handle of [target, source]) {
 		try {
 			await handle.close();

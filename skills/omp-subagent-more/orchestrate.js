@@ -1,19 +1,3 @@
-// omp-subagent-more orchestration for eval JS cells. Load with a cell that is only:
-//   %load skill://omp-subagent-more/orchestrate.js
-// It defines globalThis.orchestrate; usage is in skill://omp-subagent-more.
-//
-// Each item is a pipeline of stages; each stage is one subagent from the eval
-// prelude's agent(). The subagent yields one of two shapes, validated by OMP's
-// yield (strict schema): {kind:"done", data} or {kind:"needs_input", question,
-// options?}. A failure (cancelled, schema exhausted, yield error) is the third
-// outcome. drive() advances every item until all are settled or a new
-// needs_input appears, and returns with no bridge call outstanding. answer()
-// sends text to the same subagent, which continues in its own session.
-//
-// Outcome sources: a stage's first outcome comes from its handle (status, then
-// wait on a settled handle). After an answer, or once OMP evicted the handle's
-// job (`result expired`), the outcome is read from agent://<id>: the handle
-// keeps the first result forever, so it cannot show what came after.
 (() => {
 	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -48,7 +32,6 @@
 	const taskText = (context, stage) =>
 		[context ? `${context.trim()}\n` : "", stage.task.trim(), "", PROTOCOL].filter((part, i) => i > 0 || part).join("\n");
 
-	/** A yield value as the protocol's outcome, or a failure naming what arrived. */
 	const classify = (value) => {
 		if (value && typeof value === "object" && value.kind === "done" && "data" in value) return { kind: "done", data: value.data };
 		if (value && typeof value === "object" && value.kind === "needs_input" && typeof value.question === "string") {
@@ -59,11 +42,9 @@
 
 	const isExpired = (error) => /result expired/.test(String(error?.message ?? error));
 
-	/** The outcome OMP's agent://<id> holds now, or null while the stage is still working toward one. */
 	async function publishedOutcome(id, since, watch) {
 		const entry = await globalThis.output(id, { format: "json" });
 		if (entry.path.startsWith("agent://")) {
-			// No current output file: a superseded previous run, or the progress view of an unpublished one.
 			if (/is running a newer turn/.test(entry.content)) {
 				watch.sawRunning = true;
 				return null;
@@ -77,7 +58,6 @@
 			if (watch.sawRunning) return { kind: "failed", reason: `agent ${id} stopped (${status}) without publishing a result` };
 			return null;
 		}
-		// %load runs this file as a cell script, which has no static imports.
 		const fs = await import("node:fs/promises");
 		const published = (await fs.stat(entry.path)).mtimeMs;
 		if (published <= since) {
@@ -88,7 +68,6 @@
 		try {
 			value = JSON.parse(await fs.readFile(sidecar, "utf8"));
 		} catch {
-			// No or partial sidecar: the output file itself holds the yield.
 			try {
 				value = JSON.parse(entry.content);
 			} catch {
@@ -98,7 +77,6 @@
 		return classify(value);
 	}
 
-	/** The first outcome of a running stage from its handle, or null while it runs. */
 	async function handleOutcome(item) {
 		const run = item.run;
 		let status;
@@ -117,7 +95,6 @@
 	function orchestrate(spec) {
 		if (!spec || !Array.isArray(spec.items) || spec.items.length === 0)
 			throw new TypeError("orchestrate({ items: [...] }) needs at least one item");
-		// How long drive() sleeps between rounds in which nothing settled.
 		const pollMs = spec.pollMs ?? 1000;
 		const ids = new Set();
 		const items = spec.items.map((raw) => {
@@ -137,7 +114,6 @@
 			const options = { schema: protocolSchema(stage.data), schemaMode: "strict", label: `${item.id}.${item.stage + 1}` };
 			if (stage.agent !== undefined) options.agent = stage.agent;
 			if (stage.isolated !== undefined) options.isolated = stage.isolated;
-			// agent() returns a thenable that resolves to the handle once OMP allocated the subagent.
 			const pending = globalThis.agent(taskText(spec.context, stage), options);
 			item.run = {
 				pending,
@@ -151,7 +127,6 @@
 			item.state = { kind: "running" };
 		};
 
-		/** Applies a settled stage outcome; returns true when it is a new needs_input. */
 		const settle = (item, outcome) => {
 			switch (outcome.kind) {
 				case "done":

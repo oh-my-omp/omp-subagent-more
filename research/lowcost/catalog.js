@@ -1,12 +1,6 @@
-// Acceptance rows of every issue, parsed from the fetched bodies (/tmp/ghc/<key>/body.md).
-//   %load .tmp/lowcost/catalog.js   → defines globalThis.rebuildCatalog()
-// rebuildCatalog() keeps each entry's root/ref/title/form from catalog.json and replaces its rows.
-// A row's Env or Command may refer to another row (同上, 同第 N 行); the reference is resolved before
-// the row is classified, so a row that says "same as row 1" is classified like row 1.
 (() => {
 	const FILE = "<omomp>/omp-config/.tmp/lowcost/catalog.json";
 	const key = (ref) => ref.replace("/", "-").replace("#", "-");
-	// GFM: a pipe inside a cell is written `\|`.
 	const cells = (line) =>
 		line
 			.replace(/^\s*\|/, "")
@@ -51,7 +45,6 @@
 			const text = `${row.commandFull} ${row.envFull}`;
 			row.where = WINDOWS.test(text) ? "windows" : TERN.test(text) ? "tern" : SANDBOX.test(text) ? "sandbox" : "local";
 			row.mode = INTERACTIVE.test(text) ? "interactive" : "command";
-			// literal: the cell is code spans only, or refers to another row's command; prose: steps an executor has to turn into commands.
 			const outsideCode = row.command.replace(/`[^`]*`/g, "");
 			row.exec = /^同(上|第)/.test(row.command.trim()) || (/`/.test(row.command) && !/[\u4e00-\u9fff]/.test(outsideCode)) ? "literal" : "prose";
 		}
