@@ -23,7 +23,7 @@
   - 拒绝代码 — 功能：派发前以带代码的原因拒绝整次调用（`child-not-isolated`、`source-not-isolated`、`source-running`、`source-handed-back`、`nested-repo`、`overlay-conflict`）；迟到的 `overlay-conflict` 让子代理在第一次模型调用前停下。时机：暂存阶段；迟到冲突在子代理第一轮。实例：`workspace "source" rejected (source-running)`。
   - 工作区起点记录 — 功能：记录每个隔离子代理的工作区起点，供之后读取继承的改动。时机：每份子代理对话第一次 `before_agent_start`。实例：`<tmp>/omp-fork-task/starts/<pid>/`。
 - **Topic**
-  - `xd://fork_task/limits` — 功能：列出前提、不支持的字段、源错误和 `workspace "source"` 拒绝表。时机：模型读取时；工具说明最后几行指向它。实例：``Not fork fields: `solutionSpace`, `sourceSession`, `model`, `tools`.``
+  - `xd://fork_task/limits` — 功能：列出前提、不支持的字段、源错误和 `workspace "source"` 拒绝表。时机：模型读取时；工具说明最后几行指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
   - `xd://fork_task/batch` — 功能：说明如何从 eval 按模板批量分叉。时机：模型读取时。实例：在 eval 单元里 `await tool.fork_task(...)`；结果送达对话而不是单元。
 - **报告长度检查**
   - 报告长度判定 — 功能：共享 `context` 或条目 `task`（`agent` 为 `task:*` 或省略的条目）限制了 worker 报告长度时拦下 `fork_task` 调用，每个条目问模型一个问题，总时限 25 秒。时机：每次 `fork_task` 的 `tool_call`，执行之前。实例：拦截原因 ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``。
