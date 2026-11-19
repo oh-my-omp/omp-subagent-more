@@ -6,6 +6,12 @@
 
 - `xd://fork_task/limits` lists `steps` among the host `task` fields a fork item does not take: a host item takes `steps` in place of `task`, and a fork item takes one `task`.
 
+## [0.1.1] - 2026-11-19
+
+### Changed
+
+- Updated the shared copy of `i18n.ts` to oh-my-omp/shared@33dbe00.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added

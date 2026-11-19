@@ -129,10 +129,10 @@ import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discove
 import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents, cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/tools/todo";
+import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-shared/context-delta.ts";
+import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
-import { createDeltaStream, type Delta, type DeltaStream } from "./context-delta.ts";
 import { errorText } from "./errors.ts";
-import { tr } from "./i18n.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -1021,7 +1021,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 		warn,
 		pending: [],
 		cloned: new WeakMap(),
-		deltas: createDeltaStream(pi, "fork-task"),
+		deltas: createDeltaStream("omp-subagent-more/fork-task"),
 		started: new Set(),
 	};
 
@@ -1030,6 +1030,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 	pi.on("tool_result", toolResult.bind(null, rt));
 	pi.on("session_start", sessionStart.bind(null, rt));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
+	pi.on("turn_start", () => rt.deltas.turnStarted());
 	const reportLimit = createReportLimit({
 		info: (message, data) => pi.logger.info(message, data),
 		warn: (message, data) => pi.logger.warn(message, data),

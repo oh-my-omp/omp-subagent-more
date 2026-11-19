@@ -46,7 +46,6 @@ import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
 import { callerSession } from "../../extensions/fork-task/caller-session.ts";
 import { errorText } from "../../extensions/fork-task/errors.ts";
-import { tr } from "../../extensions/fork-task/i18n.ts";
 import {
 	applyOverlay,
 	headerCwd,
@@ -59,6 +58,7 @@ import {
 	recordStart,
 	writeOverlay,
 } from "../../extensions/fork-task/workspace.ts";
+import { tr } from "../../omomp-shared/i18n.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics } from "./docs.ts";
 import { appendLog, readLog } from "./journal.ts";
