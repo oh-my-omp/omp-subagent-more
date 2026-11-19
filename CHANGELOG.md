@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `xd://fork_task/limits` lists `steps` among the host `task` fields a fork item does not take: a host item takes `steps` in place of `task`, and a fork item takes one `task`.
+
 ## [0.1.1] - 2026-11-19
 
 ### Changed
