@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Migrated `fork_task` tool documentation topic pointers from `xd://fork_task/*` to `help://fork_task/*` and removed the outdated `write xd://yield` note from the fork `yield` instruction for omp 19.1.0 compatibility
 - Updated the shared copy of `context-delta.ts` to oh-my-omp/shared@3d09cd4.
 - A fork child's id is allocated from the requested `name` the way `task` allocates it: `Probe`, then `Probe-2` when an earlier agent of the session holds `Probe`, without the four-character suffix; an omitted `name` gets a generated name instead of `Fork_…` ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
 - Every request of a fork child declares exactly the source's tools, also when the child runs another model or the source declares no `eval`; the child's own tools are no longer appended to the declaration ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))

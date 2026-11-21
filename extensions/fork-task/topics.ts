@@ -43,7 +43,7 @@ const TOPICS: readonly Topic[] = [
 
 export const TOPIC_POINTERS = [
 	"Topics — read the one a call needs before making it:",
-	...TOPICS.map((topic) => `- \`xd://fork_task/${topic.name}\` — ${topic.when}`),
+	...TOPICS.map((topic) => `- \`help://fork_task/${topic.name}\` — ${topic.when}`),
 ].join("\n");
 
 export function forkTaskTopics(): Readonly<Record<string, string>> {

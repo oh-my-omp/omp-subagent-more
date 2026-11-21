@@ -103,7 +103,7 @@ const itemSchema = z.object({
 		.enum(["caller", "source"])
 		.optional()
 		.describe(
-			"Where the child's workspace starts. `caller` (default): your checkout only, even when `from` names an agent with an isolated workspace of its own. `source`: an isolated copy of your checkout with the uncommitted changes the `from` agent made in its own isolated workspace applied before the child's first turn, handed back with the child's changes; it sets `isolated` to true and needs a stopped `from` agent whose run has not handed its changes back, otherwise the call fails before dispatch (`xd://fork_task/limits`).",
+			"Where the child's workspace starts. `caller` (default): your checkout only, even when `from` names an agent with an isolated workspace of its own. `source`: an isolated copy of your checkout with the uncommitted changes the `from` agent made in its own isolated workspace applied before the child's first turn, handed back with the child's changes; it sets `isolated` to true and needs a stopped `from` agent whose run has not handed its changes back, otherwise the call fails before dispatch (`help://fork_task/limits`).",
 		),
 	shake: z
 		.boolean()
@@ -542,7 +542,7 @@ const YIELD_DECLARED =
 	"You deliver your result with the `yield` tool. The `yield` declared to you is the parent's, kept identical to the parent's request to keep its prompt cache; the one registered in this session takes the parameters below.";
 
 const YIELD_CALL =
-	'Emit it as a function call of its own, exactly like a call to `read` or `bash`: name `yield`, arguments `{"data": <your result>}`, or `{"error": "<why>"}` when you cannot finish. Only that call ends your run. Through `eval` (`tool.yield`) it is rejected, and `write xd://yield` is accepted without ending the run.';
+	'Emit it as a function call of its own, exactly like a call to `read` or `bash`: name `yield`, arguments `{"data": <your result>}`, or `{"error": "<why>"}` when you cannot finish. Only that call ends your run. Through `eval` (`tool.yield`) it is rejected.';
 
 function yieldDelta(ownYield: OwnYield | undefined): Delta {
 	if (!ownYield) return { kind: "none" };
