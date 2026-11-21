@@ -1,14 +1,8 @@
-import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { z } from "@oh-my-pi/pi-coding-agent";
 import type { PortableSource, Replica } from "./replica.ts";
-
-export const STAGING_ROOT = path.join(os.tmpdir(), "omp-fork-task");
-
-export type PortableReplica = Omit<Replica, "ask">;
 
 const requestSchema = z.object({
 	model: z.object({ provider: z.string(), id: z.string() }).passthrough(),
@@ -49,21 +43,21 @@ const portableSourceSchema = z.object({
 	cwd: z.string(),
 });
 
-export function replicasRoot(): string {
-	return path.join(STAGING_ROOT, "replicas", String(process.pid));
+export function sessionArtifactsDir(sessionFile: string): string {
+	if (!sessionFile.endsWith(".jsonl")) throw new Error(`fork_task: ${sessionFile} is not a session transcript`);
+	return sessionFile.slice(0, -".jsonl".length);
 }
 
 export function replicaFilePath(childFile: string): string {
-	return path.join(replicasRoot(), `${createHash("sha256").update(childFile).digest("hex")}.json`);
+	return path.join(sessionArtifactsDir(childFile), "fork-task.replica.json");
 }
 
 export async function writeReplicaFile(file: string, replica: Replica): Promise<void> {
-	const { ask: _live, ...portable } = replica;
 	await fs.mkdir(path.dirname(file), { recursive: true });
-	await fs.writeFile(file, JSON.stringify(portable));
+	await fs.writeFile(file, JSON.stringify(replica));
 }
 
-export async function readReplicaFile(file: string): Promise<PortableReplica | undefined> {
+export async function readReplicaFile(file: string): Promise<Replica | undefined> {
 	const text = await readOptional(file);
 	if (text === undefined) return undefined;
 	const { request, replay, ...rest } = portableSchema.parse(JSON.parse(text));
@@ -74,12 +68,8 @@ export async function readReplicaFile(file: string): Promise<PortableReplica | u
 	};
 }
 
-export function parkedRoot(): string {
-	return path.join(STAGING_ROOT, "parked", String(process.pid));
-}
-
 export function parkedFilePath(sessionFile: string): string {
-	return path.join(parkedRoot(), `${createHash("sha256").update(sessionFile).digest("hex")}.json`);
+	return path.join(sessionArtifactsDir(sessionFile), "fork-task.request.json");
 }
 
 export function parsePortableSource(value: unknown): PortableSource {

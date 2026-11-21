@@ -31,10 +31,9 @@ export type SourceRequest = {
 	readonly systemPrompt: readonly string[];
 	readonly toolNames: readonly string[];
 	readonly thinkingLevel: AgentSession["thinkingLevel"];
-	readonly ask: AgentTool | undefined;
 };
 
-export type PortableSource = Omit<SourceRequest, "ask"> & { readonly cwd: string };
+export type PortableSource = SourceRequest & { readonly cwd: string };
 
 export type ParkedRequest = PortableSource & { readonly response: number };
 
@@ -148,7 +147,6 @@ export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
 	readonly toolNames: readonly string[];
-	readonly ask: AgentTool | undefined;
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -167,7 +165,6 @@ export function liveRequest(session: AgentSession): SourceRequestResult {
 			systemPrompt: [...session.systemPrompt],
 			toolNames: session.agent.state.tools.map((tool) => tool.name),
 			thinkingLevel: session.thinkingLevel,
-			ask: session.getToolByName("ask"),
 		},
 	};
 }
@@ -179,21 +176,16 @@ export async function shareSource(file: string): Promise<SharedSource | undefine
 	if (live.kind === "unavailable") return live;
 	await session.sessionManager.ensureOnDisk();
 	await session.sessionManager.flush();
-	const { ask: _live, ...source } = live.source;
-	return { kind: "ready", source: { ...source, cwd: session.sessionManager.getCwd() } };
+	return { kind: "ready", source: { ...live.source, cwd: session.sessionManager.getCwd() } };
 }
 
-export function captureReplica(
-	source: SourceRequest,
-	options: { readonly inheritReasoning: boolean; readonly caller: AgentSession },
-): Capture {
+export function captureReplica(source: SourceRequest, options: { readonly inheritReasoning: boolean }): Capture {
 	const { request, toolNames, thinkingLevel: level } = source;
 	return {
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
 		toolNames,
-		ask: toolNames.includes("ask") ? (options.caller.getToolByName("ask") ?? source.ask) : undefined,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};
@@ -299,8 +291,7 @@ type WireTools = { readonly tools: Tool[] | undefined; readonly toolChoice: Tool
 function wireTools(source: Tool[] | undefined, current: Context, onSourceModel: boolean, choice: ToolChoice | undefined): WireTools {
 	const names = new Set(source?.map((tool) => tool.name));
 	const own = current.tools?.filter((tool) => !names.has(tool.name)) ?? [];
-	if (own.length === 0) return { tools: source, toolChoice: choice };
-	if (!onSourceModel || !names.has(BRIDGE_TOOL)) return { tools: [...(source ?? []), ...own], toolChoice: choice };
+	if (own.length === 0 || !onSourceModel || !names.has(BRIDGE_TOOL)) return { tools: source, toolChoice: choice };
 	const forced = forcedToolName(choice);
 	const forcesOwn = choice !== undefined && typeof choice !== "string" && own.some((tool) => tool.name === forced);
 	return { tools: source, toolChoice: forcesOwn ? forceTool(choice, BRIDGE_TOOL) : choice };
@@ -319,24 +310,12 @@ function replicateContext(session: AgentSession, replica: Replica, current: Cont
 export type OwnYield = { readonly tool: AgentTool; readonly sourceModel: ModelKey };
 
 export function applyReplica(session: AgentSession, replica: Replica): OwnYield | undefined {
-	const own = new Map(session.agent.state.tools.map((tool) => [tool.name, tool]));
 	const names = new Set(replica.toolNames);
-	const tools = replica.toolNames.map((name) => {
-		const local = own.get(name) ?? session.getToolByName(name);
-		if (local) return local;
-		// Never fabricate a same-schema tool that always returns an error.
-		if (name === "ask" && replica.ask) return replica.ask;
-		throw new Error(`fork_task: cannot clone source tool \`${name}\` into this child`);
-	});
-	// Only completion extends the source's capability surface. Do not expose
-	// other tools admitted by the unrestricted internal agent definition.
-	const yieldTool = own.get("yield") ?? session.getToolByName("yield");
+	const yieldTool = session.agent.state.tools.find((tool) => tool.name === "yield");
 	const ownYield = yieldTool && !names.has("yield") ? yieldTool : undefined;
-	if (ownYield) tools.push(ownYield);
 	const systemPrompt = [...replica.systemPrompt];
 	const detach = session.agent.addBeforeModelCallHook(() => {
 		session.agent.setSystemPrompt(systemPrompt);
-		session.agent.setTools(tools);
 	});
 	session.addDisposer(detach);
 

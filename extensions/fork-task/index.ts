@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import {
 	type AgentDefinition,
 	type AgentSession,
@@ -20,7 +19,6 @@ import {
 	type ExtensionContext,
 	SessionManager,
 	type SessionShutdownEvent,
-	type SessionStartEvent,
 	type TaskItem,
 	type ToolDefinition,
 	type ToolResultEvent,
@@ -30,6 +28,7 @@ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
+import { generateTaskName, sanitizeAgentId } from "@oh-my-pi/pi-coding-agent/task/name-generator";
 import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents, cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/tools/todo";
@@ -51,24 +50,14 @@ import {
 	type SourceRequest,
 	sameModel,
 } from "./replica.ts";
-import { parkedRoot, readReplicaFile, replicaFilePath, replicasRoot, STAGING_ROOT, writeReplicaFile } from "./replica-file.ts";
+import { readReplicaFile, replicaFilePath, writeReplicaFile } from "./replica-file.ts";
 import { createReportLimit } from "./report-limit.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
-import { sweepDeadProcessDirs } from "./sweep.ts";
 import { forkTaskTopics, TOPIC_POINTERS } from "./topics.ts";
-import {
-	applyOverlay,
-	type Inheritance,
-	inheritSourceWorkspace,
-	overlaysRoot,
-	recordStart,
-	rejection,
-	startsRoot,
-	writeOverlay,
-} from "./workspace.ts";
+import { applyOverlay, type Inheritance, inheritSourceWorkspace, recordStart, rejection, writeOverlay } from "./workspace.ts";
 
 const itemSchema = z.object({
 	from: z
@@ -81,7 +70,7 @@ const itemSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			"Requested child name: kept characters `[A-Za-z0-9_-]`, truncated to 40, plus a short unique suffix, so the returned id differs. Omit for `Fork` plus the suffix; use the returned id for follow-ups.",
+			"Requested child name, unique within the call: kept characters `[A-Za-z0-9_-]`, truncated to 48. The child's id is allocated from it as for `task`, with `-2`, `-3`, … appended when an earlier agent of this session holds it. Omit for a generated name; use the returned id for follow-ups.",
 		),
 	agent: z
 		.string()
@@ -221,8 +210,6 @@ const forkNotice = (source: ForkSource, parentCwd: string, isolated: boolean, in
 
 const FORK_AGENT = "fork:self";
 
-const replicaAsks = new Map<string, AgentTool>();
-
 type PendingFork = {
 	readonly name: string;
 	readonly artifactsDir: string;
@@ -238,18 +225,21 @@ type StagedFork = {
 	readonly shakeSummary?: string;
 };
 
-async function portableReplica(childFile: string): Promise<Replica | undefined> {
-	const copy = await readReplicaFile(replicaFilePath(childFile));
-	if (!copy) return undefined;
-	return { ...copy, ask: replicaAsks.get(childFile) };
+function allocatedFrom(id: string, name: string): boolean {
+	return (/^\d+$/.test(name) ? [name, `Agent${name}`] : [name]).some((base) => {
+		if (id === base) return true;
+		const suffix = id.startsWith(`${base}-`) ? id.slice(base.length + 1) : "";
+		return /^[1-9]\d*$/.test(suffix);
+	});
 }
 
-function sanitizeName(value: string | undefined): string | undefined {
-	const sanitized = value
-		?.trim()
-		.replace(/[^A-Za-z0-9_-]+/g, "")
-		.slice(0, 40);
-	return sanitized || undefined;
+function claimsName(pending: readonly PendingFork[], artifactsDir: string, name: string): boolean {
+	const lower = name.toLowerCase();
+	return pending.some(
+		(entry) =>
+			entry.artifactsDir === artifactsDir &&
+			(allocatedFrom(entry.name.toLowerCase(), lower) || allocatedFrom(lower, entry.name.toLowerCase())),
+	);
 }
 
 async function moveFile(from: string, to: string): Promise<void> {
@@ -274,13 +264,14 @@ function lastResponse(manager: SessionManager): number | undefined {
 async function stageFork(
 	ctx: ExtensionContext,
 	parent: AgentSession,
+	artifactsDir: string,
 	source: ForkSource,
 	shake: boolean,
 	isolated: boolean,
 	inherited: boolean,
 ): Promise<StagedFork> {
 	const parentCwd = parent.sessionManager.getCwd();
-	const stagingDir = path.join(STAGING_ROOT, randomUUID());
+	const stagingDir = path.join(artifactsDir, ".fork-task-staging", randomUUID());
 	const staging = path.join(stagingDir, "fork.jsonl");
 	await fs.mkdir(stagingDir, { recursive: true });
 	try {
@@ -371,7 +362,7 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 	if (ref.session === parent || ref.sessionFile === parentFile) return caller();
 	const parked = (id: string, file: string, kept: ParkedRequest): SourceResolution => {
 		const { cwd, ...request } = kept;
-		return { kind: "parked", id, request: { ...request, ask: undefined }, file, cwd };
+		return { kind: "parked", id, request, file, cwd };
 	};
 	const session = ref.session;
 	if (!session) {
@@ -403,7 +394,7 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 	}
 	if (shared.kind === "unavailable") return { kind: "error", message: `cannot replicate the source's request: ${shared.reason}` };
 	const { cwd, ...request } = shared.source;
-	return { kind: "agent", id: ref.id, request: { ...request, ask: undefined }, file, cwd };
+	return { kind: "agent", id: ref.id, request, file, cwd };
 }
 
 type RoleResolution =
@@ -483,7 +474,12 @@ type ForkTaskRuntime = {
 async function discardPending(rt: ForkTaskRuntime, entry: PendingFork): Promise<void> {
 	const index = rt.pending.indexOf(entry);
 	if (index !== -1) rt.pending.splice(index, 1);
-	await fs.rm(path.dirname(entry.staging), { recursive: true, force: true });
+	const stagingDir = path.dirname(entry.staging);
+	await fs.rm(stagingDir, { recursive: true, force: true });
+	await fs.rmdir(path.dirname(stagingDir)).catch((error: unknown) => {
+		if (error instanceof Error && "code" in error && (error.code === "ENOTEMPTY" || error.code === "ENOENT")) return;
+		throw error;
+	});
 }
 
 async function beforeSubagentSpawn(
@@ -491,13 +487,13 @@ async function beforeSubagentSpawn(
 	event: BeforeSubagentSpawnEvent,
 	ctx: ExtensionContext,
 ): Promise<BeforeSubagentSpawnEventResult | undefined> {
-	if (event.invocationKind !== "task" || !event.spawnKey) return;
-	const parentFile = ctx.sessionManager.getSessionFile();
-	if (!parentFile) return;
-	const artifactsDir = parentFile.slice(0, -".jsonl".length);
+	if (event.invocationKind !== "task" || event.agent !== FORK_AGENT || !event.spawnKey) return;
+	const artifactsDir = ctx.sessionManager.getArtifactsDir();
+	if (!artifactsDir) return;
 	const spawnKey = event.spawnKey;
 	const segment = spawnKey.slice(spawnKey.lastIndexOf(".") + 1);
-	const entry = rt.pending.find((p) => p.artifactsDir === artifactsDir && p.name === segment);
+	const forks = rt.pending.filter((p) => p.artifactsDir === artifactsDir);
+	const entry = forks.find((p) => p.name === segment) ?? forks.find((p) => allocatedFrom(segment, p.name));
 	if (!entry) return;
 	const target = path.join(artifactsDir, `${spawnKey}.jsonl`);
 	try {
@@ -513,7 +509,6 @@ async function beforeSubagentSpawn(
 		await moveFile(entry.staging, target);
 		await discardPending(rt, entry);
 		await writeReplicaFile(replicaFilePath(target), entry.replica);
-		if (entry.replica.ask) replicaAsks.set(target, entry.replica.ask);
 		if (entry.overlay) await writeOverlay(target, entry.overlay);
 		return entry.model === undefined ? undefined : { model: entry.model };
 	} catch (error) {
@@ -596,7 +591,7 @@ async function beforeAgentStart(
 	}
 	try {
 		observeRequests(session, rt.warn);
-		const replica = file ? await portableReplica(file) : undefined;
+		const replica = file ? await readReplicaFile(replicaFilePath(file)) : undefined;
 		if (!replica) {
 			if (ctx.agent.name === FORK_AGENT) {
 				throw new Error("the fork's request snapshot is no longer available; create a fresh fork from the parent");
@@ -616,30 +611,11 @@ async function beforeAgentStart(
 	}
 }
 
-async function sessionStart(rt: ForkTaskRuntime, _event: SessionStartEvent, ctx: ExtensionContext): Promise<void> {
-	if (ctx.agent.kind !== "main") return;
-	await sweepDeadProcessDirs(
-		[replicasRoot(), overlaysRoot(), parkedRoot(), startsRoot()].map((dir) => path.dirname(dir)),
-		rt.warn,
-	);
-}
-
-/**
- * A sub session's park
- * emits the same event, so it must not drop what its fork children still need.
- */
 async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
-	if (ctx.agent.kind === "main") {
-		for (const root of [replicasRoot(), overlaysRoot(), parkedRoot(), startsRoot()]) {
-			await fs
-				.rm(root, { recursive: true, force: true })
-				.catch((error: unknown) => rt.warn("fork_task: removing per-process records failed", error));
-		}
-	}
 	const parentFile = ctx.sessionManager.getSessionFile();
-	if (!parentFile) return;
-	rt.started.delete(parentFile);
-	const artifactsDir = parentFile.slice(0, -".jsonl".length);
+	if (parentFile) rt.started.delete(parentFile);
+	const artifactsDir = ctx.sessionManager.getArtifactsDir();
+	if (!artifactsDir) return;
 	for (const entry of rt.pending.filter((p) => p.artifactsDir === artifactsDir)) {
 		try {
 			await discardPending(rt, entry);
@@ -647,19 +623,6 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 			rt.pi.logger.warn("fork_task: cleaning up the staged conversation failed", { error: errorText(error) });
 		}
 	}
-}
-
-function taskDepthOf(session: AgentSession): number {
-	const registry = AgentRegistry.global();
-	let ref = registry.list().find((candidate) => candidate.session === session);
-	let depth = 0;
-	const visited = new Set<string>();
-	while (ref?.parentId !== undefined && !visited.has(ref.id)) {
-		visited.add(ref.id);
-		depth++;
-		ref = registry.get(ref.parentId);
-	}
-	return depth;
 }
 
 function parseOutputSchema(text: string, index: number): unknown {
@@ -696,9 +659,9 @@ async function executeForkTask(
 			outputSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
 		}));
 		const parent = callerSession(ctx);
-		if (!parent) return fail("fork_task: could not resolve the calling session in the agent registry.");
+		if (!parent) return fail(`fork_task: agent \`${ctx.agent.id}\` has no session in the agent registry.`);
 		const maxRecursionDepth = cfgTaskMaxRecursionDepth.get(parent.settings);
-		const callerDepth = taskDepthOf(parent);
+		const callerDepth = ctx.agent.depth;
 		if (maxRecursionDepth >= 0 && callerDepth + 1 >= maxRecursionDepth) {
 			return fail(
 				`fork_task: reached the maximum dispatch depth (current taskDepth ${callerDepth}, task.maxRecursionDepth ${maxRecursionDepth}); a forked child would start at the cap and cannot dispatch subagents.`,
@@ -712,8 +675,8 @@ async function executeForkTask(
 		await parent.sessionManager.ensureOnDisk();
 		await parent.sessionManager.flush();
 		const parentFile = parent.sessionManager.getSessionFile();
-		if (!parentFile) return fail("fork_task: forking needs a persisted session.");
-		const artifactsDir = parentFile.slice(0, -".jsonl".length);
+		const artifactsDir = parent.sessionManager.getArtifactsDir();
+		if (!parentFile || !artifactsDir) return fail("fork_task: forking needs a persisted session.");
 		const planMode = parent.getPlanModeState()?.enabled === true;
 
 		const notes: string[] = [];
@@ -729,9 +692,13 @@ async function executeForkTask(
 				if (role.kind === "error") throw new Error(role.message);
 				const captured = captureReplica(source.request, {
 					inheritReasoning: role.kind === "none" && item.effort === undefined,
-					caller: parent,
 				});
-				const name = `${sanitizeName(item.name) ?? "Fork"}_${randomUUID().slice(0, 4)}`;
+				const requested = sanitizeAgentId(item.name);
+				let name = requested ?? generateTaskName();
+				while (requested === undefined && claimsName(rt.pending, artifactsDir, name)) name = generateTaskName();
+				if (claimsName(rt.pending, artifactsDir, name)) {
+					throw new Error(`a fork named \`${name}\` of this session is still being dispatched; give tasks[${index}] another \`name\`.`);
+				}
 				const isolated = !planMode && (item.isolated ?? (role.kind === "role" || item.workspace === "source"));
 				const inheritance =
 					item.workspace === "source" ? await sourceInheritance(source, isolated, parent.sessionManager.getCwd()) : undefined;
@@ -740,7 +707,15 @@ async function executeForkTask(
 					break;
 				}
 				const shake = item.shake === true;
-				const { staging, notice, shakeSummary } = await stageFork(ctx, parent, source, shake, isolated, inheritance !== undefined);
+				const { staging, notice, shakeSummary } = await stageFork(
+					ctx,
+					parent,
+					artifactsDir,
+					source,
+					shake,
+					isolated,
+					inheritance !== undefined,
+				);
 				const { response, ...capture } = captured;
 				const entry: PendingFork = {
 					name,
@@ -810,7 +785,6 @@ export default function forkTask(pi: ExtensionAPI): void {
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
 	pi.on("tool_result", toolResult.bind(null, rt));
-	pi.on("session_start", sessionStart.bind(null, rt));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
 	pi.on("turn_start", () => rt.deltas.turnStarted());
 	registerSubagentProgress(pi, warn);
