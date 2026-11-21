@@ -169,6 +169,8 @@ export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
 	readonly contextFiles: readonly ContextFragment[];
+	/** The working directory the source ran in when it sent `request`. */
+	readonly cwd: string;
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -201,13 +203,14 @@ export async function shareSource(file: string): Promise<SharedSource | undefine
 	return { kind: "ready", source: { ...live.source, cwd: session.sessionManager.getCwd() } };
 }
 
-export function captureReplica(source: SourceRequest, options: { readonly inheritReasoning: boolean }): Capture {
+export function captureReplica(source: PortableSource, options: { readonly inheritReasoning: boolean }): Capture {
 	const { request, thinkingLevel: level } = source;
 	return {
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
 		contextFiles: source.contextFiles,
+		cwd: source.cwd,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};

@@ -38,7 +38,7 @@ import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-sha
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
 import { errorText } from "./errors.ts";
-import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
+import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools, type WorkingDirectory } from "./fork-diff.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -59,7 +59,15 @@ import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
 import { forkTaskTopics, TOPIC_POINTERS } from "./topics.ts";
-import { applyOverlay, type Inheritance, inheritSourceWorkspace, recordStart, rejection, writeOverlay } from "./workspace.ts";
+import {
+	applyOverlay,
+	type Inheritance,
+	inheritSourceWorkspace,
+	recordStart,
+	rejection,
+	workingDirectory,
+	writeOverlay,
+} from "./workspace.ts";
 
 const itemSchema = z.object({
 	from: z
@@ -157,14 +165,13 @@ function workspaceNotice(source: ForkSource, parentCwd: string, isolated: boolea
 		case "caller":
 			return [
 				isolated
-					? `- You run in an isolated copy of the workspace. Paths under \`${parentCwd}\` in the conversation name the parent's checkout: use the same repository-relative paths inside your own working directory, and NEVER read or write under \`${parentCwd}\`.`
+					? "- You run in an isolated copy of the workspace."
 					: "- You share the parent's working directory; files may change between your reads.",
 			];
 		case "agent":
 		case "parked": {
 			const id = `\`${source.id}\``;
-			const foreign = [...new Set([source.cwd, ...(isolated ? [parentCwd] : [])])];
-			const lines = [
+			return [
 				isolated
 					? "- You run in an isolated copy of the parent's workspace."
 					: `- You share the parent's working directory \`${parentCwd}\`; files may change between your reads.`,
@@ -172,14 +179,6 @@ function workspaceNotice(source: ForkSource, parentCwd: string, isolated: boolea
 					? `- Before your first turn, the uncommitted changes ${id} made in its own isolated workspace were applied to yours: continue from them. They are handed back together with your own changes.`
 					: `- Your workspace derives from the parent's checkout, not from ${id}'s: changes ${id} made in a workspace of its own are not in yours unless they reached the parent's checkout before this fork.`,
 			];
-			const named = foreign.filter((p) => isolated || p !== parentCwd);
-			if (named.length > 0) {
-				const list = named.map((p) => `\`${p}\``).join(" and ");
-				lines.push(
-					`- Paths under ${list} in the conversation name checkouts other than yours: use the same repository-relative paths inside your own working directory, and NEVER read or write under ${list}.`,
-				);
-			}
-			return lines;
 		}
 		default: {
 			const unreachable: never = source;
@@ -471,7 +470,13 @@ async function sourceInheritance(source: ForkSource, isolated: boolean, callerCw
 }
 
 /** A replicated child: its own `yield`, what its request carries from the source, and the tools it was told are unavailable. */
-type Clone = { readonly ownYield: OwnYield | undefined; readonly baseline: ForkBaseline; readonly reported: Set<string> };
+type Clone = {
+	readonly ownYield: OwnYield | undefined;
+	readonly baseline: ForkBaseline;
+	/** The child's own working directory; a session keeps its cwd for its whole run. */
+	readonly cwd: WorkingDirectory;
+	readonly reported: Set<string>;
+};
 
 type ForkTaskRuntime = {
 	readonly pi: ExtensionAPI;
@@ -586,10 +591,11 @@ async function currentContextFile(filePath: string): Promise<ContextFile | undef
 	return { path: filePath, content: await expandAtImports(content, filePath) };
 }
 
-async function cloneDiff(clone: Clone, session: AgentSession, ctx: ExtensionContext): Promise<Delta> {
+async function cloneDiff(clone: Clone, session: AgentSession): Promise<Delta> {
 	const current: ForkCurrent = {
+		cwd: clone.cwd,
 		tools: session.agent.state.tools.map((tool) => tool.name),
-		contextFiles: await contextFilesUnder(ctx.sessionManager.getCwd()),
+		contextFiles: await contextFilesUnder(clone.cwd.path),
 	};
 	const restored = [...clone.reported].filter((name) => current.tools.includes(name));
 	for (const name of unavailableTools(clone.baseline, current.tools)) clone.reported.add(name);
@@ -602,7 +608,7 @@ async function currentDiff(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<
 	const clone = session && rt.cloned.get(session);
 	if (!session || !clone) return;
 	try {
-		return await cloneDiff(clone, session, ctx);
+		return await cloneDiff(clone, session);
 	} catch (error) {
 		rt.warn("fork_task: computing the fork child's differences failed", error);
 		return;
@@ -661,9 +667,15 @@ async function beforeAgentStart(
 			return;
 		}
 		const ownYield = applyReplica(session, replica);
+		const [sourceCwd, ownCwd] = await Promise.all([workingDirectory(replica.cwd), workingDirectory(ctx.sessionManager.getCwd())]);
 		rt.cloned.set(session, {
 			ownYield,
-			baseline: { tools: replica.request.context.tools?.map((tool) => tool.name) ?? [], contextFiles: replica.contextFiles },
+			baseline: {
+				cwd: sourceCwd,
+				tools: replica.request.context.tools?.map((tool) => tool.name) ?? [],
+				contextFiles: replica.contextFiles,
+			},
+			cwd: ownCwd,
 			reported: new Set(),
 		});
 		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield));
@@ -760,9 +772,12 @@ async function executeForkTask(
 				if (role.kind === "error") throw new Error(role.message);
 				// Absent both, the host falls back to `fork:self`'s own `output`.
 				const outputSchema = callerSchema ?? (role.kind === "role" ? role.output : undefined);
-				const captured = captureReplica(source.request, {
-					inheritReasoning: role.kind === "none" && item.effort === undefined,
-				});
+				const captured = captureReplica(
+					{ ...source.request, cwd: source.cwd },
+					{
+						inheritReasoning: role.kind === "none" && item.effort === undefined,
+					},
+				);
 				const requested = sanitizeAgentId(item.name);
 				let name = requested ?? generateTaskName();
 				while (requested === undefined && claimsName(rt.pending, artifactsDir, name)) name = generateTaskName();
