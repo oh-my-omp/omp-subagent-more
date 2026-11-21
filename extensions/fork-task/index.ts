@@ -23,6 +23,9 @@ import {
 	type ToolDefinition,
 	z,
 } from "@oh-my-pi/pi-coding-agent";
+import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
+import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
+import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
@@ -35,6 +38,7 @@ import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-sha
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
 import { errorText } from "./errors.ts";
+import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -466,12 +470,16 @@ async function sourceInheritance(source: ForkSource, isolated: boolean, callerCw
 	}
 }
 
+/** A replicated child: its own `yield`, what its request carries from the source, and the tools it was told are unavailable. */
+type Clone = { readonly ownYield: OwnYield | undefined; readonly baseline: ForkBaseline; readonly reported: Set<string> };
+
 type ForkTaskRuntime = {
 	readonly pi: ExtensionAPI;
 	readonly warn: (message: string, error: unknown) => void;
 	readonly pending: PendingFork[];
-	readonly cloned: WeakMap<AgentSession, OwnYield | undefined>;
+	readonly cloned: WeakMap<AgentSession, Clone>;
 	readonly deltas: DeltaStream;
+	readonly diffs: DeltaStream;
 	readonly started: Set<string>;
 };
 
@@ -550,8 +558,65 @@ function yieldDelta(ownYield: OwnYield | undefined): Delta {
 
 function toolResult(rt: ForkTaskRuntime, ctx: ExtensionContext): { additionalContext: string } | undefined {
 	const session = callerSession(ctx);
-	if (!session || !rt.cloned.has(session)) return;
-	return rt.deltas.afterTools(ctx, yieldDelta(rt.cloned.get(session)));
+	const clone = session && rt.cloned.get(session);
+	if (!clone) return;
+	return rt.deltas.afterTools(ctx, yieldDelta(clone.ownYield));
+}
+
+/**
+ * The context files OMP discovers for `cwd`, `@path` imports expanded as the system prompt builder does.
+ * Plugins reach only the served `capability` and `discovery` modules, not the builder itself.
+ * The capability layer caches file content for the whole process, so each file's content is read
+ * from disk here; a file deleted since its discovery is not under `cwd` any more.
+ */
+async function contextFilesUnder(cwd: string): Promise<ContextFile[]> {
+	const found = await loadCapability<HostContextFile>(contextFileCapability.id, { cwd });
+	const files = await Promise.all(found.items.map((file) => currentContextFile(file.path)));
+	return files.filter((file) => file !== undefined);
+}
+
+async function currentContextFile(filePath: string): Promise<ContextFile | undefined> {
+	let content: string;
+	try {
+		content = await fs.readFile(filePath, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	return { path: filePath, content: await expandAtImports(content, filePath) };
+}
+
+async function cloneDiff(clone: Clone, session: AgentSession, ctx: ExtensionContext): Promise<Delta> {
+	const current: ForkCurrent = {
+		tools: session.agent.state.tools.map((tool) => tool.name),
+		contextFiles: await contextFilesUnder(ctx.sessionManager.getCwd()),
+	};
+	const restored = [...clone.reported].filter((name) => current.tools.includes(name));
+	for (const name of unavailableTools(clone.baseline, current.tools)) clone.reported.add(name);
+	return forkDiff(clone.baseline, current, restored);
+}
+
+/** The current difference of the calling session when it is a replicated child; undefined otherwise or when computing it failed. */
+async function currentDiff(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<Delta | undefined> {
+	const session = callerSession(ctx);
+	const clone = session && rt.cloned.get(session);
+	if (!session || !clone) return;
+	try {
+		return await cloneDiff(clone, session, ctx);
+	} catch (error) {
+		rt.warn("fork_task: computing the fork child's differences failed", error);
+		return;
+	}
+}
+
+async function diffAtPrompt(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<BeforeAgentStartEventResult | undefined> {
+	const delta = await currentDiff(rt, ctx);
+	return delta && rt.diffs.atPrompt(ctx, delta);
+}
+
+async function diffAfterTools(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<{ additionalContext: string } | undefined> {
+	const delta = await currentDiff(rt, ctx);
+	return delta && rt.diffs.afterTools(ctx, delta);
 }
 
 async function beforeAgentStart(
@@ -562,7 +627,8 @@ async function beforeAgentStart(
 	const session = callerSession(ctx);
 	if (!session) return;
 	// A cloned session already holds its replica in the stream hook: never re-read the copy for it.
-	if (rt.cloned.has(session)) return rt.deltas.atPrompt(ctx, yieldDelta(rt.cloned.get(session)));
+	const clone = rt.cloned.get(session);
+	if (clone) return rt.deltas.atPrompt(ctx, yieldDelta(clone.ownYield));
 	const file = ctx.sessionManager.getSessionFile();
 	if (ctx.agent.kind === "sub" && file && !rt.started.has(file)) {
 		rt.started.add(file);
@@ -595,7 +661,11 @@ async function beforeAgentStart(
 			return;
 		}
 		const ownYield = applyReplica(session, replica);
-		rt.cloned.set(session, ownYield);
+		rt.cloned.set(session, {
+			ownYield,
+			baseline: { tools: replica.request.context.tools?.map((tool) => tool.name) ?? [], contextFiles: replica.contextFiles },
+			reported: new Set(),
+		});
 		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield));
 	} catch (error) {
 		const reason = `fork_task: preparing request replication failed: ${errorText(error)}`;
@@ -779,14 +849,21 @@ export default function forkTask(pi: ExtensionAPI): void {
 		pending: [],
 		cloned: new WeakMap(),
 		deltas: createDeltaStream("omp-subagent-more/fork-task"),
+		diffs: createDeltaStream("omp-subagent-more/fork-diff"),
 		started: new Set(),
 	};
 
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
+	// Registered after `beforeAgentStart`, which records the clone this handler reads.
+	pi.on("before_agent_start", (_event, ctx) => diffAtPrompt(rt, ctx));
 	pi.on("tool_result", (_event, ctx) => toolResult(rt, ctx));
+	pi.on("tool_result", (_event, ctx) => diffAfterTools(rt, ctx));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
-	pi.on("turn_start", () => rt.deltas.turnStarted());
+	pi.on("turn_start", () => {
+		rt.deltas.turnStarted();
+		rt.diffs.turnStarted();
+	});
 	registerSubagentProgress(pi, warn);
 	const reportLimit = createReportLimit({
 		info: (message, data) => pi.logger.info(message, data),

@@ -19,9 +19,12 @@ const replaySchema = z.union([
 	z.object({ kind: z.literal("own") }),
 ]);
 
+const contextFilesSchema = z.array(z.object({ path: z.string(), text: z.string() }));
+
 const portableSchema = z.object({
 	request: requestSchema,
 	systemPrompt: z.array(z.string()),
+	contextFiles: contextFilesSchema,
 	sourceModel: z.string(),
 	replay: replaySchema,
 	inheritReasoning: z.boolean(),
@@ -37,6 +40,7 @@ const portableSourceSchema = z.object({
 	request: requestSchema,
 	response: z.number().optional(),
 	systemPrompt: z.array(z.string()),
+	contextFiles: contextFilesSchema,
 	thinkingLevel: z.string().optional(),
 	cwd: z.string(),
 });

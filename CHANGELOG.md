@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A fork child is told, as `<system-reminder source="omp-subagent-more/fork-diff">`, which tools its copied declaration names but it has no registration for, which of those are registered again, and which context files under its working directory are missing from, new to or changed against the source's system prompt, or sit at another path with the same content, each read from disk at the time; the reminder is replaced when the difference changes and withdrawn when nothing differs ([#24](https://github.com/oh-my-omp/omp-subagent-more/issues/24))
+
 ### Changed
 
 - A fork child's id is allocated from the requested `name` the way `task` allocates it: `Probe`, then `Probe-2` when an earlier agent of the session holds `Probe`, without the four-character suffix; an omitted `name` gets a generated name instead of `Fork_…` ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))

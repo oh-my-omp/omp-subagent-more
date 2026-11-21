@@ -21,14 +21,37 @@ type RequestSnapshot = {
 
 type ObservedRequest = { readonly request: RequestSnapshot; response: number | undefined };
 
+/** A context file as a system prompt carried it: the file's path and the prompt text built from it. */
+export type ContextFragment = { readonly path: string; readonly text: string };
+
 const requests = new WeakMap<AgentSession, ObservedRequest>();
 const observed = new WeakSet<AgentSession>();
 const liveSessions = new Map<string, AgentSession>();
+/** A replicated child sends its source's system prompt, so its context files are the ones that prompt carried. */
+const replicatedContext = new WeakMap<AgentSession, readonly ContextFragment[]>();
+
+/**
+ * The context files `prompt` (a request's system prompt) carries: each file's text as the session built it,
+ * kept when the sent prompt still contains it, also after a hook rewrote other parts of its block.
+ */
+function promptContextFiles(session: AgentSession, prompt: readonly string[] | undefined): ContextFragment[] {
+	const inherited = replicatedContext.get(session);
+	if (inherited) return [...inherited];
+	const built = session.systemPromptSources;
+	if (!built || !prompt) return [];
+	return built.sources.flatMap((source) => {
+		const block = built.blocks[source.block];
+		if (source.kind !== "instruction-files" || block === undefined) return [];
+		const text = block.slice(source.start, source.end);
+		return prompt.some((sent) => sent.includes(text)) ? [{ path: source.label, text }] : [];
+	});
+}
 
 export type SourceRequest = {
 	readonly request: RequestSnapshot;
 	readonly response: number | undefined;
 	readonly systemPrompt: readonly string[];
+	readonly contextFiles: readonly ContextFragment[];
 	readonly thinkingLevel: AgentSession["thinkingLevel"];
 };
 
@@ -89,6 +112,7 @@ export function observeRequests(session: AgentSession, warn: (message: string, e
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
+			contextFiles: promptContextFiles(session, latest.request.context.systemPrompt),
 			thinkingLevel: session.thinkingLevel,
 			cwd: session.sessionManager.getCwd(),
 		};
@@ -144,6 +168,7 @@ type Replay = { readonly kind: "prefix"; readonly response: number | undefined; 
 export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
+	readonly contextFiles: readonly ContextFragment[];
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -160,6 +185,7 @@ export function liveRequest(session: AgentSession): SourceRequestResult {
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
+			contextFiles: promptContextFiles(session, latest.request.context.systemPrompt),
 			thinkingLevel: session.thinkingLevel,
 		},
 	};
@@ -181,6 +207,7 @@ export function captureReplica(source: SourceRequest, options: { readonly inheri
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
+		contextFiles: source.contextFiles,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};
@@ -293,6 +320,7 @@ export type OwnYield = { readonly tool: AgentTool; readonly declared: boolean };
 export function applyReplica(session: AgentSession, replica: Replica): OwnYield | undefined {
 	const yieldTool = session.agent.state.tools.find((tool) => tool.name === "yield");
 	const systemPrompt = [...replica.systemPrompt];
+	replicatedContext.set(session, replica.contextFiles);
 	const detach = session.agent.addBeforeModelCallHook(() => {
 		session.agent.setSystemPrompt(systemPrompt);
 	});
