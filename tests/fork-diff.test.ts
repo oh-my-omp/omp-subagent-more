@@ -41,7 +41,7 @@ describe("forkDiff", () => {
 		expect(text).toContain("`todo`");
 	});
 
-	test("reports a file missing from the cwd, one only under the cwd, and one whose content changed, with the current content", () => {
+	test("reports a changed file with its current content, a missing one, and one only under the cwd", () => {
 		const text = body(
 			forkDiff(
 				{ tools: [], contextFiles: baseline.contextFiles },
@@ -49,15 +49,39 @@ describe("forkDiff", () => {
 					tools: [],
 					contextFiles: [
 						{ path: "/w/CLAUDE.md", content: "new rules" },
-						{ path: "/iso/AGENTS.md", content: "Use bun." },
+						{ path: "/w/sub/AGENTS.md", content: "Lint first." },
 					],
 				},
 				[],
 			),
 		);
 		expect(text).toContain("`/w/AGENTS.md`: in the parent's system prompt, but not under your working directory.");
-		expect(text).toContain("`/w/CLAUDE.md`: its content differs");
-		expect(text).toContain("new rules");
-		expect(text).toContain("`/iso/AGENTS.md`: under your working directory, but not in the parent's system prompt. Its content:\nUse bun.");
+		expect(text).toContain(
+			"`/w/CLAUDE.md`: its content differs from the copy in the parent's system prompt. Its current content:\nnew rules",
+		);
+		expect(text).toContain(
+			"`/w/sub/AGENTS.md`: under your working directory, but not in the parent's system prompt. Its content:\nLint first.",
+		);
+	});
+
+	test("a file the cwd holds at another path with the same content is relocated, and a copy the prompt already carries is not added", () => {
+		const text = body(
+			forkDiff(
+				{ tools: [], contextFiles: baseline.contextFiles },
+				{
+					tools: [],
+					contextFiles: [
+						{ path: "/iso/AGENTS.md", content: "Use bun." },
+						{ path: "/iso/CLAUDE.md", content: "old" },
+						{ path: "/home/AGENTS.md", content: "Use bun." },
+					],
+				},
+				[],
+			),
+		);
+		expect(text).toContain("`/w/AGENTS.md`: under your working directory as `/iso/AGENTS.md`, with the same content.");
+		expect(text).toContain("`/w/CLAUDE.md`: under your working directory as `/iso/CLAUDE.md`, with the same content.");
+		expect(text).not.toContain("/home/AGENTS.md");
+		expect(text).not.toContain("not under your working directory");
 	});
 });

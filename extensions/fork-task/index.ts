@@ -23,10 +23,12 @@ import {
 	type ToolDefinition,
 	z,
 } from "@oh-my-pi/pi-coding-agent";
+import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
+import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
+import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
-import { loadProjectContextFiles } from "@oh-my-pi/pi-coding-agent/system-prompt";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
 import { generateTaskName, sanitizeAgentId } from "@oh-my-pi/pi-coding-agent/task/name-generator";
 import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents, cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/settings";
@@ -36,7 +38,7 @@ import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-sha
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
 import { errorText } from "./errors.ts";
-import { blockReason, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
+import { blockReason, type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -561,11 +563,19 @@ function toolResult(rt: ForkTaskRuntime, ctx: ExtensionContext): { additionalCon
 	return rt.deltas.afterTools(ctx, yieldDelta(clone.ownYield));
 }
 
+/**
+ * The context files OMP discovers for `cwd`, `@path` imports expanded as the system prompt builder does.
+ * Plugins reach only the served `capability` and `discovery` modules, not the builder itself.
+ */
+async function contextFilesUnder(cwd: string): Promise<ContextFile[]> {
+	const found = await loadCapability<HostContextFile>(contextFileCapability.id, { cwd });
+	return Promise.all(found.items.map(async (file) => ({ path: file.path, content: await expandAtImports(file.content, file.path) })));
+}
+
 async function cloneDiff(clone: Clone, session: AgentSession, ctx: ExtensionContext): Promise<Delta> {
-	const files = await loadProjectContextFiles({ cwd: ctx.sessionManager.getCwd() });
 	const current: ForkCurrent = {
 		tools: session.agent.state.tools.map((tool) => tool.name),
-		contextFiles: files.map(({ path: file, content }) => ({ path: file, content })),
+		contextFiles: await contextFilesUnder(ctx.sessionManager.getCwd()),
 	};
 	const restored = [...clone.reported].filter((name) => current.tools.includes(name));
 	for (const name of unavailableTools(clone.baseline, current.tools)) clone.reported.add(name);

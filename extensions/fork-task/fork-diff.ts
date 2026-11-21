@@ -24,19 +24,43 @@ export function blockReason(name: string): string {
 
 type FileChange =
 	| { readonly kind: "missing"; readonly path: string }
+	| { readonly kind: "relocated"; readonly path: string; readonly file: ContextFile }
 	| { readonly kind: "added"; readonly file: ContextFile }
 	| { readonly kind: "changed"; readonly file: ContextFile };
 
+function carries(fragment: ContextFragment, file: ContextFile): boolean {
+	return fragment.text.includes(file.content.trim());
+}
+
+/**
+ * Paths are matched first. A baseline file absent at its path but whose content an unmatched current file
+ * repeats is relocated (an isolated workspace holds the same file elsewhere); an unmatched current file whose
+ * content the source prompt already carries adds nothing.
+ */
 function contextChanges(baseline: readonly ContextFragment[], current: readonly ContextFile[]): FileChange[] {
 	const now = new Map(current.map((file) => [file.path, file]));
-	const before = new Map(baseline.map((fragment) => [fragment.path, fragment]));
+	const before = new Set(baseline.map((fragment) => fragment.path));
+	const unmatched = current.filter((file) => !before.has(file.path));
+	const claimed = new Set<ContextFile>();
 	const changes: FileChange[] = [];
 	for (const fragment of baseline) {
 		const file = now.get(fragment.path);
-		if (!file) changes.push({ kind: "missing", path: fragment.path });
-		else if (!fragment.text.includes(file.content.trim())) changes.push({ kind: "changed", file });
+		if (file) {
+			if (!carries(fragment, file)) changes.push({ kind: "changed", file });
+			continue;
+		}
+		const moved = unmatched.find((candidate) => !claimed.has(candidate) && carries(fragment, candidate));
+		if (moved) {
+			claimed.add(moved);
+			changes.push({ kind: "relocated", path: fragment.path, file: moved });
+		} else {
+			changes.push({ kind: "missing", path: fragment.path });
+		}
 	}
-	for (const file of current) if (!before.has(file.path)) changes.push({ kind: "added", file });
+	for (const file of unmatched) {
+		if (claimed.has(file) || baseline.some((fragment) => carries(fragment, file))) continue;
+		changes.push({ kind: "added", file });
+	}
 	return changes;
 }
 
@@ -44,6 +68,8 @@ function describeChange(change: FileChange): string {
 	switch (change.kind) {
 		case "missing":
 			return `- \`${change.path}\`: in the parent's system prompt, but not under your working directory.`;
+		case "relocated":
+			return `- \`${change.path}\`: under your working directory as \`${change.file.path}\`, with the same content.`;
 		case "added":
 			return `- \`${change.file.path}\`: under your working directory, but not in the parent's system prompt. Its content:\n${change.file.content}`;
 		case "changed":
