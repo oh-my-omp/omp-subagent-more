@@ -30,7 +30,10 @@ const liveSessions = new Map<string, AgentSession>();
 /** A replicated child sends its source's system prompt, so its context files are the ones that prompt carried. */
 const replicatedContext = new WeakMap<AgentSession, readonly ContextFragment[]>();
 
-/** The context files `prompt` (a request's system prompt) carries, located through the blocks the session built. */
+/**
+ * The context files `prompt` (a request's system prompt) carries: each file's text as the session built it,
+ * kept when the sent prompt still contains it, also after a hook rewrote other parts of its block.
+ */
 function promptContextFiles(session: AgentSession, prompt: readonly string[] | undefined): ContextFragment[] {
 	const inherited = replicatedContext.get(session);
 	if (inherited) return [...inherited];
@@ -38,8 +41,9 @@ function promptContextFiles(session: AgentSession, prompt: readonly string[] | u
 	if (!built || !prompt) return [];
 	return built.sources.flatMap((source) => {
 		const block = built.blocks[source.block];
-		if (source.kind !== "instruction-files" || block === undefined || prompt[source.block] !== block) return [];
-		return [{ path: source.label, text: block.slice(source.start, source.end) }];
+		if (source.kind !== "instruction-files" || block === undefined) return [];
+		const text = block.slice(source.start, source.end);
+		return prompt.some((sent) => sent.includes(text)) ? [{ path: source.label, text }] : [];
 	});
 }
 
