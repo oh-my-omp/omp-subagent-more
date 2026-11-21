@@ -2,11 +2,8 @@
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-11-21
-
 ### Changed
 
-- Updated the shared copy of `context-delta.ts` to oh-my-omp/shared@80068ad.
 - A fork child's id is allocated from the requested `name` the way `task` allocates it: `Probe`, then `Probe-2` when an earlier agent of the session holds `Probe`, without the four-character suffix; an omitted `name` gets a generated name instead of `Fork_…` ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
 - Every request of a fork child declares exactly the source's tools, also when the child runs another model or the source declares no `eval`; the child's own tools are no longer appended to the declaration ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
 - Request copies, parked sources' requests, workspace starts, inherited overlays and staged transcripts live in the OMP session's artifacts directory; `$TMPDIR/omp-fork-task/` is no longer created and no startup sweep runs ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
@@ -14,6 +11,12 @@
 ### Fixed
 
 - A fork child no longer fails before its first turn with "cannot clone source tool" when the source declared a tool the child has no registration for; the child runs with the tools OMP registered for it ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
+
+## [0.2.1] - 2026-11-21
+
+### Changed
+
+- Updated the shared copy of `context-delta.ts` to oh-my-omp/shared@80068ad.
 
 ## [0.2.0] - 2026-11-20
 
