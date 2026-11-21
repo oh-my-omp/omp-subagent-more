@@ -9,17 +9,10 @@ export type ContextFile = { readonly path: string; readonly content: string };
 /** What the child actually has: the tools the host registered for it and the context files under its working directory. */
 export type ForkCurrent = { readonly tools: readonly string[]; readonly contextFiles: readonly ContextFile[] };
 
-const UNAVAILABLE =
-	"declared to you because your tool declaration stays identical to the parent's request, but not registered in this session";
-
 /** Tools the baseline declares that the child has no registration for, in declaration order. */
 export function unavailableTools(baseline: ForkBaseline, registered: readonly string[]): string[] {
 	const own = new Set(registered);
 	return baseline.tools.filter((name) => !own.has(name));
-}
-
-export function blockReason(name: string): string {
-	return `fork_task: \`${name}\` is ${UNAVAILABLE}; this call did not run.`;
 }
 
 type FileChange =
@@ -90,7 +83,10 @@ export function forkDiff(baseline: ForkBaseline, current: ForkCurrent, restored:
 	const missing = unavailableTools(baseline, current.tools);
 	if (missing.length > 0) {
 		sections.push(
-			[`These tools are ${UNAVAILABLE}; a call to any of them is blocked:`, ...missing.map((name) => `- \`${name}\``)].join("\n"),
+			[
+				"These tools are declared to you because your tool declaration stays identical to the parent's request, but not registered in this session; a call to any of them does not run and fails with `Tool <name> not found`:",
+				...missing.map((name) => `- \`${name}\``),
+			].join("\n"),
 		);
 	}
 	if (restored.length > 0) {

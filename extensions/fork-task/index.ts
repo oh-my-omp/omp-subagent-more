@@ -38,7 +38,7 @@ import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-sha
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
 import { errorText } from "./errors.ts";
-import { blockReason, type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
+import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -566,10 +566,24 @@ function toolResult(rt: ForkTaskRuntime, ctx: ExtensionContext): { additionalCon
 /**
  * The context files OMP discovers for `cwd`, `@path` imports expanded as the system prompt builder does.
  * Plugins reach only the served `capability` and `discovery` modules, not the builder itself.
+ * The capability layer caches file content for the whole process, so each file's content is read
+ * from disk here; a file deleted since its discovery is not under `cwd` any more.
  */
 async function contextFilesUnder(cwd: string): Promise<ContextFile[]> {
 	const found = await loadCapability<HostContextFile>(contextFileCapability.id, { cwd });
-	return Promise.all(found.items.map(async (file) => ({ path: file.path, content: await expandAtImports(file.content, file.path) })));
+	const files = await Promise.all(found.items.map((file) => currentContextFile(file.path)));
+	return files.filter((file) => file !== undefined);
+}
+
+async function currentContextFile(filePath: string): Promise<ContextFile | undefined> {
+	let content: string;
+	try {
+		content = await fs.readFile(filePath, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	return { path: filePath, content: await expandAtImports(content, filePath) };
 }
 
 async function cloneDiff(clone: Clone, session: AgentSession, ctx: ExtensionContext): Promise<Delta> {
@@ -603,14 +617,6 @@ async function diffAtPrompt(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise
 async function diffAfterTools(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<{ additionalContext: string } | undefined> {
 	const delta = await currentDiff(rt, ctx);
 	return delta && rt.diffs.afterTools(ctx, delta);
-}
-
-function interceptUnavailable(rt: ForkTaskRuntime, toolName: string, ctx: ExtensionContext): { block: true; reason: string } | undefined {
-	const session = callerSession(ctx);
-	const clone = session && rt.cloned.get(session);
-	if (!session || !clone) return;
-	const registered = session.agent.state.tools.map((tool) => tool.name);
-	return unavailableTools(clone.baseline, registered).includes(toolName) ? { block: true, reason: blockReason(toolName) } : undefined;
 }
 
 async function beforeAgentStart(
@@ -853,7 +859,6 @@ export default function forkTask(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (_event, ctx) => diffAtPrompt(rt, ctx));
 	pi.on("tool_result", (_event, ctx) => toolResult(rt, ctx));
 	pi.on("tool_result", (_event, ctx) => diffAfterTools(rt, ctx));
-	pi.on("tool_call", (event, ctx) => interceptUnavailable(rt, event.toolName, ctx));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
 	pi.on("turn_start", () => {
 		rt.deltas.turnStarted();
