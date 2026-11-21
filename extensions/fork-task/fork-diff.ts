@@ -1,13 +1,38 @@
 import type { Delta } from "../../omomp-shared/context-delta.ts";
 import type { ContextFragment } from "./replica.ts";
 
-/** What the child's replicated request carries from its source: the declared tools and the context files of the system prompt. */
-export type ForkBaseline = { readonly tools: readonly string[]; readonly contextFiles: readonly ContextFragment[] };
+/** A working directory and the root of the git repository holding it, when there is one. */
+export type WorkingDirectory = { readonly path: string; readonly repoRoot: string | undefined };
+
+/**
+ * What the child's replicated request carries from its source: the working directory the conversation ran in,
+ * the declared tools and the context files of the system prompt.
+ */
+export type ForkBaseline = {
+	readonly cwd: WorkingDirectory;
+	readonly tools: readonly string[];
+	readonly contextFiles: readonly ContextFragment[];
+};
 
 export type ContextFile = { readonly path: string; readonly content: string };
 
-/** What the child actually has: the tools the host registered for it and the context files under its working directory. */
-export type ForkCurrent = { readonly tools: readonly string[]; readonly contextFiles: readonly ContextFile[] };
+/** What the child actually has: its working directory, the tools the host registered for it and the context files there. */
+export type ForkCurrent = {
+	readonly cwd: WorkingDirectory;
+	readonly tools: readonly string[];
+	readonly contextFiles: readonly ContextFile[];
+};
+
+/**
+ * An isolated workspace is a copy of the source's repository, so a path under the source's repository root
+ * names the same relative path under the child's.
+ */
+function workingDirectoryChange(source: WorkingDirectory, current: WorkingDirectory): string | undefined {
+	if (source.path === current.path) return;
+	const moved = `The conversation above ran in \`${source.path}\`; your working directory is \`${current.path}\`.`;
+	if (source.repoRoot === undefined || current.repoRoot === undefined || source.repoRoot === current.repoRoot) return moved;
+	return `${moved} A path under \`${source.repoRoot}\` in the conversation is the same relative path under \`${current.repoRoot}\` for you.`;
+}
 
 /** Tools the baseline declares that the child has no registration for, in declaration order. */
 export function unavailableTools(baseline: ForkBaseline, registered: readonly string[]): string[] {
@@ -80,6 +105,8 @@ function describeChange(change: FileChange): string {
  */
 export function forkDiff(baseline: ForkBaseline, current: ForkCurrent, restored: readonly string[]): Delta {
 	const sections: string[] = [];
+	const moved = workingDirectoryChange(baseline.cwd, current.cwd);
+	if (moved !== undefined) sections.push(moved);
 	const missing = unavailableTools(baseline, current.tools);
 	if (missing.length > 0) {
 		sections.push(

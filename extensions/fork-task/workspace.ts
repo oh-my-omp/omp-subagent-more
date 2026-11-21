@@ -11,6 +11,7 @@ import {
 	type WorktreeBaseline,
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
 import { errorText } from "./errors.ts";
+import type { WorkingDirectory } from "./fork-diff.ts";
 import { readOptional, sessionArtifactsDir } from "./replica-file.ts";
 
 export type RejectionCode =
@@ -59,6 +60,15 @@ function startFilePath(sessionFile: string): string {
 
 export function overlayFilePath(childFile: string): string {
 	return path.join(sessionArtifactsDir(childFile), "fork-task.overlay.patch");
+}
+
+/** `cwd` with the root of its git repository; outside a repository there is no root to map paths by. */
+export async function workingDirectory(cwd: string): Promise<WorkingDirectory> {
+	try {
+		return { path: cwd, repoRoot: await getRepoRoot(cwd) };
+	} catch {
+		return { path: cwd, repoRoot: undefined };
+	}
 }
 
 export async function headerCwd(sessionFile: string): Promise<string | undefined> {

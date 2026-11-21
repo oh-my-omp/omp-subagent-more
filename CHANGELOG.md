@@ -13,6 +13,7 @@
 - Request copies, parked sources' requests, workspace starts, inherited overlays and staged transcripts live in the OMP session's artifacts directory; `$TMPDIR/omp-fork-task/` is no longer created and no startup sweep runs ([#23](https://github.com/oh-my-omp/omp-subagent-more/issues/23))
 - Every fork child delivers its result only by calling `yield` directly: `fork:self` declares `structured: true` and a default `output` of `{report: string}`, a role named in `agent` lends its `output`, and the caller's `outputSchema` still comes first ([#25](https://github.com/oh-my-omp/omp-subagent-more/issues/25))
 - The `yield` instructions reach every fork child, whatever model it runs and whether the source declared `eval`; they tell the child to call `yield` as a direct function call, and the fork notice no longer offers finishing with a final report ([#25](https://github.com/oh-my-omp/omp-subagent-more/issues/25))
+- A fork child running in another working directory than its source, such as an isolated worktree, learns both directories and the repository roots whose relative paths correspond from the `omp-subagent-more/fork-diff` reminder; the fork notice no longer forbids paths under the parent's checkout ([#26](https://github.com/oh-my-omp/omp-subagent-more/issues/26))
 - When the host pins a fork child's final reminder to `yield`, which the replicated declaration does not name, the request goes out without that pin instead of being forced onto `eval` ([#25](https://github.com/oh-my-omp/omp-subagent-more/issues/25))
 
 ### Fixed

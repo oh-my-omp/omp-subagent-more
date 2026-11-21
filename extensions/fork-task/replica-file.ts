@@ -25,6 +25,7 @@ const portableSchema = z.object({
 	request: requestSchema,
 	systemPrompt: z.array(z.string()),
 	contextFiles: contextFilesSchema,
+	cwd: z.string(),
 	sourceModel: z.string(),
 	replay: replaySchema,
 	inheritReasoning: z.boolean(),
