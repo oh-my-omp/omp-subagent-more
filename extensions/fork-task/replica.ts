@@ -29,7 +29,6 @@ export type SourceRequest = {
 	readonly request: RequestSnapshot;
 	readonly response: number | undefined;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
 	readonly thinkingLevel: AgentSession["thinkingLevel"];
 };
 
@@ -90,7 +89,6 @@ export function observeRequests(session: AgentSession, warn: (message: string, e
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
 			thinkingLevel: session.thinkingLevel,
 			cwd: session.sessionManager.getCwd(),
 		};
@@ -146,7 +144,6 @@ type Replay = { readonly kind: "prefix"; readonly response: number | undefined; 
 export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -163,7 +160,6 @@ export function liveRequest(session: AgentSession): SourceRequestResult {
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
 			thinkingLevel: session.thinkingLevel,
 		},
 	};
@@ -180,12 +176,11 @@ export async function shareSource(file: string): Promise<SharedSource | undefine
 }
 
 export function captureReplica(source: SourceRequest, options: { readonly inheritReasoning: boolean }): Capture {
-	const { request, toolNames, thinkingLevel: level } = source;
+	const { request, thinkingLevel: level } = source;
 	return {
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
-		toolNames,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};
@@ -324,5 +319,5 @@ export function applyReplica(session: AgentSession, replica: Replica): OwnYield 
 		});
 	};
 	session.agent.streamFn = wrap;
-	return yieldTool && { tool: yieldTool, declared: replica.toolNames.includes("yield") };
+	return yieldTool && { tool: yieldTool, declared: source.context.tools?.some((tool) => tool.name === "yield") ?? false };
 }

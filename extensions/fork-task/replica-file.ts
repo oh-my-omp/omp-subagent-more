@@ -22,7 +22,6 @@ const replaySchema = z.union([
 const portableSchema = z.object({
 	request: requestSchema,
 	systemPrompt: z.array(z.string()),
-	toolNames: z.array(z.string()),
 	sourceModel: z.string(),
 	replay: replaySchema,
 	inheritReasoning: z.boolean(),
@@ -38,7 +37,6 @@ const portableSourceSchema = z.object({
 	request: requestSchema,
 	response: z.number().optional(),
 	systemPrompt: z.array(z.string()),
-	toolNames: z.array(z.string()),
 	thinkingLevel: z.string().optional(),
 	cwd: z.string(),
 });
