@@ -1,0 +1,83 @@
+import type { Delta } from "../../omomp-shared/context-delta.ts";
+import type { ContextFragment } from "./replica.ts";
+
+/** What the child's replicated request carries from its source: the declared tools and the context files of the system prompt. */
+export type ForkBaseline = { readonly tools: readonly string[]; readonly contextFiles: readonly ContextFragment[] };
+
+export type ContextFile = { readonly path: string; readonly content: string };
+
+/** What the child actually has: the tools the host registered for it and the context files under its working directory. */
+export type ForkCurrent = { readonly tools: readonly string[]; readonly contextFiles: readonly ContextFile[] };
+
+const UNAVAILABLE =
+	"declared to you because your tool declaration stays identical to the parent's request, but not registered in this session";
+
+/** Tools the baseline declares that the child has no registration for, in declaration order. */
+export function unavailableTools(baseline: ForkBaseline, registered: readonly string[]): string[] {
+	const own = new Set(registered);
+	return baseline.tools.filter((name) => !own.has(name));
+}
+
+export function blockReason(name: string): string {
+	return `fork_task: \`${name}\` is ${UNAVAILABLE}; this call did not run.`;
+}
+
+type FileChange =
+	| { readonly kind: "missing"; readonly path: string }
+	| { readonly kind: "added"; readonly file: ContextFile }
+	| { readonly kind: "changed"; readonly file: ContextFile };
+
+function contextChanges(baseline: readonly ContextFragment[], current: readonly ContextFile[]): FileChange[] {
+	const now = new Map(current.map((file) => [file.path, file]));
+	const before = new Map(baseline.map((fragment) => [fragment.path, fragment]));
+	const changes: FileChange[] = [];
+	for (const fragment of baseline) {
+		const file = now.get(fragment.path);
+		if (!file) changes.push({ kind: "missing", path: fragment.path });
+		else if (!fragment.text.includes(file.content.trim())) changes.push({ kind: "changed", file });
+	}
+	for (const file of current) if (!before.has(file.path)) changes.push({ kind: "added", file });
+	return changes;
+}
+
+function describeChange(change: FileChange): string {
+	switch (change.kind) {
+		case "missing":
+			return `- \`${change.path}\`: in the parent's system prompt, but not under your working directory.`;
+		case "added":
+			return `- \`${change.file.path}\`: under your working directory, but not in the parent's system prompt. Its content:\n${change.file.content}`;
+		case "changed":
+			return `- \`${change.file.path}\`: its content differs from the copy in the parent's system prompt. Its current content:\n${change.file.content}`;
+		default: {
+			const unreachable: never = change;
+			return unreachable;
+		}
+	}
+}
+
+/**
+ * The difference between what the replicated request tells the child and what it has.
+ * `restored` names tools reported unavailable earlier in this session that are registered now.
+ */
+export function forkDiff(baseline: ForkBaseline, current: ForkCurrent, restored: readonly string[]): Delta {
+	const sections: string[] = [];
+	const missing = unavailableTools(baseline, current.tools);
+	if (missing.length > 0) {
+		sections.push(
+			[`These tools are ${UNAVAILABLE}; a call to any of them is blocked:`, ...missing.map((name) => `- \`${name}\``)].join("\n"),
+		);
+	}
+	if (restored.length > 0) {
+		sections.push(
+			["These tools, reported unavailable earlier, are registered in this session now:", ...restored.map((name) => `- \`${name}\``)].join(
+				"\n",
+			),
+		);
+	}
+	const changes = contextChanges(baseline.contextFiles, current.contextFiles);
+	if (changes.length > 0) {
+		sections.push(["Context files differ from the parent's system prompt:", ...changes.map(describeChange)].join("\n"));
+	}
+	if (sections.length === 0) return { kind: "none" };
+	return { kind: "text", body: ["Your session differs from the parent's request you continue.", ...sections].join("\n\n") };
+}

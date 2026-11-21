@@ -19,10 +19,13 @@ const REQUEST = {
 	options: { reasoning: "high" },
 } as unknown as Replica["request"];
 
+const CONTEXT_FILES = [{ path: "/w/AGENTS.md", text: "<file>rules</file>" }];
+
 const replica = (replay: Replica["replay"]): Replica => ({
 	request: REQUEST,
 	systemPrompt: ["sys"],
 	toolNames: ["read", "eval"],
+	contextFiles: CONTEXT_FILES,
 	sourceModel: "p/m:high",
 	replay,
 	inheritReasoning: true,
@@ -37,6 +40,7 @@ describe("replica copies", () => {
 			request: REQUEST,
 			systemPrompt: ["sys"],
 			toolNames: ["read", "eval"],
+			contextFiles: CONTEXT_FILES,
 			sourceModel: "p/m:high",
 			replay: { kind: "prefix", response: undefined, notice: { entryId: "n1", timestamp: 7 } },
 			inheritReasoning: true,
@@ -64,7 +68,7 @@ describe("replica copies", () => {
 });
 
 describe("parsePortableSource", () => {
-	const source = { request: REQUEST, response: 5, systemPrompt: ["sys"], toolNames: ["read"], cwd: "/w" };
+	const source = { request: REQUEST, response: 5, systemPrompt: ["sys"], toolNames: ["read"], contextFiles: CONTEXT_FILES, cwd: "/w" };
 
 	test("accepts a known thinking level and an absent one", () => {
 		expect(parsePortableSource({ ...source, thinkingLevel: "high" }).thinkingLevel as string | undefined).toBe("high");
