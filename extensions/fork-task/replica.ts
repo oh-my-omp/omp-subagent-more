@@ -29,7 +29,6 @@ export type SourceRequest = {
 	readonly request: RequestSnapshot;
 	readonly response: number | undefined;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
 	readonly thinkingLevel: AgentSession["thinkingLevel"];
 };
 
@@ -90,7 +89,6 @@ export function observeRequests(session: AgentSession, warn: (message: string, e
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
 			thinkingLevel: session.thinkingLevel,
 			cwd: session.sessionManager.getCwd(),
 		};
@@ -146,7 +144,6 @@ type Replay = { readonly kind: "prefix"; readonly response: number | undefined; 
 export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -163,7 +160,6 @@ export function liveRequest(session: AgentSession): SourceRequestResult {
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
 			thinkingLevel: session.thinkingLevel,
 		},
 	};
@@ -180,12 +176,11 @@ export async function shareSource(file: string): Promise<SharedSource | undefine
 }
 
 export function captureReplica(source: SourceRequest, options: { readonly inheritReasoning: boolean }): Capture {
-	const { request, toolNames, thinkingLevel: level } = source;
+	const { request, thinkingLevel: level } = source;
 	return {
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
-		toolNames,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};
@@ -249,11 +244,9 @@ function replicatedMessages(session: AgentSession, replay: Replay, source: reado
 
 type ModelKey = Pick<Model, "provider" | "id">;
 
-export function sameModel(a: ModelKey, b: ModelKey): boolean {
+function sameModel(a: ModelKey, b: ModelKey): boolean {
 	return a.provider === b.provider && a.id === b.id;
 }
-
-const BRIDGE_TOOL = "eval";
 
 function forcedToolName(choice: ToolChoice | undefined): string | undefined {
 	if (choice === undefined || typeof choice === "string") return undefined;
@@ -271,30 +264,17 @@ function forcedToolName(choice: ToolChoice | undefined): string | undefined {
 	}
 }
 
-function forceTool(choice: Exclude<ToolChoice, string>, name: string): ToolChoice {
-	switch (choice.type) {
-		case "tool":
-			return { type: "tool", name };
-		case "function":
-			return "name" in choice ? { type: "function", name } : { type: "function", function: { name } };
-		case "computer":
-			return choice;
-		default: {
-			const unreachable: never = choice;
-			return unreachable;
-		}
-	}
-}
-
 type WireTools = { readonly tools: Tool[] | undefined; readonly toolChoice: ToolChoice | undefined };
 
-function wireTools(source: Tool[] | undefined, current: Context, onSourceModel: boolean, choice: ToolChoice | undefined): WireTools {
-	const names = new Set(source?.map((tool) => tool.name));
-	const own = current.tools?.filter((tool) => !names.has(tool.name)) ?? [];
-	if (own.length === 0 || !onSourceModel || !names.has(BRIDGE_TOOL)) return { tools: source, toolChoice: choice };
+/**
+ * The declaration is always the source's. A choice forcing a tool it does not
+ * declare (the executor pins its final reminder to the child's own `yield`)
+ * would name a tool absent from the request, so that pin is dropped.
+ */
+function wireTools(source: Tool[] | undefined, choice: ToolChoice | undefined): WireTools {
 	const forced = forcedToolName(choice);
-	const forcesOwn = choice !== undefined && typeof choice !== "string" && own.some((tool) => tool.name === forced);
-	return { tools: source, toolChoice: forcesOwn ? forceTool(choice, BRIDGE_TOOL) : choice };
+	const declared = forced === undefined || (source?.some((tool) => tool.name === forced) ?? false);
+	return { tools: source, toolChoice: declared ? choice : undefined };
 }
 
 function replicateContext(session: AgentSession, replica: Replica, current: Context, tools: Tool[] | undefined): Context {
@@ -307,12 +287,11 @@ function replicateContext(session: AgentSession, replica: Replica, current: Cont
 	};
 }
 
-export type OwnYield = { readonly tool: AgentTool; readonly sourceModel: ModelKey };
+/** The child's registered `yield`, and whether the replicated declaration names a tool `yield` too. */
+export type OwnYield = { readonly tool: AgentTool; readonly declared: boolean };
 
 export function applyReplica(session: AgentSession, replica: Replica): OwnYield | undefined {
-	const names = new Set(replica.toolNames);
 	const yieldTool = session.agent.state.tools.find((tool) => tool.name === "yield");
-	const ownYield = yieldTool && !names.has("yield") ? yieldTool : undefined;
 	const systemPrompt = [...replica.systemPrompt];
 	const detach = session.agent.addBeforeModelCallHook(() => {
 		session.agent.setSystemPrompt(systemPrompt);
@@ -322,11 +301,10 @@ export function applyReplica(session: AgentSession, replica: Replica): OwnYield 
 	const stream = session.agent.streamFn;
 	const source = replica.request;
 	const wrap: StreamFn = (model, context, options) => {
-		const onSourceModel = sameModel(model, source.model);
-		const wire = wireTools(source.context.tools, context, onSourceModel, options?.toolChoice);
+		const wire = wireTools(source.context.tools, options?.toolChoice);
 		const replicated = replicateContext(session, replica, context, wire.tools);
-		if (!onSourceModel) {
-			return stream(model, replicated, { ...options, parentSessionId: source.options.sessionId });
+		if (!sameModel(model, source.model)) {
+			return stream(model, replicated, { ...options, toolChoice: wire.toolChoice, parentSessionId: source.options.sessionId });
 		}
 		return stream(model, replicated, {
 			...options,
@@ -341,7 +319,5 @@ export function applyReplica(session: AgentSession, replica: Replica): OwnYield 
 		});
 	};
 	session.agent.streamFn = wrap;
-	return ownYield && names.has(BRIDGE_TOOL)
-		? { tool: ownYield, sourceModel: { provider: source.model.provider, id: source.model.id } }
-		: undefined;
+	return yieldTool && { tool: yieldTool, declared: source.context.tools?.some((tool) => tool.name === "yield") ?? false };
 }

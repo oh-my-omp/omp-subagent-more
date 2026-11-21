@@ -22,7 +22,6 @@ const REQUEST = {
 const replica = (replay: Replica["replay"]): Replica => ({
 	request: REQUEST,
 	systemPrompt: ["sys"],
-	toolNames: ["read", "eval"],
 	sourceModel: "p/m:high",
 	replay,
 	inheritReasoning: true,
@@ -36,7 +35,6 @@ describe("replica copies", () => {
 		expect(copy).toEqual({
 			request: REQUEST,
 			systemPrompt: ["sys"],
-			toolNames: ["read", "eval"],
 			sourceModel: "p/m:high",
 			replay: { kind: "prefix", response: undefined, notice: { entryId: "n1", timestamp: 7 } },
 			inheritReasoning: true,
@@ -64,7 +62,7 @@ describe("replica copies", () => {
 });
 
 describe("parsePortableSource", () => {
-	const source = { request: REQUEST, response: 5, systemPrompt: ["sys"], toolNames: ["read"], cwd: "/w" };
+	const source = { request: REQUEST, response: 5, systemPrompt: ["sys"], cwd: "/w" };
 
 	test("accepts a known thinking level and an absent one", () => {
 		expect(parsePortableSource({ ...source, thinkingLevel: "high" }).thinkingLevel as string | undefined).toBe("high");
