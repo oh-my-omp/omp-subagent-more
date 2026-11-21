@@ -48,7 +48,7 @@ import {
 	type Replica,
 	type SourceRequest,
 } from "./replica.ts";
-import { readReplicaFile, replicaFilePath, writeReplicaFile } from "./replica-file.ts";
+import { readReplicaFile, replicaFilePath, sessionArtifactsDir, writeReplicaFile } from "./replica-file.ts";
 import { createReportLimit } from "./report-limit.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
@@ -492,8 +492,9 @@ async function beforeSubagentSpawn(
 	ctx: ExtensionContext,
 ): Promise<BeforeSubagentSpawnEventResult | undefined> {
 	if (event.invocationKind !== "task" || event.agent !== FORK_AGENT || !event.spawnKey) return;
-	const artifactsDir = ctx.sessionManager.getArtifactsDir();
-	if (!artifactsDir) return;
+	const callerFile = ctx.sessionManager.getSessionFile();
+	if (!callerFile) return;
+	const artifactsDir = sessionArtifactsDir(callerFile);
 	const spawnKey = event.spawnKey;
 	const segment = spawnKey.slice(spawnKey.lastIndexOf(".") + 1);
 	const forks = rt.pending.filter((p) => p.artifactsDir === artifactsDir);
@@ -608,9 +609,9 @@ async function beforeAgentStart(
 
 async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
 	const parentFile = ctx.sessionManager.getSessionFile();
-	if (parentFile) rt.started.delete(parentFile);
-	const artifactsDir = ctx.sessionManager.getArtifactsDir();
-	if (!artifactsDir) return;
+	if (!parentFile) return;
+	rt.started.delete(parentFile);
+	const artifactsDir = sessionArtifactsDir(parentFile);
 	for (const entry of rt.pending.filter((p) => p.artifactsDir === artifactsDir)) {
 		try {
 			await discardPending(rt, entry);
@@ -670,8 +671,10 @@ async function executeForkTask(
 		await parent.sessionManager.ensureOnDisk();
 		await parent.sessionManager.flush();
 		const parentFile = parent.sessionManager.getSessionFile();
-		const artifactsDir = parent.sessionManager.getArtifactsDir();
-		if (!parentFile || !artifactsDir) return fail("fork_task: forking needs a persisted session.");
+		if (!parentFile) return fail("fork_task: forking needs a persisted session.");
+		// The host places a child beside its caller's own transcript (`leaseArtifacts`);
+		// `getArtifactsDir()` of a subagent names the root's adopted store instead.
+		const artifactsDir = sessionArtifactsDir(parentFile);
 		const planMode = parent.getPlanModeState()?.enabled === true;
 
 		const notes: string[] = [];
