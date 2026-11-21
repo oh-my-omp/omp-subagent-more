@@ -23,17 +23,15 @@ const replica = (replay: Replica["replay"]): Replica => ({
 	request: REQUEST,
 	systemPrompt: ["sys"],
 	toolNames: ["read", "eval"],
-	ask: { name: "ask" } as unknown as Replica["ask"],
 	sourceModel: "p/m:high",
 	replay,
 	inheritReasoning: true,
 });
 
 describe("replica copies", () => {
-	test("a prefix replica round-trips without the live ask, keeping an undefined response key", async () => {
+	test("a prefix replica round-trips, keeping an undefined response key", async () => {
 		const file = path.join(dir, "copy.json");
 		await writeReplicaFile(file, replica({ kind: "prefix", response: undefined, notice: { entryId: "n1", timestamp: 7 } }));
-		expect(await fs.readFile(file, "utf8")).not.toContain('"ask"');
 		const copy = await readReplicaFile(file);
 		expect(copy).toEqual({
 			request: REQUEST,
@@ -59,10 +57,9 @@ describe("replica copies", () => {
 		await expect(readReplicaFile(bad)).rejects.toThrow();
 	});
 
-	test("every thread derives the same path for a child file, distinct per child", () => {
-		expect(replicaFilePath("/s/a.jsonl")).toBe(replicaFilePath("/s/a.jsonl"));
-		expect(replicaFilePath("/s/a.jsonl")).not.toBe(replicaFilePath("/s/b.jsonl"));
-		expect(path.basename(path.dirname(replicaFilePath("/s/a.jsonl")))).toBe(String(process.pid));
+	test("a child's copy lives in that child's own session artifacts directory", () => {
+		expect(replicaFilePath("/s/a.jsonl")).toBe("/s/a/fork-task.replica.json");
+		expect(() => replicaFilePath("/s/a.json")).toThrow("not a session transcript");
 	});
 });
 
