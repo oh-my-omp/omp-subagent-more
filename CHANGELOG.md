@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-22
+
 ### Added
 
 - A fork child is told, as `<system-reminder source="omp-subagent-more/fork-diff">`, which tools its copied declaration names but it has no registration for, which of those are registered again, and which context files under its working directory are missing from, new to or changed against the source's system prompt, or sit at another path with the same content, each read from disk at the time; the reminder is replaced when the difference changes and withdrawn when nothing differs ([#24](https://github.com/oh-my-omp/omp-subagent-more/issues/24))
