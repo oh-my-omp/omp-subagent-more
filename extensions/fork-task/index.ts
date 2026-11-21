@@ -21,7 +21,6 @@ import {
 	type SessionShutdownEvent,
 	type TaskItem,
 	type ToolDefinition,
-	type ToolResultEvent,
 	z,
 } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
@@ -48,7 +47,6 @@ import {
 	parkedRequest,
 	type Replica,
 	type SourceRequest,
-	sameModel,
 } from "./replica.ts";
 import { readReplicaFile, replicaFilePath, writeReplicaFile } from "./replica-file.ts";
 import { createReportLimit } from "./report-limit.ts";
@@ -111,7 +109,7 @@ const itemSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			'JSON Schema for the child\'s `yield` payload, as JSON text, not an object: e.g. \'{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}\'. Its presence overrides the named agent\'s and the session\'s schema. Text that is not valid JSON is rejected before dispatch, naming this field.',
+			'JSON Schema for the child\'s `yield` payload, as JSON text, not an object: e.g. \'{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}\'. Every child delivers through `yield`; its schema is this one, else the `output` of the role named in `agent`, else `{report: string}`. While `task.structured` is off the host ignores this field and the role\'s `output`, so the child takes `{report: string}`. Text that is not valid JSON is rejected before dispatch, naming this field.',
 		),
 	schemaMode: z
 		.enum(["permissive", "strict"])
@@ -143,7 +141,7 @@ Children keep native task result delivery, Agent Hub, \`agent://\`/\`history://\
 
 Forked workers must run relevant scoped checks and real runtime verification before returning; the parent owns final acceptance.
 
-Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy; adding completion tools can invalidate caches on providers without append-only tool support.`;
+Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy.`;
 
 type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
@@ -193,7 +191,7 @@ const forkNotice = (source: ForkSource, parentCwd: string, isolated: boolean, in
 			: `Above: the conversation of agent \`${source.id}\`, copied as background. You continue under its system prompt and tools, but \`${source.id}\` is not your parent: the agent that spawned you receives your result.`;
 	const owner = source.kind === "caller" ? "the parent" : `\`${source.id}\``;
 	const contract =
-		"The parent keeps the conversation with the user. A <role> block opening the assignment defines how you work on it. Deliver your result with `yield` when available, otherwise finish with your final report.";
+		"The parent keeps the conversation with the user. A <role> block opening the assignment defines how you work on it. Deliver your result with `yield`.";
 	return [
 		`<system-notice cause="fork_task">`,
 		`${origin} ${contract}`,
@@ -399,7 +397,12 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 
 type RoleResolution =
 	| { readonly kind: "none" }
-	| { readonly kind: "role"; readonly block: string; readonly model: string | string[] | undefined }
+	| {
+			readonly kind: "role";
+			readonly block: string;
+			readonly model: string | string[] | undefined;
+			readonly output: AgentDefinition["output"];
+	  }
 	| { readonly kind: "error"; readonly message: string };
 
 function roleResolver(parent: AgentSession): (agent: string | undefined) => Promise<RoleResolution> {
@@ -422,6 +425,7 @@ function roleResolver(parent: AgentSession): (agent: string | undefined) => Prom
 			kind: "role",
 			block: `<role agent="${agent}">\n${definition.systemPrompt.trim()}\n</role>`,
 			model: override ?? definition.model,
+			output: definition.output,
 		};
 	};
 }
@@ -517,14 +521,22 @@ async function beforeSubagentSpawn(
 	}
 }
 
-function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delta {
-	const model = session.model;
-	if (!ownYield || !model || !sameModel(model, ownYield.sourceModel)) return { kind: "none" };
-	const { tool } = ownYield;
+const YIELD_UNDECLARED =
+	"You deliver your result with the `yield` tool. It is not among the tools declared to you, because the declaration stays identical to the parent's request to keep its prompt cache; it is registered in this session all the same.";
+
+const YIELD_DECLARED =
+	"You deliver your result with the `yield` tool. The `yield` declared to you is the parent's, kept identical to the parent's request to keep its prompt cache; the one registered in this session takes the parameters below.";
+
+const YIELD_CALL =
+	'Emit it as a function call of its own, exactly like a call to `read` or `bash`: name `yield`, arguments `{"data": <your result>}`, or `{"error": "<why>"}` when you cannot finish. Only that call ends your run. Through `eval` (`tool.yield`) it is rejected, and `write xd://yield` is accepted without ending the run.';
+
+function yieldDelta(ownYield: OwnYield | undefined): Delta {
+	if (!ownYield) return { kind: "none" };
+	const { tool, declared } = ownYield;
 	return {
 		kind: "text",
 		body: [
-			`Your \`${tool.name}\` tool is not in your tool list: the list stays the parent's so its prompt cache keeps serving you. Call it from a JavaScript \`eval\` cell, never as a direct tool call: \`await tool.${tool.name}({ data: … })\` (or \`{ error: "…" }\`). The call submits exactly as a direct \`${tool.name}\` call would; a terminal submission ends your run.`,
+			`${declared ? YIELD_DECLARED : YIELD_UNDECLARED} ${YIELD_CALL}`,
 			"",
 			"Description:",
 			tool.description,
@@ -535,27 +547,10 @@ function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delt
 	};
 }
 
-function forwardBridgedYield(rt: ForkTaskRuntime, session: AgentSession, event: ToolResultEvent): void {
-	if (event.toolName !== "yield" || session.agent.state.pendingToolCalls.has(event.toolCallId)) return;
-	try {
-		session.agent.emitExternalEvent({
-			type: "tool_execution_end",
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			result: { content: event.content, details: event.details },
-			isError: event.isError,
-		});
-	} catch (error) {
-		rt.warn("fork_task: reporting a yield submitted from eval failed", error);
-	}
-}
-
-function toolResult(rt: ForkTaskRuntime, event: ToolResultEvent, ctx: ExtensionContext): { additionalContext: string } | undefined {
+function toolResult(rt: ForkTaskRuntime, ctx: ExtensionContext): { additionalContext: string } | undefined {
 	const session = callerSession(ctx);
 	if (!session || !rt.cloned.has(session)) return;
-	const ownYield = rt.cloned.get(session);
-	if (ownYield) forwardBridgedYield(rt, session, event);
-	return rt.deltas.afterTools(ctx, yieldDelta(ownYield, session));
+	return rt.deltas.afterTools(ctx, yieldDelta(rt.cloned.get(session)));
 }
 
 async function beforeAgentStart(
@@ -566,7 +561,7 @@ async function beforeAgentStart(
 	const session = callerSession(ctx);
 	if (!session) return;
 	// A cloned session already holds its replica in the stream hook: never re-read the copy for it.
-	if (rt.cloned.has(session)) return rt.deltas.atPrompt(ctx, yieldDelta(rt.cloned.get(session), session));
+	if (rt.cloned.has(session)) return rt.deltas.atPrompt(ctx, yieldDelta(rt.cloned.get(session)));
 	const file = ctx.sessionManager.getSessionFile();
 	if (ctx.agent.kind === "sub" && file && !rt.started.has(file)) {
 		rt.started.add(file);
@@ -600,7 +595,7 @@ async function beforeAgentStart(
 		}
 		const ownYield = applyReplica(session, replica);
 		rt.cloned.set(session, ownYield);
-		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield, session));
+		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield));
 	} catch (error) {
 		const reason = `fork_task: preparing request replication failed: ${errorText(error)}`;
 		rt.pi.logger.warn(reason);
@@ -656,7 +651,7 @@ async function executeForkTask(
 		const params = paramsSchema.parse(rawParams);
 		const items = params.tasks.map((item, index) => ({
 			item,
-			outputSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
+			callerSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
 		}));
 		const parent = callerSession(ctx);
 		if (!parent) return fail(`fork_task: agent \`${ctx.agent.id}\` has no session in the agent registry.`);
@@ -684,12 +679,14 @@ async function executeForkTask(
 		const resolveRole = roleResolver(parent);
 		let refused: string | undefined;
 		try {
-			for (const [index, { item, outputSchema }] of items.entries()) {
+			for (const [index, { item, callerSchema }] of items.entries()) {
 				const source = await resolveSource(item.from, parent, parentFile);
 				if (source.kind === "error") throw new Error(source.message);
 				const agent = item.agent?.trim() || undefined;
 				const role = await resolveRole(agent);
 				if (role.kind === "error") throw new Error(role.message);
+				// Absent both, the host falls back to `fork:self`'s own `output`.
+				const outputSchema = callerSchema ?? (role.kind === "role" ? role.output : undefined);
 				const captured = captureReplica(source.request, {
 					inheritReasoning: role.kind === "none" && item.effort === undefined,
 				});
@@ -784,7 +781,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
-	pi.on("tool_result", toolResult.bind(null, rt));
+	pi.on("tool_result", (_event, ctx) => toolResult(rt, ctx));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
 	pi.on("turn_start", () => rt.deltas.turnStarted());
 	registerSubagentProgress(pi, warn);
