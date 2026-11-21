@@ -21,20 +21,41 @@ type RequestSnapshot = {
 
 type ObservedRequest = { readonly request: RequestSnapshot; response: number | undefined };
 
+/** A context file as a system prompt carried it: the file's path and the prompt text built from it. */
+export type ContextFragment = { readonly path: string; readonly text: string };
+
 const requests = new WeakMap<AgentSession, ObservedRequest>();
 const observed = new WeakSet<AgentSession>();
 const liveSessions = new Map<string, AgentSession>();
+/** A replicated child sends its source's system prompt, so its context files are the ones that prompt carried. */
+const replicatedContext = new WeakMap<AgentSession, readonly ContextFragment[]>();
+
+/**
+ * The context files `prompt` (a request's system prompt) carries: each file's text as the session built it,
+ * kept when the sent prompt still contains it, also after a hook rewrote other parts of its block.
+ */
+function promptContextFiles(session: AgentSession, prompt: readonly string[] | undefined): ContextFragment[] {
+	const inherited = replicatedContext.get(session);
+	if (inherited) return [...inherited];
+	const built = session.systemPromptSources;
+	if (!built || !prompt) return [];
+	return built.sources.flatMap((source) => {
+		const block = built.blocks[source.block];
+		if (source.kind !== "instruction-files" || block === undefined) return [];
+		const text = block.slice(source.start, source.end);
+		return prompt.some((sent) => sent.includes(text)) ? [{ path: source.label, text }] : [];
+	});
+}
 
 export type SourceRequest = {
 	readonly request: RequestSnapshot;
 	readonly response: number | undefined;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
+	readonly contextFiles: readonly ContextFragment[];
 	readonly thinkingLevel: AgentSession["thinkingLevel"];
-	readonly ask: AgentTool | undefined;
 };
 
-export type PortableSource = Omit<SourceRequest, "ask"> & { readonly cwd: string };
+export type PortableSource = SourceRequest & { readonly cwd: string };
 
 export type ParkedRequest = PortableSource & { readonly response: number };
 
@@ -91,7 +112,7 @@ export function observeRequests(session: AgentSession, warn: (message: string, e
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
+			contextFiles: promptContextFiles(session, latest.request.context.systemPrompt),
 			thinkingLevel: session.thinkingLevel,
 			cwd: session.sessionManager.getCwd(),
 		};
@@ -147,8 +168,9 @@ type Replay = { readonly kind: "prefix"; readonly response: number | undefined; 
 export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
-	readonly toolNames: readonly string[];
-	readonly ask: AgentTool | undefined;
+	readonly contextFiles: readonly ContextFragment[];
+	/** The working directory the source ran in when it sent `request`. */
+	readonly cwd: string;
 	readonly sourceModel: string;
 	readonly replay: Replay;
 	readonly inheritReasoning: boolean;
@@ -165,9 +187,8 @@ export function liveRequest(session: AgentSession): SourceRequestResult {
 			request: latest.request,
 			response: latest.response,
 			systemPrompt: [...session.systemPrompt],
-			toolNames: session.agent.state.tools.map((tool) => tool.name),
+			contextFiles: promptContextFiles(session, latest.request.context.systemPrompt),
 			thinkingLevel: session.thinkingLevel,
-			ask: session.getToolByName("ask"),
 		},
 	};
 }
@@ -179,21 +200,17 @@ export async function shareSource(file: string): Promise<SharedSource | undefine
 	if (live.kind === "unavailable") return live;
 	await session.sessionManager.ensureOnDisk();
 	await session.sessionManager.flush();
-	const { ask: _live, ...source } = live.source;
-	return { kind: "ready", source: { ...source, cwd: session.sessionManager.getCwd() } };
+	return { kind: "ready", source: { ...live.source, cwd: session.sessionManager.getCwd() } };
 }
 
-export function captureReplica(
-	source: SourceRequest,
-	options: { readonly inheritReasoning: boolean; readonly caller: AgentSession },
-): Capture {
-	const { request, toolNames, thinkingLevel: level } = source;
+export function captureReplica(source: PortableSource, options: { readonly inheritReasoning: boolean }): Capture {
+	const { request, thinkingLevel: level } = source;
 	return {
 		request,
 		response: source.response,
 		systemPrompt: source.systemPrompt,
-		toolNames,
-		ask: toolNames.includes("ask") ? (options.caller.getToolByName("ask") ?? source.ask) : undefined,
+		contextFiles: source.contextFiles,
+		cwd: source.cwd,
 		sourceModel: `${request.model.provider}/${request.model.id}${level ? `:${level}` : ""}`,
 		inheritReasoning: options.inheritReasoning,
 	};
@@ -257,11 +274,9 @@ function replicatedMessages(session: AgentSession, replay: Replay, source: reado
 
 type ModelKey = Pick<Model, "provider" | "id">;
 
-export function sameModel(a: ModelKey, b: ModelKey): boolean {
+function sameModel(a: ModelKey, b: ModelKey): boolean {
 	return a.provider === b.provider && a.id === b.id;
 }
-
-const BRIDGE_TOOL = "eval";
 
 function forcedToolName(choice: ToolChoice | undefined): string | undefined {
 	if (choice === undefined || typeof choice === "string") return undefined;
@@ -279,31 +294,17 @@ function forcedToolName(choice: ToolChoice | undefined): string | undefined {
 	}
 }
 
-function forceTool(choice: Exclude<ToolChoice, string>, name: string): ToolChoice {
-	switch (choice.type) {
-		case "tool":
-			return { type: "tool", name };
-		case "function":
-			return "name" in choice ? { type: "function", name } : { type: "function", function: { name } };
-		case "computer":
-			return choice;
-		default: {
-			const unreachable: never = choice;
-			return unreachable;
-		}
-	}
-}
-
 type WireTools = { readonly tools: Tool[] | undefined; readonly toolChoice: ToolChoice | undefined };
 
-function wireTools(source: Tool[] | undefined, current: Context, onSourceModel: boolean, choice: ToolChoice | undefined): WireTools {
-	const names = new Set(source?.map((tool) => tool.name));
-	const own = current.tools?.filter((tool) => !names.has(tool.name)) ?? [];
-	if (own.length === 0) return { tools: source, toolChoice: choice };
-	if (!onSourceModel || !names.has(BRIDGE_TOOL)) return { tools: [...(source ?? []), ...own], toolChoice: choice };
+/**
+ * The declaration is always the source's. A choice forcing a tool it does not
+ * declare (the executor pins its final reminder to the child's own `yield`)
+ * would name a tool absent from the request, so that pin is dropped.
+ */
+function wireTools(source: Tool[] | undefined, choice: ToolChoice | undefined): WireTools {
 	const forced = forcedToolName(choice);
-	const forcesOwn = choice !== undefined && typeof choice !== "string" && own.some((tool) => tool.name === forced);
-	return { tools: source, toolChoice: forcesOwn ? forceTool(choice, BRIDGE_TOOL) : choice };
+	const declared = forced === undefined || (source?.some((tool) => tool.name === forced) ?? false);
+	return { tools: source, toolChoice: declared ? choice : undefined };
 }
 
 function replicateContext(session: AgentSession, replica: Replica, current: Context, tools: Tool[] | undefined): Context {
@@ -316,38 +317,25 @@ function replicateContext(session: AgentSession, replica: Replica, current: Cont
 	};
 }
 
-export type OwnYield = { readonly tool: AgentTool; readonly sourceModel: ModelKey };
+/** The child's registered `yield`, and whether the replicated declaration names a tool `yield` too. */
+export type OwnYield = { readonly tool: AgentTool; readonly declared: boolean };
 
 export function applyReplica(session: AgentSession, replica: Replica): OwnYield | undefined {
-	const own = new Map(session.agent.state.tools.map((tool) => [tool.name, tool]));
-	const names = new Set(replica.toolNames);
-	const tools = replica.toolNames.map((name) => {
-		const local = own.get(name) ?? session.getToolByName(name);
-		if (local) return local;
-		// Never fabricate a same-schema tool that always returns an error.
-		if (name === "ask" && replica.ask) return replica.ask;
-		throw new Error(`fork_task: cannot clone source tool \`${name}\` into this child`);
-	});
-	// Only completion extends the source's capability surface. Do not expose
-	// other tools admitted by the unrestricted internal agent definition.
-	const yieldTool = own.get("yield") ?? session.getToolByName("yield");
-	const ownYield = yieldTool && !names.has("yield") ? yieldTool : undefined;
-	if (ownYield) tools.push(ownYield);
+	const yieldTool = session.agent.state.tools.find((tool) => tool.name === "yield");
 	const systemPrompt = [...replica.systemPrompt];
+	replicatedContext.set(session, replica.contextFiles);
 	const detach = session.agent.addBeforeModelCallHook(() => {
 		session.agent.setSystemPrompt(systemPrompt);
-		session.agent.setTools(tools);
 	});
 	session.addDisposer(detach);
 
 	const stream = session.agent.streamFn;
 	const source = replica.request;
 	const wrap: StreamFn = (model, context, options) => {
-		const onSourceModel = sameModel(model, source.model);
-		const wire = wireTools(source.context.tools, context, onSourceModel, options?.toolChoice);
+		const wire = wireTools(source.context.tools, options?.toolChoice);
 		const replicated = replicateContext(session, replica, context, wire.tools);
-		if (!onSourceModel) {
-			return stream(model, replicated, { ...options, parentSessionId: source.options.sessionId });
+		if (!sameModel(model, source.model)) {
+			return stream(model, replicated, { ...options, toolChoice: wire.toolChoice, parentSessionId: source.options.sessionId });
 		}
 		return stream(model, replicated, {
 			...options,
@@ -362,7 +350,5 @@ export function applyReplica(session: AgentSession, replica: Replica): OwnYield 
 		});
 	};
 	session.agent.streamFn = wrap;
-	return ownYield && names.has(BRIDGE_TOOL)
-		? { tool: ownYield, sourceModel: { provider: source.model.provider, id: source.model.id } }
-		: undefined;
+	return yieldTool && { tool: yieldTool, declared: source.context.tools?.some((tool) => tool.name === "yield") ?? false };
 }

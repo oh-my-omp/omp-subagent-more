@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "@oh-my-pi/pi-coding-agent";
@@ -12,7 +11,8 @@ import {
 	type WorktreeBaseline,
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
 import { errorText } from "./errors.ts";
-import { readOptional, STAGING_ROOT } from "./replica-file.ts";
+import type { WorkingDirectory } from "./fork-diff.ts";
+import { readOptional, sessionArtifactsDir } from "./replica-file.ts";
 
 export type RejectionCode =
 	| "child-not-isolated"
@@ -54,20 +54,21 @@ const baselineSchema = z.object({
 
 const headerSchema = z.object({ type: z.literal("session"), cwd: z.string() }).passthrough();
 
-export function startsRoot(): string {
-	return path.join(STAGING_ROOT, "starts", String(process.pid));
-}
-
 function startFilePath(sessionFile: string): string {
-	return path.join(startsRoot(), `${createHash("sha256").update(sessionFile).digest("hex")}.json`);
-}
-
-export function overlaysRoot(): string {
-	return path.join(STAGING_ROOT, "overlays", String(process.pid));
+	return path.join(sessionArtifactsDir(sessionFile), "fork-task.start.json");
 }
 
 export function overlayFilePath(childFile: string): string {
-	return path.join(overlaysRoot(), `${createHash("sha256").update(childFile).digest("hex")}.patch`);
+	return path.join(sessionArtifactsDir(childFile), "fork-task.overlay.patch");
+}
+
+/** `cwd` with the root of its git repository; outside a repository there is no root to map paths by. */
+export async function workingDirectory(cwd: string): Promise<WorkingDirectory> {
+	try {
+		return { path: cwd, repoRoot: await getRepoRoot(cwd) };
+	} catch {
+		return { path: cwd, repoRoot: undefined };
+	}
 }
 
 export async function headerCwd(sessionFile: string): Promise<string | undefined> {

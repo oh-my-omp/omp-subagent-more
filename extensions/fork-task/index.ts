@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import {
 	type AgentDefinition,
 	type AgentSession,
@@ -20,16 +19,18 @@ import {
 	type ExtensionContext,
 	SessionManager,
 	type SessionShutdownEvent,
-	type SessionStartEvent,
 	type TaskItem,
 	type ToolDefinition,
-	type ToolResultEvent,
 	z,
 } from "@oh-my-pi/pi-coding-agent";
+import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
+import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
+import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
+import { generateTaskName, sanitizeAgentId } from "@oh-my-pi/pi-coding-agent/task/name-generator";
 import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents, cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/tools/todo";
@@ -37,6 +38,7 @@ import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-sha
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "./caller-session.ts";
 import { errorText } from "./errors.ts";
+import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools, type WorkingDirectory } from "./fork-diff.ts";
 import {
 	applyReplica,
 	captureReplica,
@@ -49,24 +51,21 @@ import {
 	parkedRequest,
 	type Replica,
 	type SourceRequest,
-	sameModel,
 } from "./replica.ts";
-import { parkedRoot, readReplicaFile, replicaFilePath, replicasRoot, STAGING_ROOT, writeReplicaFile } from "./replica-file.ts";
+import { readReplicaFile, replicaFilePath, sessionArtifactsDir, writeReplicaFile } from "./replica-file.ts";
 import { createReportLimit } from "./report-limit.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
-import { sweepDeadProcessDirs } from "./sweep.ts";
 import { forkTaskTopics, TOPIC_POINTERS } from "./topics.ts";
 import {
 	applyOverlay,
 	type Inheritance,
 	inheritSourceWorkspace,
-	overlaysRoot,
 	recordStart,
 	rejection,
-	startsRoot,
+	workingDirectory,
 	writeOverlay,
 } from "./workspace.ts";
 
@@ -81,7 +80,7 @@ const itemSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			"Requested child name: kept characters `[A-Za-z0-9_-]`, truncated to 40, plus a short unique suffix, so the returned id differs. Omit for `Fork` plus the suffix; use the returned id for follow-ups.",
+			"Requested child name, unique within the call: kept characters `[A-Za-z0-9_-]`, truncated to 48. The child's id is allocated from it as for `task`, with `-2`, `-3`, … appended when an earlier agent of this session holds it. Omit for a generated name; use the returned id for follow-ups.",
 		),
 	agent: z
 		.string()
@@ -122,7 +121,7 @@ const itemSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			'JSON Schema for the child\'s `yield` payload, as JSON text, not an object: e.g. \'{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}\'. Its presence overrides the named agent\'s and the session\'s schema. Text that is not valid JSON is rejected before dispatch, naming this field.',
+			'JSON Schema for the child\'s `yield` payload, as JSON text, not an object: e.g. \'{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}\'. Every child delivers through `yield`; its schema is this one, else the `output` of the role named in `agent`, else `{report: string}`. While `task.structured` is off the host ignores this field and the role\'s `output`, so the child takes `{report: string}`. Text that is not valid JSON is rejected before dispatch, naming this field.',
 		),
 	schemaMode: z
 		.enum(["permissive", "strict"])
@@ -154,7 +153,7 @@ Children keep native task result delivery, Agent Hub, \`agent://\`/\`history://\
 
 Forked workers must run relevant scoped checks and real runtime verification before returning; the parent owns final acceptance.
 
-Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy; adding completion tools can invalidate caches on providers without append-only tool support.`;
+Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy.`;
 
 type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
@@ -166,14 +165,13 @@ function workspaceNotice(source: ForkSource, parentCwd: string, isolated: boolea
 		case "caller":
 			return [
 				isolated
-					? `- You run in an isolated copy of the workspace. Paths under \`${parentCwd}\` in the conversation name the parent's checkout: use the same repository-relative paths inside your own working directory, and NEVER read or write under \`${parentCwd}\`.`
+					? "- You run in an isolated copy of the workspace."
 					: "- You share the parent's working directory; files may change between your reads.",
 			];
 		case "agent":
 		case "parked": {
 			const id = `\`${source.id}\``;
-			const foreign = [...new Set([source.cwd, ...(isolated ? [parentCwd] : [])])];
-			const lines = [
+			return [
 				isolated
 					? "- You run in an isolated copy of the parent's workspace."
 					: `- You share the parent's working directory \`${parentCwd}\`; files may change between your reads.`,
@@ -181,14 +179,6 @@ function workspaceNotice(source: ForkSource, parentCwd: string, isolated: boolea
 					? `- Before your first turn, the uncommitted changes ${id} made in its own isolated workspace were applied to yours: continue from them. They are handed back together with your own changes.`
 					: `- Your workspace derives from the parent's checkout, not from ${id}'s: changes ${id} made in a workspace of its own are not in yours unless they reached the parent's checkout before this fork.`,
 			];
-			const named = foreign.filter((p) => isolated || p !== parentCwd);
-			if (named.length > 0) {
-				const list = named.map((p) => `\`${p}\``).join(" and ");
-				lines.push(
-					`- Paths under ${list} in the conversation name checkouts other than yours: use the same repository-relative paths inside your own working directory, and NEVER read or write under ${list}.`,
-				);
-			}
-			return lines;
 		}
 		default: {
 			const unreachable: never = source;
@@ -204,7 +194,7 @@ const forkNotice = (source: ForkSource, parentCwd: string, isolated: boolean, in
 			: `Above: the conversation of agent \`${source.id}\`, copied as background. You continue under its system prompt and tools, but \`${source.id}\` is not your parent: the agent that spawned you receives your result.`;
 	const owner = source.kind === "caller" ? "the parent" : `\`${source.id}\``;
 	const contract =
-		"The parent keeps the conversation with the user. A <role> block opening the assignment defines how you work on it. Deliver your result with `yield` when available, otherwise finish with your final report.";
+		"The parent keeps the conversation with the user. A <role> block opening the assignment defines how you work on it. Deliver your result with `yield`.";
 	return [
 		`<system-notice cause="fork_task">`,
 		`${origin} ${contract}`,
@@ -221,8 +211,6 @@ const forkNotice = (source: ForkSource, parentCwd: string, isolated: boolean, in
 
 const FORK_AGENT = "fork:self";
 
-const replicaAsks = new Map<string, AgentTool>();
-
 type PendingFork = {
 	readonly name: string;
 	readonly artifactsDir: string;
@@ -238,18 +226,21 @@ type StagedFork = {
 	readonly shakeSummary?: string;
 };
 
-async function portableReplica(childFile: string): Promise<Replica | undefined> {
-	const copy = await readReplicaFile(replicaFilePath(childFile));
-	if (!copy) return undefined;
-	return { ...copy, ask: replicaAsks.get(childFile) };
+function allocatedFrom(id: string, name: string): boolean {
+	return (/^\d+$/.test(name) ? [name, `Agent${name}`] : [name]).some((base) => {
+		if (id === base) return true;
+		const suffix = id.startsWith(`${base}-`) ? id.slice(base.length + 1) : "";
+		return /^[1-9]\d*$/.test(suffix);
+	});
 }
 
-function sanitizeName(value: string | undefined): string | undefined {
-	const sanitized = value
-		?.trim()
-		.replace(/[^A-Za-z0-9_-]+/g, "")
-		.slice(0, 40);
-	return sanitized || undefined;
+function claimsName(pending: readonly PendingFork[], artifactsDir: string, name: string): boolean {
+	const lower = name.toLowerCase();
+	return pending.some(
+		(entry) =>
+			entry.artifactsDir === artifactsDir &&
+			(allocatedFrom(entry.name.toLowerCase(), lower) || allocatedFrom(lower, entry.name.toLowerCase())),
+	);
 }
 
 async function moveFile(from: string, to: string): Promise<void> {
@@ -274,13 +265,14 @@ function lastResponse(manager: SessionManager): number | undefined {
 async function stageFork(
 	ctx: ExtensionContext,
 	parent: AgentSession,
+	artifactsDir: string,
 	source: ForkSource,
 	shake: boolean,
 	isolated: boolean,
 	inherited: boolean,
 ): Promise<StagedFork> {
 	const parentCwd = parent.sessionManager.getCwd();
-	const stagingDir = path.join(STAGING_ROOT, randomUUID());
+	const stagingDir = path.join(artifactsDir, ".fork-task-staging", randomUUID());
 	const staging = path.join(stagingDir, "fork.jsonl");
 	await fs.mkdir(stagingDir, { recursive: true });
 	try {
@@ -371,7 +363,7 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 	if (ref.session === parent || ref.sessionFile === parentFile) return caller();
 	const parked = (id: string, file: string, kept: ParkedRequest): SourceResolution => {
 		const { cwd, ...request } = kept;
-		return { kind: "parked", id, request: { ...request, ask: undefined }, file, cwd };
+		return { kind: "parked", id, request, file, cwd };
 	};
 	const session = ref.session;
 	if (!session) {
@@ -403,12 +395,17 @@ async function resolveSource(from: string | undefined, parent: AgentSession, par
 	}
 	if (shared.kind === "unavailable") return { kind: "error", message: `cannot replicate the source's request: ${shared.reason}` };
 	const { cwd, ...request } = shared.source;
-	return { kind: "agent", id: ref.id, request: { ...request, ask: undefined }, file, cwd };
+	return { kind: "agent", id: ref.id, request, file, cwd };
 }
 
 type RoleResolution =
 	| { readonly kind: "none" }
-	| { readonly kind: "role"; readonly block: string; readonly model: string | string[] | undefined }
+	| {
+			readonly kind: "role";
+			readonly block: string;
+			readonly model: string | string[] | undefined;
+			readonly output: AgentDefinition["output"];
+	  }
 	| { readonly kind: "error"; readonly message: string };
 
 function roleResolver(parent: AgentSession): (agent: string | undefined) => Promise<RoleResolution> {
@@ -431,6 +428,7 @@ function roleResolver(parent: AgentSession): (agent: string | undefined) => Prom
 			kind: "role",
 			block: `<role agent="${agent}">\n${definition.systemPrompt.trim()}\n</role>`,
 			model: override ?? definition.model,
+			output: definition.output,
 		};
 	};
 }
@@ -471,19 +469,34 @@ async function sourceInheritance(source: ForkSource, isolated: boolean, callerCw
 	}
 }
 
+/** A replicated child: its own `yield`, what its request carries from the source, and the tools it was told are unavailable. */
+type Clone = {
+	readonly ownYield: OwnYield | undefined;
+	readonly baseline: ForkBaseline;
+	/** The child's own working directory; a session keeps its cwd for its whole run. */
+	readonly cwd: WorkingDirectory;
+	readonly reported: Set<string>;
+};
+
 type ForkTaskRuntime = {
 	readonly pi: ExtensionAPI;
 	readonly warn: (message: string, error: unknown) => void;
 	readonly pending: PendingFork[];
-	readonly cloned: WeakMap<AgentSession, OwnYield | undefined>;
+	readonly cloned: WeakMap<AgentSession, Clone>;
 	readonly deltas: DeltaStream;
+	readonly diffs: DeltaStream;
 	readonly started: Set<string>;
 };
 
 async function discardPending(rt: ForkTaskRuntime, entry: PendingFork): Promise<void> {
 	const index = rt.pending.indexOf(entry);
 	if (index !== -1) rt.pending.splice(index, 1);
-	await fs.rm(path.dirname(entry.staging), { recursive: true, force: true });
+	const stagingDir = path.dirname(entry.staging);
+	await fs.rm(stagingDir, { recursive: true, force: true });
+	await fs.rmdir(path.dirname(stagingDir)).catch((error: unknown) => {
+		if (error instanceof Error && "code" in error && (error.code === "ENOTEMPTY" || error.code === "ENOENT")) return;
+		throw error;
+	});
 }
 
 async function beforeSubagentSpawn(
@@ -491,13 +504,14 @@ async function beforeSubagentSpawn(
 	event: BeforeSubagentSpawnEvent,
 	ctx: ExtensionContext,
 ): Promise<BeforeSubagentSpawnEventResult | undefined> {
-	if (event.invocationKind !== "task" || !event.spawnKey) return;
-	const parentFile = ctx.sessionManager.getSessionFile();
-	if (!parentFile) return;
-	const artifactsDir = parentFile.slice(0, -".jsonl".length);
+	if (event.invocationKind !== "task" || event.agent !== FORK_AGENT || !event.spawnKey) return;
+	const callerFile = ctx.sessionManager.getSessionFile();
+	if (!callerFile) return;
+	const artifactsDir = sessionArtifactsDir(callerFile);
 	const spawnKey = event.spawnKey;
 	const segment = spawnKey.slice(spawnKey.lastIndexOf(".") + 1);
-	const entry = rt.pending.find((p) => p.artifactsDir === artifactsDir && p.name === segment);
+	const forks = rt.pending.filter((p) => p.artifactsDir === artifactsDir);
+	const entry = forks.find((p) => p.name === segment) ?? forks.find((p) => allocatedFrom(segment, p.name));
 	if (!entry) return;
 	const target = path.join(artifactsDir, `${spawnKey}.jsonl`);
 	try {
@@ -513,7 +527,6 @@ async function beforeSubagentSpawn(
 		await moveFile(entry.staging, target);
 		await discardPending(rt, entry);
 		await writeReplicaFile(replicaFilePath(target), entry.replica);
-		if (entry.replica.ask) replicaAsks.set(target, entry.replica.ask);
 		if (entry.overlay) await writeOverlay(target, entry.overlay);
 		return entry.model === undefined ? undefined : { model: entry.model };
 	} catch (error) {
@@ -522,14 +535,22 @@ async function beforeSubagentSpawn(
 	}
 }
 
-function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delta {
-	const model = session.model;
-	if (!ownYield || !model || !sameModel(model, ownYield.sourceModel)) return { kind: "none" };
-	const { tool } = ownYield;
+const YIELD_UNDECLARED =
+	"You deliver your result with the `yield` tool. It is not among the tools declared to you, because the declaration stays identical to the parent's request to keep its prompt cache; it is registered in this session all the same.";
+
+const YIELD_DECLARED =
+	"You deliver your result with the `yield` tool. The `yield` declared to you is the parent's, kept identical to the parent's request to keep its prompt cache; the one registered in this session takes the parameters below.";
+
+const YIELD_CALL =
+	'Emit it as a function call of its own, exactly like a call to `read` or `bash`: name `yield`, arguments `{"data": <your result>}`, or `{"error": "<why>"}` when you cannot finish. Only that call ends your run. Through `eval` (`tool.yield`) it is rejected, and `write xd://yield` is accepted without ending the run.';
+
+function yieldDelta(ownYield: OwnYield | undefined): Delta {
+	if (!ownYield) return { kind: "none" };
+	const { tool, declared } = ownYield;
 	return {
 		kind: "text",
 		body: [
-			`Your \`${tool.name}\` tool is not in your tool list: the list stays the parent's so its prompt cache keeps serving you. Call it from a JavaScript \`eval\` cell, never as a direct tool call: \`await tool.${tool.name}({ data: … })\` (or \`{ error: "…" }\`). The call submits exactly as a direct \`${tool.name}\` call would; a terminal submission ends your run.`,
+			`${declared ? YIELD_DECLARED : YIELD_UNDECLARED} ${YIELD_CALL}`,
 			"",
 			"Description:",
 			tool.description,
@@ -540,27 +561,68 @@ function yieldDelta(ownYield: OwnYield | undefined, session: AgentSession): Delt
 	};
 }
 
-function forwardBridgedYield(rt: ForkTaskRuntime, session: AgentSession, event: ToolResultEvent): void {
-	if (event.toolName !== "yield" || session.agent.state.pendingToolCalls.has(event.toolCallId)) return;
+function toolResult(rt: ForkTaskRuntime, ctx: ExtensionContext): { additionalContext: string } | undefined {
+	const session = callerSession(ctx);
+	const clone = session && rt.cloned.get(session);
+	if (!clone) return;
+	return rt.deltas.afterTools(ctx, yieldDelta(clone.ownYield));
+}
+
+/**
+ * The context files OMP discovers for `cwd`, `@path` imports expanded as the system prompt builder does.
+ * Plugins reach only the served `capability` and `discovery` modules, not the builder itself.
+ * The capability layer caches file content for the whole process, so each file's content is read
+ * from disk here; a file deleted since its discovery is not under `cwd` any more.
+ */
+async function contextFilesUnder(cwd: string): Promise<ContextFile[]> {
+	const found = await loadCapability<HostContextFile>(contextFileCapability.id, { cwd });
+	const files = await Promise.all(found.items.map((file) => currentContextFile(file.path)));
+	return files.filter((file) => file !== undefined);
+}
+
+async function currentContextFile(filePath: string): Promise<ContextFile | undefined> {
+	let content: string;
 	try {
-		session.agent.emitExternalEvent({
-			type: "tool_execution_end",
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			result: { content: event.content, details: event.details },
-			isError: event.isError,
-		});
+		content = await fs.readFile(filePath, "utf8");
 	} catch (error) {
-		rt.warn("fork_task: reporting a yield submitted from eval failed", error);
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	return { path: filePath, content: await expandAtImports(content, filePath) };
+}
+
+async function cloneDiff(clone: Clone, session: AgentSession): Promise<Delta> {
+	const current: ForkCurrent = {
+		cwd: clone.cwd,
+		tools: session.agent.state.tools.map((tool) => tool.name),
+		contextFiles: await contextFilesUnder(clone.cwd.path),
+	};
+	const restored = [...clone.reported].filter((name) => current.tools.includes(name));
+	for (const name of unavailableTools(clone.baseline, current.tools)) clone.reported.add(name);
+	return forkDiff(clone.baseline, current, restored);
+}
+
+/** The current difference of the calling session when it is a replicated child; undefined otherwise or when computing it failed. */
+async function currentDiff(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<Delta | undefined> {
+	const session = callerSession(ctx);
+	const clone = session && rt.cloned.get(session);
+	if (!session || !clone) return;
+	try {
+		return await cloneDiff(clone, session);
+	} catch (error) {
+		rt.warn("fork_task: computing the fork child's differences failed", error);
+		return;
 	}
 }
 
-function toolResult(rt: ForkTaskRuntime, event: ToolResultEvent, ctx: ExtensionContext): { additionalContext: string } | undefined {
-	const session = callerSession(ctx);
-	if (!session || !rt.cloned.has(session)) return;
-	const ownYield = rt.cloned.get(session);
-	if (ownYield) forwardBridgedYield(rt, session, event);
-	return rt.deltas.afterTools(ctx, yieldDelta(ownYield, session));
+async function diffAtPrompt(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<BeforeAgentStartEventResult | undefined> {
+	const delta = await currentDiff(rt, ctx);
+	return delta && rt.diffs.atPrompt(ctx, delta);
+}
+
+async function diffAfterTools(rt: ForkTaskRuntime, ctx: ExtensionContext): Promise<{ additionalContext: string } | undefined> {
+	const delta = await currentDiff(rt, ctx);
+	return delta && rt.diffs.afterTools(ctx, delta);
 }
 
 async function beforeAgentStart(
@@ -571,7 +633,8 @@ async function beforeAgentStart(
 	const session = callerSession(ctx);
 	if (!session) return;
 	// A cloned session already holds its replica in the stream hook: never re-read the copy for it.
-	if (rt.cloned.has(session)) return rt.deltas.atPrompt(ctx, yieldDelta(rt.cloned.get(session), session));
+	const clone = rt.cloned.get(session);
+	if (clone) return rt.deltas.atPrompt(ctx, yieldDelta(clone.ownYield));
 	const file = ctx.sessionManager.getSessionFile();
 	if (ctx.agent.kind === "sub" && file && !rt.started.has(file)) {
 		rt.started.add(file);
@@ -596,7 +659,7 @@ async function beforeAgentStart(
 	}
 	try {
 		observeRequests(session, rt.warn);
-		const replica = file ? await portableReplica(file) : undefined;
+		const replica = file ? await readReplicaFile(replicaFilePath(file)) : undefined;
 		if (!replica) {
 			if (ctx.agent.name === FORK_AGENT) {
 				throw new Error("the fork's request snapshot is no longer available; create a fresh fork from the parent");
@@ -604,8 +667,18 @@ async function beforeAgentStart(
 			return;
 		}
 		const ownYield = applyReplica(session, replica);
-		rt.cloned.set(session, ownYield);
-		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield, session));
+		const [sourceCwd, ownCwd] = await Promise.all([workingDirectory(replica.cwd), workingDirectory(ctx.sessionManager.getCwd())]);
+		rt.cloned.set(session, {
+			ownYield,
+			baseline: {
+				cwd: sourceCwd,
+				tools: replica.request.context.tools?.map((tool) => tool.name) ?? [],
+				contextFiles: replica.contextFiles,
+			},
+			cwd: ownCwd,
+			reported: new Set(),
+		});
+		return rt.deltas.atPrompt(ctx, yieldDelta(ownYield));
 	} catch (error) {
 		const reason = `fork_task: preparing request replication failed: ${errorText(error)}`;
 		rt.pi.logger.warn(reason);
@@ -616,30 +689,11 @@ async function beforeAgentStart(
 	}
 }
 
-async function sessionStart(rt: ForkTaskRuntime, _event: SessionStartEvent, ctx: ExtensionContext): Promise<void> {
-	if (ctx.agent.kind !== "main") return;
-	await sweepDeadProcessDirs(
-		[replicasRoot(), overlaysRoot(), parkedRoot(), startsRoot()].map((dir) => path.dirname(dir)),
-		rt.warn,
-	);
-}
-
-/**
- * A sub session's park
- * emits the same event, so it must not drop what its fork children still need.
- */
 async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
-	if (ctx.agent.kind === "main") {
-		for (const root of [replicasRoot(), overlaysRoot(), parkedRoot(), startsRoot()]) {
-			await fs
-				.rm(root, { recursive: true, force: true })
-				.catch((error: unknown) => rt.warn("fork_task: removing per-process records failed", error));
-		}
-	}
 	const parentFile = ctx.sessionManager.getSessionFile();
 	if (!parentFile) return;
 	rt.started.delete(parentFile);
-	const artifactsDir = parentFile.slice(0, -".jsonl".length);
+	const artifactsDir = sessionArtifactsDir(parentFile);
 	for (const entry of rt.pending.filter((p) => p.artifactsDir === artifactsDir)) {
 		try {
 			await discardPending(rt, entry);
@@ -647,19 +701,6 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 			rt.pi.logger.warn("fork_task: cleaning up the staged conversation failed", { error: errorText(error) });
 		}
 	}
-}
-
-function taskDepthOf(session: AgentSession): number {
-	const registry = AgentRegistry.global();
-	let ref = registry.list().find((candidate) => candidate.session === session);
-	let depth = 0;
-	const visited = new Set<string>();
-	while (ref?.parentId !== undefined && !visited.has(ref.id)) {
-		visited.add(ref.id);
-		depth++;
-		ref = registry.get(ref.parentId);
-	}
-	return depth;
 }
 
 function parseOutputSchema(text: string, index: number): unknown {
@@ -693,12 +734,12 @@ async function executeForkTask(
 		const params = paramsSchema.parse(rawParams);
 		const items = params.tasks.map((item, index) => ({
 			item,
-			outputSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
+			callerSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
 		}));
 		const parent = callerSession(ctx);
-		if (!parent) return fail("fork_task: could not resolve the calling session in the agent registry.");
+		if (!parent) return fail(`fork_task: agent \`${ctx.agent.id}\` has no session in the agent registry.`);
 		const maxRecursionDepth = cfgTaskMaxRecursionDepth.get(parent.settings);
-		const callerDepth = taskDepthOf(parent);
+		const callerDepth = ctx.agent.depth;
 		if (maxRecursionDepth >= 0 && callerDepth + 1 >= maxRecursionDepth) {
 			return fail(
 				`fork_task: reached the maximum dispatch depth (current taskDepth ${callerDepth}, task.maxRecursionDepth ${maxRecursionDepth}); a forked child would start at the cap and cannot dispatch subagents.`,
@@ -713,7 +754,9 @@ async function executeForkTask(
 		await parent.sessionManager.flush();
 		const parentFile = parent.sessionManager.getSessionFile();
 		if (!parentFile) return fail("fork_task: forking needs a persisted session.");
-		const artifactsDir = parentFile.slice(0, -".jsonl".length);
+		// The host places a child beside its caller's own transcript (`leaseArtifacts`);
+		// `getArtifactsDir()` of a subagent names the root's adopted store instead.
+		const artifactsDir = sessionArtifactsDir(parentFile);
 		const planMode = parent.getPlanModeState()?.enabled === true;
 
 		const notes: string[] = [];
@@ -721,17 +764,26 @@ async function executeForkTask(
 		const resolveRole = roleResolver(parent);
 		let refused: string | undefined;
 		try {
-			for (const [index, { item, outputSchema }] of items.entries()) {
+			for (const [index, { item, callerSchema }] of items.entries()) {
 				const source = await resolveSource(item.from, parent, parentFile);
 				if (source.kind === "error") throw new Error(source.message);
 				const agent = item.agent?.trim() || undefined;
 				const role = await resolveRole(agent);
 				if (role.kind === "error") throw new Error(role.message);
-				const captured = captureReplica(source.request, {
-					inheritReasoning: role.kind === "none" && item.effort === undefined,
-					caller: parent,
-				});
-				const name = `${sanitizeName(item.name) ?? "Fork"}_${randomUUID().slice(0, 4)}`;
+				// Absent both, the host falls back to `fork:self`'s own `output`.
+				const outputSchema = callerSchema ?? (role.kind === "role" ? role.output : undefined);
+				const captured = captureReplica(
+					{ ...source.request, cwd: source.cwd },
+					{
+						inheritReasoning: role.kind === "none" && item.effort === undefined,
+					},
+				);
+				const requested = sanitizeAgentId(item.name);
+				let name = requested ?? generateTaskName();
+				while (requested === undefined && claimsName(rt.pending, artifactsDir, name)) name = generateTaskName();
+				if (claimsName(rt.pending, artifactsDir, name)) {
+					throw new Error(`a fork named \`${name}\` of this session is still being dispatched; give tasks[${index}] another \`name\`.`);
+				}
 				const isolated = !planMode && (item.isolated ?? (role.kind === "role" || item.workspace === "source"));
 				const inheritance =
 					item.workspace === "source" ? await sourceInheritance(source, isolated, parent.sessionManager.getCwd()) : undefined;
@@ -740,7 +792,15 @@ async function executeForkTask(
 					break;
 				}
 				const shake = item.shake === true;
-				const { staging, notice, shakeSummary } = await stageFork(ctx, parent, source, shake, isolated, inheritance !== undefined);
+				const { staging, notice, shakeSummary } = await stageFork(
+					ctx,
+					parent,
+					artifactsDir,
+					source,
+					shake,
+					isolated,
+					inheritance !== undefined,
+				);
 				const { response, ...capture } = captured;
 				const entry: PendingFork = {
 					name,
@@ -804,15 +864,21 @@ export default function forkTask(pi: ExtensionAPI): void {
 		pending: [],
 		cloned: new WeakMap(),
 		deltas: createDeltaStream("omp-subagent-more/fork-task"),
+		diffs: createDeltaStream("omp-subagent-more/fork-diff"),
 		started: new Set(),
 	};
 
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
-	pi.on("tool_result", toolResult.bind(null, rt));
-	pi.on("session_start", sessionStart.bind(null, rt));
+	// Registered after `beforeAgentStart`, which records the clone this handler reads.
+	pi.on("before_agent_start", (_event, ctx) => diffAtPrompt(rt, ctx));
+	pi.on("tool_result", (_event, ctx) => toolResult(rt, ctx));
+	pi.on("tool_result", (_event, ctx) => diffAfterTools(rt, ctx));
 	pi.on("session_shutdown", sessionShutdown.bind(null, rt));
-	pi.on("turn_start", () => rt.deltas.turnStarted());
+	pi.on("turn_start", () => {
+		rt.deltas.turnStarted();
+		rt.diffs.turnStarted();
+	});
 	registerSubagentProgress(pi, warn);
 	const reportLimit = createReportLimit({
 		info: (message, data) => pi.logger.info(message, data),
