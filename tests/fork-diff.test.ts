@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Delta } from "../omomp-shared/context-delta.ts";
 import { type ForkBaseline, forkDiff, unavailableTools } from "../extensions/fork-task/fork-diff.ts";
+import type { Delta } from "../omomp-shared/context-delta.ts";
 
 const baseline: ForkBaseline = {
 	tools: ["read", "session_query", "todo"],
