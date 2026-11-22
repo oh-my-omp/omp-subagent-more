@@ -59,7 +59,7 @@ describe("inheritSourceWorkspace rejections", () => {
 	});
 
 	test("rejection text carries the code", () => {
-		expect(rejection("overlay-conflict", "x")).toBe('workspace "source" rejected (overlay-conflict): x');
+		expect(rejection("overlay-conflict", "x")).toBe('workspace "isolated_from_source" rejected (overlay-conflict): x');
 	});
 });
 

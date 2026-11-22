@@ -2,18 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	type AgentSession,
-	type AgentToolResult,
-	type AgentToolUpdateCallback,
-	type BeforeAgentStartEvent,
-	type BeforeSubagentSpawnEvent,
-	type BeforeSubagentSpawnEventResult,
-	type ExtensionAPI,
-	type ExtensionContext,
-	type TaskItem,
-	type ToolDefinition,
-	z,
+import { z } from "@oh-my-pi/omptype/zod";
+import type {
+	AgentSession,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	BeforeAgentStartEvent,
+	BeforeSubagentSpawnEvent,
+	BeforeSubagentSpawnEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	TaskItem,
+	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import type { AsyncJob } from "@oh-my-pi/pi-coding-agent/async/job-manager";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";

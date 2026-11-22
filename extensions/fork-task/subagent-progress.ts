@@ -1,5 +1,6 @@
+import { z } from "@oh-my-pi/omptype/zod";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import { type ExtensionAPI, type ReadonlySessionManager, z } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ReadonlySessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentRef, AgentRegistry, type AgentRegistryApi } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { sessionFileBelongsToRoot } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isAgentViewSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";

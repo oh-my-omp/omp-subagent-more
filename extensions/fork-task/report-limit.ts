@@ -1,4 +1,4 @@
-import { z } from "@oh-my-pi/pi-coding-agent";
+import { z } from "@oh-my-pi/omptype/zod";
 
 export const VERDICTS_LOG = "omp-subagent-more report-limit verdicts";
 

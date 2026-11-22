@@ -5,30 +5,30 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	type AgentDefinition,
-	type AgentSession,
-	type AgentToolResult,
-	type AgentToolUpdateCallback,
-	type BeforeAgentStartEvent,
-	type BeforeAgentStartEventResult,
-	type BeforeSubagentSpawnEvent,
-	type BeforeSubagentSpawnEventResult,
-	createAgentSession,
-	type ExtensionAPI,
-	type ExtensionContext,
-	SessionManager,
-	type SessionShutdownEvent,
-	type TaskItem,
-	type ToolDefinition,
-	z,
+import { z } from "@oh-my-pi/omptype/zod";
+import type {
+	AgentDefinition,
+	AgentSession,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	BeforeSubagentSpawnEvent,
+	BeforeSubagentSpawnEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	SessionShutdownEvent,
+	TaskItem,
+	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
 import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
+import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
+import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
 import { generateTaskName, sanitizeAgentId } from "@oh-my-pi/pi-coding-agent/task/name-generator";
 import { cfgTaskAgentModelOverrides, cfgTaskDisabledAgents, cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/settings";
@@ -58,7 +58,7 @@ import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
-import { forkTaskTopics, TOPIC_POINTERS } from "./topics.ts";
+import { registerForkTaskTopics } from "./topics.ts";
 import {
 	applyOverlay,
 	type Inheritance,
@@ -93,17 +93,11 @@ const itemSchema = z.object({
 		.describe(
 			"This item's assignment: what to do, with its own target, change and acceptance criteria. Joined after the shared `context` (and any role block) as the child's new user message.",
 		),
-	isolated: z
-		.boolean()
-		.optional()
-		.describe(
-			'Run the child in an isolated workspace instead of sharing yours. Defaults to false without `agent` and to true with `agent` or `workspace: "source"`; plan mode forces false. Isolated children merge their changes back on completion and cannot be resumed after completion.',
-		),
 	workspace: z
-		.enum(["caller", "source"])
+		.enum(["shared", "isolated_from_caller", "isolated_from_source"])
 		.optional()
 		.describe(
-			"Where the child's workspace starts. `caller` (default): your checkout only, even when `from` names an agent with an isolated workspace of its own. `source`: an isolated copy of your checkout with the uncommitted changes the `from` agent made in its own isolated workspace applied before the child's first turn, handed back with the child's changes; it sets `isolated` to true and needs a stopped `from` agent whose run has not handed its changes back, otherwise the call fails before dispatch (`help://fork_task/limits`).",
+			"Where the child runs: `shared` shares your checkout, `isolated_from_caller` creates a new worktree from your checkout, and `isolated_from_source` creates an isolated worktree seeded with `from`'s uncommitted isolated changes (needs a stopped `from` agent; fails before dispatch if ineligible — see `tool://fork_task/limits`). Defaults to `shared` without `agent` and `isolated_from_caller` with `agent`; plan mode forces `shared`. Isolated children merge changes back on completion and cannot be resumed.",
 		),
 	shake: z
 		.boolean()
@@ -118,10 +112,10 @@ const itemSchema = z.object({
 			"Thinking effort for the child, mapped onto the target model's own thinking range: `lo` is its lowest supported level, `med` the middle one (the lower of the two middles when the range has an even count), `hi` its highest (high, xhigh or max). Omit to keep the source's level; a changed effort keeps the replicated prefix. Has no effect while `task.enableEffort` is false.",
 		),
 	outputSchema: z
-		.string()
+		.record(z.string(), z.unknown())
 		.optional()
 		.describe(
-			'JSON Schema for the child\'s `yield` payload, as JSON text, not an object: e.g. \'{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}\'. Every child delivers through `yield`; its schema is this one, else the `output` of the role named in `agent`, else `{report: string}`. While `task.structured` is off the host ignores this field and the role\'s `output`, so the child takes `{report: string}`. Text that is not valid JSON is rejected before dispatch, naming this field.',
+			'JSON Schema object for the child\'s `yield` payload: e.g. {"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}. Every child delivers through `yield`; its schema is this one, else the `output` of the role named in `agent`, else `{report: string}`. While `task.structured` is off the host ignores this field and the role\'s `output`, so the child takes `{report: string}`.',
 		),
 	schemaMode: z
 		.enum(["permissive", "strict"])
@@ -131,7 +125,7 @@ const itemSchema = z.object({
 		),
 });
 
-const paramsSchema = z.object({
+export const paramsSchema = z.object({
 	context: z
 		.string()
 		.describe(
@@ -147,13 +141,8 @@ const paramsSchema = z.object({
 
 const progressSchema = z.object({ progress: z.array(z.object({ index: z.number(), id: z.string() }).passthrough()) }).passthrough();
 
-const DESCRIPTION = `Fork a conversation into a native task child that continues it under the source's exact request: its system prompt, tools and message prefix are replicated unchanged, so forks of one source share the provider's cached prefix.
-
-Children keep native task result delivery, Agent Hub, \`agent://\`/\`history://\`, \`write agent://\` and isolated merge-back. They support idle/park/revive while their originating process and snapshot remain alive; after restart, create a fresh fork rather than cold-reviving one without its snapshot. Each child has its own Todo and owns only the assignment, not unfinished work in inherited history. Use ordinary \`task\` for an independent fresh perspective or when a short brief suffices.
-
-Forked workers must run relevant scoped checks and real runtime verification before returning; the parent owns final acceptance.
-
-Cache reuse requires the same model and compatible request parameters, and remains subject to the provider's cache policy.`;
+export const DESCRIPTION =
+	"Fork a live or parked session into native task children sharing its exact request and prompt cache. Read `tool://fork_task/limits` before using `from` or `workspace`.";
 
 type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
@@ -438,7 +427,7 @@ async function sourceInheritance(source: ForkSource, isolated: boolean, callerCw
 		return {
 			kind: "rejected",
 			code: "child-not-isolated",
-			detail: "the child would share your workspace (explicit `isolated: false`, or plan mode); inheriting needs an isolated child.",
+			detail: 'the child would share your workspace (explicit `workspace: "shared"`, or plan mode); inheriting needs an isolated child.',
 		};
 	}
 	switch (source.kind) {
@@ -703,12 +692,15 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 	}
 }
 
-function parseOutputSchema(text: string, index: number): unknown {
-	try {
-		return JSON.parse(text);
-	} catch (error) {
-		throw new Error(`tasks[${index}].outputSchema is not valid JSON: ${errorText(error)}`);
-	}
+export type ForkWorkspace = "shared" | "isolated_from_caller" | "isolated_from_source";
+
+export function resolveForkWorkspace(
+	requested: ForkWorkspace | undefined,
+	hasRole: boolean,
+	planMode: boolean,
+): { readonly workspace: ForkWorkspace; readonly isolated: boolean } {
+	const workspace: ForkWorkspace = requested ?? (hasRole ? "isolated_from_caller" : "shared");
+	return { workspace, isolated: !planMode && workspace !== "shared" };
 }
 
 async function executeForkTask(
@@ -732,10 +724,6 @@ async function executeForkTask(
 	};
 	try {
 		const params = paramsSchema.parse(rawParams);
-		const items = params.tasks.map((item, index) => ({
-			item,
-			callerSchema: item.outputSchema === undefined ? undefined : parseOutputSchema(item.outputSchema, index),
-		}));
 		const parent = callerSession(ctx);
 		if (!parent) return fail(`fork_task: agent \`${ctx.agent.id}\` has no session in the agent registry.`);
 		const maxRecursionDepth = cfgTaskMaxRecursionDepth.get(parent.settings);
@@ -764,14 +752,14 @@ async function executeForkTask(
 		const resolveRole = roleResolver(parent);
 		let refused: string | undefined;
 		try {
-			for (const [index, { item, callerSchema }] of items.entries()) {
+			for (const [index, item] of params.tasks.entries()) {
 				const source = await resolveSource(item.from, parent, parentFile);
 				if (source.kind === "error") throw new Error(source.message);
 				const agent = item.agent?.trim() || undefined;
 				const role = await resolveRole(agent);
 				if (role.kind === "error") throw new Error(role.message);
 				// Absent both, the host falls back to `fork:self`'s own `output`.
-				const outputSchema = callerSchema ?? (role.kind === "role" ? role.output : undefined);
+				const outputSchema = item.outputSchema ?? (role.kind === "role" ? role.output : undefined);
 				const captured = captureReplica(
 					{ ...source.request, cwd: source.cwd },
 					{
@@ -784,9 +772,9 @@ async function executeForkTask(
 				if (claimsName(rt.pending, artifactsDir, name)) {
 					throw new Error(`a fork named \`${name}\` of this session is still being dispatched; give tasks[${index}] another \`name\`.`);
 				}
-				const isolated = !planMode && (item.isolated ?? (role.kind === "role" || item.workspace === "source"));
+				const { workspace, isolated } = resolveForkWorkspace(item.workspace, role.kind === "role", planMode);
 				const inheritance =
-					item.workspace === "source" ? await sourceInheritance(source, isolated, parent.sessionManager.getCwd()) : undefined;
+					workspace === "isolated_from_source" ? await sourceInheritance(source, isolated, parent.sessionManager.getCwd()) : undefined;
 				if (inheritance?.kind === "rejected") {
 					refused = rejection(inheritance.code, inheritance.detail);
 					break;
@@ -914,13 +902,13 @@ export default function forkTask(pi: ExtensionAPI): void {
 		}
 	});
 
-	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
+	registerForkTaskTopics();
+	const tool: ToolDefinition<typeof paramsSchema> = {
 		name: "fork_task",
 		label: tr("Fork Task", "分叉任务"),
-		description: `${DESCRIPTION}\n\n${TOPIC_POINTERS}`,
+		description: DESCRIPTION,
 		loadMode: "essential",
 		parameters: paramsSchema,
-		docTopics: forkTaskTopics,
 		execute: executeForkTask.bind(null, rt),
 	};
 	pi.registerTool(tool);

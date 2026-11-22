@@ -30,18 +30,21 @@
 		"test": "bun test"
 	},
 	"peerDependencies": {
+		"@oh-my-pi/omptype": "*",
 		"@oh-my-pi/pi-agent-core": "*",
 		"@oh-my-pi/pi-ai": "*",
 		"@oh-my-pi/pi-catalog": "*",
-		"@oh-my-pi/pi-coding-agent": "*"
+		"@oh-my-pi/pi-coding-agent": "*",
+		"@oh-my-pi/pi-tui": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "latest",
+		"@oh-my-pi/omptype": "latest",
 		"@oh-my-pi/pi-agent-core": "latest",
 		"@oh-my-pi/pi-ai": "latest",
 		"@oh-my-pi/pi-catalog": "latest",
 		"@oh-my-pi/pi-coding-agent": "latest",
-		"@oh-my-pi/pi-natives": "latest",
+		"@oh-my-pi/pi-tui": "latest",
 		"@types/bun": "latest",
 		"typescript": "latest"
 	}

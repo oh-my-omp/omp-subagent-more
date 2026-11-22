@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { z } from "@oh-my-pi/pi-coding-agent";
+import { z } from "@oh-my-pi/omptype/zod";
 
 const sessionHeaderSchema = z
 	.object({ type: z.literal("session"), cwd: z.string(), additionalDirectories: z.array(z.string()).optional() })

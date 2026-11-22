@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "@oh-my-pi/pi-coding-agent";
+import { z } from "@oh-my-pi/omptype/zod";
 import { hasLiveIsolationOwner } from "@oh-my-pi/pi-coding-agent/task/isolation-ownership";
 import {
 	captureDeltaPatch,
@@ -22,7 +22,7 @@ export type RejectionCode =
 	| "nested-repo"
 	| "overlay-conflict";
 
-export const rejection = (code: RejectionCode, detail: string): string => `workspace "source" rejected (${code}): ${detail}`;
+export const rejection = (code: RejectionCode, detail: string): string => `workspace "isolated_from_source" rejected (${code}): ${detail}`;
 
 export type Inheritance =
 	| { readonly kind: "inherit"; readonly patch: string }

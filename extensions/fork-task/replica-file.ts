@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "@oh-my-pi/omptype/zod";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import { z } from "@oh-my-pi/pi-coding-agent";
 import type { PortableSource, Replica } from "./replica.ts";
 
 const requestSchema = z.object({
