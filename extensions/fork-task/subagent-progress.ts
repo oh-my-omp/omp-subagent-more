@@ -4,6 +4,11 @@ import type { ExtensionAPI, ReadonlySessionManager } from "@oh-my-pi/pi-coding-a
 import { type AgentRef, AgentRegistry, type AgentRegistryApi } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { sessionFileBelongsToRoot } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isAgentViewSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
+import {
+	computeSafePostCompactInsertIndex,
+	defineStatefulHarnessHandoff,
+	registerCompactHandoff,
+} from "../../omomp-shared/compact-handoff.ts";
 import { callerSession } from "./caller-session.ts";
 
 export const PROGRESS_TYPE = "omp-subagent-more.subagent-progress";
@@ -127,7 +132,7 @@ function recordedProgress(manager: ReadonlySessionManager, compactedAt: number):
 }
 
 export function withProgress(messages: readonly AgentMessage[], text: string): AgentMessage[] {
-	const at = messages.findLastIndex((message) => message.role === "compactionSummary") + 1;
+	const at = computeSafePostCompactInsertIndex(messages);
 	const payload: AgentMessage = {
 		role: "custom",
 		customType: PROGRESS_TYPE,
@@ -155,6 +160,36 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		states.set(manager, created);
 		return created;
 	};
+
+	const compactPi = {
+		on: pi.on.bind(pi),
+		events: pi.events,
+		logger: {
+			warn: (message: string, details?: unknown) => warn(message, details),
+		},
+	};
+	registerCompactHandoff(
+		compactPi,
+		defineStatefulHarnessHandoff<{ readonly subagentIds: readonly string[] }>({
+			pluginId: "omp-subagent-more",
+			captureState(compactCtx) {
+				const extCtx = compactCtx.extensionCtx;
+				const subagents = extCtx ? liveSubagents(extCtx.agent.id, extCtx.sessionManager.getSessionFile()) : [];
+				const running = extCtx ? stateOf(extCtx.sessionManager).running : undefined;
+				if (subagents.length === 0 && running === undefined) return null;
+				return {
+					subagentIds: subagents.length > 0 ? subagents.map((s) => s.id) : [...(running?.inquiry.order ?? [])],
+				};
+			},
+			renderCompactPromptClaim(s) {
+				return `\`omp-subagent-more\` (\`<subagent-progress>\`) is querying live subagents (${s.subagentIds.join(", ")}) out-of-band during compaction and will splice their live progress block and \`agent://\`/\`history://\` handles right after the compaction boundary — NEVER write prose subagent inventories or status tables.`;
+			},
+			renderPostCompactInjection() {
+				return { source: PROGRESS_TYPE, delivery: "plugin-managed" };
+			},
+		}),
+		typeof pi.events === "object" && pi.events !== null ? undefined : pi,
+	);
 
 	pi.on("session.compacting", (_event, ctx) => {
 		const state = stateOf(ctx.sessionManager);

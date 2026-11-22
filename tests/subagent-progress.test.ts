@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
+import type { AgentSessionHandle } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
 import {
 	finishInquiry,
 	GRACE_MS,
 	PROGRESS_TYPE,
 	type Reply,
+	registerSubagentProgress,
 	type Subagent,
 	startInquiry,
 	withProgress,
 } from "../extensions/fork-task/subagent-progress.ts";
+import { getSharedCompactCoordinator } from "../omomp-shared/compact-handoff.ts";
 
 type Probe = {
 	readonly subagent: Subagent;
@@ -133,5 +138,159 @@ describe("subagent progress placement", () => {
 		expect(block?.role === "custom" && block.customType === PROGRESS_TYPE ? block.content : undefined).toBe(
 			"<subagent-progress>x</subagent-progress>",
 		);
+	});
+
+	test("splices after the assistant + toolResult fold boundary for anthropicCompaction summaries", () => {
+		const anthropicSummary = {
+			...summary("native", 2),
+			providerPayload: { type: "anthropicCompaction", content: "opaque" },
+		} as unknown as AgentMessage;
+		const assistantTurn = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "a.ts" } }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 3,
+		} as unknown as AgentMessage;
+		const toolResult = (toolCallId: string, timestamp: number): AgentMessage =>
+			({
+				role: "toolResult",
+				toolCallId,
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp,
+			}) as unknown as AgentMessage;
+
+		const placed = withProgress(
+			[summary("old", 1), user("a"), anthropicSummary, assistantTurn, toolResult("call-1", 4), toolResult("call-2", 5), user("b")],
+			"<subagent-progress>fold-safe</subagent-progress>",
+		);
+		expect(placed.map((message) => message.role)).toEqual([
+			"compactionSummary",
+			"user",
+			"compactionSummary",
+			"assistant",
+			"toolResult",
+			"toolResult",
+			"custom",
+			"user",
+		]);
+		const block = placed[6];
+		expect(block?.role === "custom" && block.customType === PROGRESS_TYPE ? block.content : undefined).toBe(
+			"<subagent-progress>fold-safe</subagent-progress>",
+		);
+	});
+});
+
+describe("registerSubagentProgress compact handoff", () => {
+	afterEach(() => {
+		AgentRegistry.resetGlobalForTests();
+	});
+
+	function createMockPi(): ExtensionAPI {
+		return {
+			on: () => {},
+			events: {},
+			logger: {
+				info: () => {},
+				warn: () => {},
+				error: () => {},
+				debug: () => {},
+			},
+		} as unknown as ExtensionAPI;
+	}
+
+	test("registers omp-subagent-more in the shared compact coordinator and silently gates when no live subagents exist", () => {
+		const coordinator = getSharedCompactCoordinator();
+		registerSubagentProgress(createMockPi(), () => {});
+		expect(coordinator.listPluginIds()).toContain("omp-subagent-more");
+
+		const snapshot = coordinator.prepareSnapshot(
+			{
+				cwd: "/repo",
+				branchEntries: [],
+				messagesToSummarize: [],
+				extensionCtx: {
+					agent: { id: "root-agent" },
+					sessionManager: { getSessionFile: () => undefined },
+				} as unknown as ExtensionContext,
+			},
+			{
+				isUpdate: false,
+				fileOpsPruneReport: {
+					totalInputPaths: 0,
+					strippedQueryCount: 0,
+					filteredNoiseCount: 0,
+					keptUniqueCandidateCount: 0,
+					selectedCount: 0,
+					repoSourcePathsSelected: [],
+					selectedPaths: [],
+				},
+			},
+		);
+
+		expect(snapshot.inactiveStatefulPluginIds).toContain("omp-subagent-more");
+		expect(snapshot.activeHandoffs.some((h) => h.pluginId === "omp-subagent-more")).toBe(false);
+	});
+
+	test("captures live subagents and emits a plugin-managed claim + injection spec", () => {
+		const coordinator = getSharedCompactCoordinator();
+		registerSubagentProgress(createMockPi(), () => {});
+
+		const mockSession = {
+			activeToolExecutionUpdates: () => [],
+			runEphemeralTurn: async () => ({ replyText: "working" }),
+		} as unknown as AgentSessionHandle;
+
+		AgentRegistry.global().register({
+			id: "Worker-1",
+			displayName: "Worker-1",
+			kind: "sub",
+			parentId: "root-agent",
+			status: "running",
+			session: mockSession,
+			sessionFile: null,
+		});
+
+		const snapshot = coordinator.prepareSnapshot(
+			{
+				cwd: "/repo",
+				branchEntries: [],
+				messagesToSummarize: [],
+				extensionCtx: {
+					agent: { id: "root-agent" },
+					sessionManager: { getSessionFile: () => undefined },
+				} as unknown as ExtensionContext,
+			},
+			{
+				isUpdate: false,
+				fileOpsPruneReport: {
+					totalInputPaths: 0,
+					strippedQueryCount: 0,
+					filteredNoiseCount: 0,
+					keptUniqueCandidateCount: 0,
+					selectedCount: 0,
+					repoSourcePathsSelected: [],
+					selectedPaths: [],
+				},
+			},
+		);
+
+		const handoff = snapshot.activeHandoffs.find((h) => h.pluginId === "omp-subagent-more");
+		expect(handoff).toBeDefined();
+		expect(handoff?.claim).toContain("Worker-1");
+		expect(handoff?.claim).toContain("<subagent-progress>");
+		expect(handoff?.injection).toEqual({ source: PROGRESS_TYPE, delivery: "plugin-managed" });
 	});
 });
