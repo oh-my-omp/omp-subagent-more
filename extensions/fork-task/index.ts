@@ -6,27 +6,27 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "@oh-my-pi/omptype/zod";
-import type {
-	AgentDefinition,
-	AgentSession,
-	AgentToolResult,
-	AgentToolUpdateCallback,
-	BeforeAgentStartEvent,
-	BeforeAgentStartEventResult,
-	BeforeSubagentSpawnEvent,
-	BeforeSubagentSpawnEventResult,
-	ExtensionAPI,
-	ExtensionContext,
-	SessionShutdownEvent,
-	TaskItem,
-	ToolDefinition,
+import {
+	type AgentDefinition,
+	type AgentSession,
+	type AgentToolResult,
+	type AgentToolUpdateCallback,
+	type BeforeAgentStartEvent,
+	type BeforeAgentStartEventResult,
+	type BeforeSubagentSpawnEvent,
+	type BeforeSubagentSpawnEventResult,
+	createAgentSession,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type SessionShutdownEvent,
+	type TaskItem,
+	type ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
 import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
-import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { discoverAgents, getAgent } from "@oh-my-pi/pi-coding-agent/task/discovery";
