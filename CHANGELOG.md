@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-23
+
 ### Changed
 
 - Added `compact-handoff.ts` to `omomp-shared` from `oh-my-omp/shared@8f2c5e5`
