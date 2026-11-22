@@ -161,15 +161,8 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		return created;
 	};
 
-	const compactPi = {
-		on: pi.on.bind(pi),
-		events: pi.events,
-		logger: {
-			warn: (message: string, details?: unknown) => warn(message, details),
-		},
-	};
 	registerCompactHandoff(
-		compactPi,
+		pi,
 		defineStatefulHarnessHandoff<{ readonly subagentIds: readonly string[] }>({
 			pluginId: "omp-subagent-more",
 			captureState(compactCtx) {
@@ -188,7 +181,6 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 				return { source: PROGRESS_TYPE, delivery: "plugin-managed" };
 			},
 		}),
-		typeof pi.events === "object" && pi.events !== null ? undefined : pi,
 	);
 
 	pi.on("session.compacting", (_event, ctx) => {

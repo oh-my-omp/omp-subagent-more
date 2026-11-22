@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Added `compact-handoff.ts` to `omomp-shared` from `oh-my-omp/shared@dabf458`
+- Added `compact-handoff.ts` to `omomp-shared` from `oh-my-omp/shared@8f2c5e5`
 - Updated `subagent-progress` (`withProgress` and `registerSubagentProgress`) to splice `<subagent-progress>` via `computeSafePostCompactInsertIndex` past `anthropicCompaction` `assistant` + `toolResult` fold boundaries and register `omp-subagent-more` as a `plugin-managed` `StatefulHarnessHandoff` in the shared compact coordinator (silently gated when no live subagents exist)
 
 ## [0.3.0] - 2026-11-22
