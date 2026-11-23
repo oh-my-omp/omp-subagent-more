@@ -69,7 +69,9 @@ export function wiring(state: State): string[] {
 			const handled = Object.entries(box.handle).map(([exception, times]) => `fires again on ${exception} ×${times}`);
 			const splits = box.kind === "agent" && box.splits > 0 ? [`splits ${box.splits} deep`] : [];
 			const checks =
-				box.kind === "command" && box.checks !== undefined ? [`exit ${box.checks.rejects.join(" or ")} reopens ${box.checks.box}`] : [];
+				box.checks === undefined
+					? []
+					: [`${box.kind === "command" ? `exit ${box.checks.rejects.join(" or ")}` : "reject"} reopens ${box.checks.boxes.join(", ")}`];
 			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...splits, ...handled, ...checks];
 			return `wire ${name} ${parts.join(" · ")}`;
 		});
@@ -111,6 +113,7 @@ export function headline(state: State, survey: Survey): string[] {
 				Object.keys(state.boxes).length > 0 &&
 				survey.waiting.length === 0 &&
 				survey.ready.length === 0 &&
+				survey.unpaired.length === 0 &&
 				Object.values(state.items).every((item) => item.phase.kind === "done" || item.phase.kind === "split");
 			lines.push(`flow ${complete ? "complete" : "not running"} · ${counts}`);
 			break;
@@ -129,9 +132,15 @@ export function headline(state: State, survey: Survey): string[] {
 			return unreachable;
 		}
 	}
+	if (state.noEscape)
+		lines.push("noEscape: on · no raise without a box to answer it, no split request and no missing input leaves the flow");
 	for (const problem of survey.problems) lines.push(`problem: ${problem}`);
 	if (survey.needs.length > 0) lines.push(`needs: ${survey.needs.map((name) => `input.${name}`).join(", ")}`);
 	if (survey.waiting.length > 0) lines.push(`waiting for inputs: ${survey.waiting.join(", ")}`);
+	if (survey.unpaired.length > 0) {
+		const paths = survey.unpaired.map((entry) => `${entry.key} (nothing at this path from ${entry.missing.join(", ")})`);
+		lines.push(`unpaired: ${paths.join(", ")}`);
+	}
 	if (survey.stale.length > 0) lines.push(`stale: ${survey.stale.join(", ")}`);
 	if (survey.illegal.length > 0) lines.push(`illegal: ${survey.illegal.join(", ")}`);
 	const unanswered = survey.raised.filter((raise) => raise.handler === undefined).map((raise) => raise.key);

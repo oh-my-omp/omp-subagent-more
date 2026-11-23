@@ -4,7 +4,7 @@ import { delta, headline, type Marks, marksOf, wiring } from "./report.ts";
 import { type Action, definitionKey, EMPTY, markOf, modelKey, type Outcome, reduce, type State } from "./state.ts";
 
 export type Command =
-	| { readonly kind: "define"; readonly boxes: Readonly<Record<string, Json>> }
+	| { readonly kind: "define"; readonly boxes: Readonly<Record<string, Json>>; readonly noEscape?: boolean }
 	| { readonly kind: "supply"; readonly name: string; readonly value: Json }
 	| { readonly kind: "retract"; readonly keys: readonly string[] }
 	| { readonly kind: "keep"; readonly keys: readonly string[] }
@@ -39,7 +39,8 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 				else if (state.boxes[name]?.fingerprint !== parsed.value.fingerprint) changed[name] = data;
 			}
 			if (refusals.length > 0) return refuse(...refusals);
-			return Object.keys(changed).length > 0 ? accept({ kind: "defined", boxes: changed }) : accept();
+			const noEscape = command.noEscape !== undefined && command.noEscape !== state.noEscape ? command.noEscape : undefined;
+			return Object.keys(changed).length > 0 || noEscape !== undefined ? accept({ kind: "defined", boxes: changed, noEscape }) : accept();
 		}
 		case "supply": {
 			if (!isName(command.name)) return refuse(`"${command.name}" is not a usable input name`);
@@ -83,6 +84,15 @@ function judge(state: State, command: Command): { readonly actions: readonly Act
 				if (!(modelKey(model) in state.agents)) refusals.push(`${name}: agent \`${model}\` has no model setting to use`);
 			}
 			const found = survey(state);
+			if (state.noEscape) {
+				const needed = new Set<string>();
+				for (const box of Object.values(state.boxes))
+					for (const ref of Object.values(box.inputs))
+						if (ref.source.kind === "input" && !(ref.source.name in state.inputs)) needed.add(ref.source.name);
+				for (const name of [...needed].sort()) {
+					refusals.push(`input.${name}: not supplied; with noEscape the flow starts only once every input it needs has a value`);
+				}
+			}
 			for (const key of found.illegal) refusals.push(`${key}: its box is no longer defined; retract it or define the box again`);
 			for (const key of found.stale) {
 				refusals.push(
@@ -194,7 +204,14 @@ export class Store {
 		if (this.#state.mode.kind !== "running") return [];
 		const found = survey(this.#state);
 		for (const firing of found.ready) {
-			this.#dispatch({ kind: "fired", key: firing.key, box: firing.box, attempt: firing.attempt, continuation: firing.continuation });
+			this.#dispatch({
+				kind: "fired",
+				key: firing.key,
+				box: firing.box,
+				attempt: firing.attempt,
+				continuation: firing.continuation,
+				inputs: firing.inputs,
+			});
 		}
 		if (found.ready.length === 0 && found.running.length === 0) this.#dispatch({ kind: "idled" });
 		return found.ready;

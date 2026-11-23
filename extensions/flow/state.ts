@@ -12,11 +12,17 @@ export type Earlier = { readonly session: string; readonly yielded: boolean };
 
 export type Continuation =
 	| { readonly kind: "answer"; readonly answer: Json; readonly previous: Json }
-	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json }
+	| {
+			readonly kind: "check";
+			readonly check: string;
+			readonly output: string;
+			readonly snapshot: Readonly<Record<string, Json>>;
+			readonly previous: Json;
+	  }
 	| { readonly kind: "part"; readonly part: number; readonly of: number };
 
 export type Action =
-	| { readonly kind: "defined"; readonly boxes: Readonly<Record<string, Json>> }
+	| { readonly kind: "defined"; readonly boxes: Readonly<Record<string, Json>>; readonly noEscape: boolean | undefined }
 	| { readonly kind: "supplied"; readonly name: string; readonly value: Json }
 	| { readonly kind: "observed"; readonly agents: Readonly<Record<string, string | null>> }
 	| { readonly kind: "retracted"; readonly keys: readonly string[] }
@@ -33,6 +39,7 @@ export type Action =
 			readonly box: string;
 			readonly attempt: number;
 			readonly continuation: Continuation | null;
+			readonly inputs: Readonly<Record<string, Json>>;
 	  }
 	| { readonly kind: "spawned"; readonly key: string; readonly attempt: number; readonly session: string }
 	| { readonly kind: "settled"; readonly key: string; readonly attempt: number; readonly outcome: Outcome };
@@ -42,7 +49,13 @@ export type Phase =
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raised"; readonly type: string; readonly detail: string; readonly handoff: Json }
 	| { readonly kind: "split"; readonly parts: readonly Json[]; readonly handoff: Json }
-	| { readonly kind: "reopened"; readonly check: string; readonly output: string; readonly handoff: Json }
+	| {
+			readonly kind: "reopened";
+			readonly check: string;
+			readonly output: string;
+			readonly snapshot: Readonly<Record<string, Json>>;
+			readonly handoff: Json;
+	  }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "retry"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
@@ -56,6 +69,7 @@ export type Item = {
 	readonly phase: Phase;
 	readonly chain: number;
 	readonly refires: Readonly<Record<string, number>>;
+	readonly inputs: Readonly<Record<string, Json>>;
 	readonly continuation: Continuation | null;
 	readonly answer: Json | undefined;
 	readonly session: string | undefined;
@@ -75,9 +89,15 @@ export type State = {
 	readonly agents: Readonly<Record<string, string>>;
 	readonly items: Readonly<Record<string, Item>>;
 	readonly mode: Mode;
+	readonly noEscape: boolean;
 };
 
-export const EMPTY: State = { raw: {}, boxes: {}, inputs: {}, agents: {}, items: {}, mode: { kind: "idle" } };
+export const EMPTY: State = { raw: {}, boxes: {}, inputs: {}, agents: {}, items: {}, mode: { kind: "idle" }, noEscape: false };
+
+const TRANSIENT: Record<string, true> = { session: true, timeout: true, protocol: true, schema: true };
+
+export const nextChain = (earlier: Item | undefined): number =>
+	earlier === undefined ? 1 : earlier.phase.kind === "raised" || earlier.phase.kind === "reopened" ? earlier.chain + 1 : earlier.chain;
 
 export const definitionKey = (agent: string): string => `definition ${agent}`;
 export const modelKey = (agent: string): string => `model ${agent}`;
@@ -125,12 +145,14 @@ export function parentKey(key: string): string | undefined {
 export const isFanned = (box: Box | undefined): boolean =>
 	box !== undefined && Object.values(box.inputs).some((ref) => ref.multi && ref.source.kind !== "raise");
 
-export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): string | undefined {
+export function checkedKeys(boxes: Readonly<Record<string, Box>>, key: string): readonly string[] {
 	const parts = partsOf(key);
-	const box = boxes[parts.box];
-	if (box?.kind !== "command" || box.checks === undefined) return undefined;
-	if (!isFanned(boxes[box.checks.box])) return box.checks.box;
-	return parts.path === undefined ? undefined : itemKey(box.checks.box, parts.path);
+	const checks = boxes[parts.box]?.checks;
+	if (checks === undefined) return [];
+	return checks.boxes.flatMap((target) => {
+		if (!isFanned(boxes[target])) return [target];
+		return parts.path === undefined ? [] : [itemKey(target, parts.path)];
+	});
 }
 
 function dependents(state: State, changedInputs: ReadonlySet<string>, changedItems: ReadonlySet<string>): Set<string> {
@@ -188,7 +210,7 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 		items: { ...state.items, [item.key]: { ...item, ...extra, phase } },
 	});
 	const fail = (name: string, said: string): State => {
-		const allowed = state.boxes[item.box]?.handle[name] ?? 0;
+		const allowed = state.boxes[item.box]?.handle[name] ?? (state.noEscape && TRANSIENT[name] === true ? 1 : 0);
 		const spent = item.refires[name] ?? 0;
 		if (spent < allowed) return put({ kind: "retry", name, reason: said }, { refires: { ...item.refires, [name]: spent + 1 } });
 		const failed = put({ kind: "failed", name, reason: said });
@@ -197,19 +219,34 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 			: failed;
 	};
 	const reject = (output: string): State => {
-		const checkedAt = checkedKey(state.boxes, item.key);
-		const checked = checkedAt === undefined ? undefined : state.items[checkedAt];
-		const checkedBox = checked === undefined ? undefined : state.boxes[checked.box];
-		if (checked?.phase.kind !== "done" || checkedBox?.kind !== "agent") return fail("exit", output);
-		if (checked.chain >= checkedBox.bound) {
+		const gate = state.boxes[item.box];
+		const keys = checkedKeys(state.boxes, item.key);
+		const targets: { readonly item: Item; readonly bound: number; readonly handoff: Json }[] = [];
+		for (const key of keys) {
+			const checked = state.items[key];
+			const checkedBox = checked === undefined ? undefined : state.boxes[checked.box];
+			if (checked?.phase.kind !== "done" || checkedBox?.kind !== "agent") break;
+			targets.push({ item: checked, bound: checkedBox.bound, handoff: checked.phase.handoff });
+		}
+		if (keys.length === 0 || targets.length !== keys.length) return fail(gate?.kind === "agent" ? "protocol" : "exit", output);
+		const spent = targets.filter((target) => target.item.chain >= target.bound);
+		if (spent.length > 0) {
+			const which = spent.map((target) => `\`${target.item.key}\``).join(", ");
+			const bounds = spent.map((target) => target.bound).join(", ");
 			return fail(
 				"bound_exceeded",
-				`\`${item.box}\` rejected the result of \`${checked.key}\` in its last allowed session (bound ${checkedBox.bound}): ${output}`,
+				`\`${item.box}\` rejected the result of ${which} in its last allowed session (bound ${bounds}): ${output}`,
 			);
 		}
-		const gone = dependents(state, new Set(), new Set([checked.key]));
-		const reopened: Item = { ...checked, phase: { kind: "reopened", check: item.box, output, handoff: checked.phase.handoff } };
-		return { ...state, items: { ...without(state.items, gone), [checked.key]: reopened } };
+		const gone = dependents(state, new Set(), new Set(keys));
+		const items = without(state.items, gone);
+		for (const target of targets) {
+			items[target.item.key] = {
+				...target.item,
+				phase: { kind: "reopened", check: item.box, output, snapshot: item.inputs, handoff: target.handoff },
+			};
+		}
+		return { ...state, items };
 	};
 	switch (outcome.kind) {
 		case "done":
@@ -255,7 +292,7 @@ export function reduce(state: State, action: Action): State {
 				raw[name] = data;
 				boxes[name] = parsed.value;
 			}
-			return { ...state, raw, boxes };
+			return { ...state, raw, boxes, noEscape: action.noEscape ?? state.noEscape };
 		}
 		case "supplied": {
 			const gone = dependents(state, new Set([action.name]), new Set());
@@ -316,15 +353,11 @@ export function reduce(state: State, action: Action): State {
 				box: action.box,
 				attempt: action.attempt,
 				depth: earlier?.depth ?? (parent?.phase.kind === "split" ? parent.depth + 1 : 0),
-				chain:
-					earlier === undefined
-						? 1
-						: earlier.phase.kind === "raised" || earlier.phase.kind === "reopened"
-							? earlier.chain + 1
-							: earlier.chain,
+				chain: nextChain(earlier),
 				fingerprint: markOf(state, box),
 				phase: { kind: "running" },
 				refires: earlier?.refires ?? {},
+				inputs: action.inputs,
 				continuation: action.continuation,
 				answer: undefined,
 				session: undefined,
