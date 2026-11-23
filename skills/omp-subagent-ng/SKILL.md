@@ -71,11 +71,12 @@ await flow.use(flow.presets.loop(
 
 `loop` fans every named agent over `over` (the input is `as`, `"item"` by default), pairs them by path in `check`, checks all of them at once, and reopens them together for up to `rounds` sessions.
 
-A template of your own is a script whose exported function returns the same plain JSON spec. `%load ./review.js` runs it, or import it and merge its boxes:
+A template of your own is a function that returns the same plain JSON spec. Export it from a module and `await import()` it, or put it on `globalThis` in a script without `export` and `%load` that script; then merge its boxes with any other spec:
 
 ```js
 const { review } = await import("./review.js");
-await flow.use({ ...spec, boxes: { ...spec.boxes, ...review().boxes } });
+const red = flow.presets.loop({ over: "input.items[]", check: { command: "test -n {{red}}" } }, { name: "red", brief: "Attack {{item}}" });
+await flow.use({ ...red, boxes: { ...red.boxes, ...review().boxes } });
 ```
 
 Spreading overwrites a box of the same name with the later one; merge `inputs` and `noEscape` yourself the same way.

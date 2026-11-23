@@ -33,16 +33,21 @@ function use(flow: Flow, spec: Spec) {
 	return defined;
 }
 
-const SWARM = () =>
+const SWARM = (noEscape?: boolean) =>
 	swarm(
-		{ model: "task:low", request: "input.issue", inputs: { issue: "#7", slices: ["a", "b"] }, noEscape: true },
+		{
+			model: "task:low",
+			request: "input.issue",
+			inputs: { issue: "#7", slices: ["a", "b"] },
+			...(noEscape === undefined ? {} : { noEscape }),
+		},
 		{ name: "api", brief: "Build {{slice}} for {{issue}}", in: { slice: "input.slices[]", issue: "input.issue" } },
 		{ name: "docs", brief: "Document {{issue}}", in: { issue: "input.issue" } },
 	);
 
 describe("swarm", () => {
 	test("its spec is plain JSON that the engine accepts as given, inputs and noEscape included", () => {
-		const spec = SWARM();
+		const spec = SWARM(true);
 		expect(JSON.parse(JSON.stringify(spec))).toEqual(spec);
 		const flow = open();
 		expect(use(flow, spec).refusals).toEqual([]);
