@@ -26,6 +26,41 @@ export const rejection = (code: RejectionCode, detail: string): string => `works
 
 export type Rejected = { readonly kind: "rejected"; readonly code: RejectionCode; readonly detail: string };
 
+export type Inheritance = { readonly kind: "inherit"; readonly patch: string } | Rejected;
+
+export type WorkspaceRequest = "shared" | "isolated_from_caller" | "isolated_from_source";
+
+export type WorkspacePlan = { readonly kind: "shared" } | { readonly kind: "isolated" } | { readonly kind: "inherit" };
+
+export type ForkWorkspace =
+	| { readonly kind: "shared" }
+	| { readonly kind: "isolated" }
+	| { readonly kind: "inherited"; readonly patch: string };
+
+const rejected = (code: RejectionCode, detail: string): Rejected => ({ kind: "rejected", code, detail });
+
+export function resolveForkWorkspace(
+	requested: WorkspaceRequest | undefined,
+	hasRole: boolean,
+	planMode: boolean,
+): WorkspacePlan | Rejected {
+	const chosen = requested ?? (hasRole ? "isolated_from_caller" : "shared");
+	switch (chosen) {
+		case "shared":
+			return { kind: "shared" };
+		case "isolated_from_caller":
+			return planMode ? { kind: "shared" } : { kind: "isolated" };
+		case "isolated_from_source":
+			return planMode
+				? rejected("child-not-isolated", "plan mode runs every child in your workspace; inheriting needs an isolated child.")
+				: { kind: "inherit" };
+		default: {
+			const unreachable: never = chosen;
+			return unreachable;
+		}
+	}
+}
+
 export type InheritSource = {
 	readonly id: string;
 	readonly file: string;

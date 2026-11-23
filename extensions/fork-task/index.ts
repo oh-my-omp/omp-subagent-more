@@ -202,13 +202,63 @@ async function sessionShutdown(rt: ForkTaskRuntime, _event: SessionShutdownEvent
 	);
 }
 
-export function resolveForkWorkspace(
-	requested: ForkWorkspace | undefined,
-	hasRole: boolean,
-	planMode: boolean,
-): { readonly workspace: ForkWorkspace; readonly isolated: boolean } {
-	const workspace: ForkWorkspace = requested ?? (hasRole ? "isolated_from_caller" : "shared");
-	return { workspace, isolated: !planMode && workspace !== "shared" };
+type Staged =
+	| { readonly kind: "staged"; readonly entry: PendingFork; readonly task: TaskItem; readonly note: string | undefined }
+	| { readonly kind: "refused"; readonly reason: string };
+
+type Batch = {
+	readonly ctx: ExtensionContext;
+	readonly parent: AgentSession;
+	readonly parentFile: string;
+	readonly artifactsDir: string;
+	readonly planMode: boolean;
+	readonly context: string;
+	readonly resolveRole: RoleResolver;
+};
+
+async function stageItem(rt: ForkTaskRuntime, batch: Batch, item: ForkItem, index: number): Promise<Staged> {
+	const { ctx, parent, artifactsDir, planMode } = batch;
+	const source = await resolveSource(item.from, parent, batch.parentFile);
+	if (source.kind === "error") throw new Error(source.message);
+	const role = await batch.resolveRole(item.agent?.trim() || undefined);
+	if (role.kind === "error") throw new Error(role.message);
+	const outputSchema = item.outputSchema ?? (role.kind === "role" ? role.output : undefined);
+	const { response, ...capture } = captureReplica(
+		{ ...source.request, cwd: source.cwd },
+		{ inheritReasoning: role.kind === "none" && item.effort === undefined },
+	);
+	const requested = sanitizeAgentId(item.name);
+	let name = requested ?? generateTaskName();
+	while (requested === undefined && claimsName(rt.pending, artifactsDir, name)) name = generateTaskName();
+	if (claimsName(rt.pending, artifactsDir, name)) {
+		throw new Error(`a fork named \`${name}\` of this session is still being dispatched; give tasks[${index}] another \`name\`.`);
+	}
+	const plan = resolveForkWorkspace(item.workspace, role.kind === "role", planMode);
+	const workspace = plan.kind === "rejected" ? plan : await placeWorkspace(plan, source, parent.sessionManager.getCwd());
+	if (workspace.kind === "rejected") return { kind: "refused", reason: rejection(workspace.code, workspace.detail) };
+	const shake = item.shake === true;
+	const { staging, notice, shakeSummary } = await stageFork(ctx, parent, artifactsDir, source, { shake, workspace });
+	return {
+		kind: "staged",
+		entry: {
+			name,
+			artifactsDir,
+			staging,
+			replica: { ...capture, replay: shake ? { kind: "own" } : { kind: "prefix", response, notice } },
+			model: role.kind === "role" ? role.model : capture.sourceModel,
+			overlay: workspace.kind === "inherited" ? workspace.patch : undefined,
+		},
+		task: {
+			name,
+			task: [role.kind === "role" ? role.block : "", batch.context.trim(), item.task].filter((part) => part.length > 0).join("\n\n"),
+			agent: FORK_AGENT,
+			...(planMode ? {} : { isolated: workspace.kind !== "shared" }),
+			...(item.effort !== undefined ? { effort: item.effort } : {}),
+			...(outputSchema !== undefined ? { outputSchema } : {}),
+			...(item.schemaMode !== undefined ? { schemaMode: item.schemaMode } : {}),
+		},
+		note: shakeSummary && `${name}: ${shakeSummary}`,
+	};
 }
 
 async function executeForkTask(

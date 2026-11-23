@@ -37,7 +37,7 @@ export function serveSources(warn: (message: string, error: unknown) => void): v
 				channel.postMessage({
 					kind: "answer",
 					id,
-					answer: JSON.stringify({ kind: "unavailable", reason: `its thread failed to share it: ${String(error)}` }),
+					answer: JSON.stringify({ kind: "unavailable", reason: `its thread failed to share it: ${errorText(error)}` }),
 				});
 			},
 		);
