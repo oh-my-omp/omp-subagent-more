@@ -443,7 +443,13 @@ describe("checks", () => {
 
 		const again = flow.store.advance();
 		expect(again.map((firing) => [firing.key, firing.attempt, firing.inputs.slice])).toEqual([["work#1", 2, "b"]]);
-		expect(again[0]?.continuation).toEqual({ kind: "check", check: "check", output: "expected 3, got 2", previous: HANDOFF });
+		expect(again[0]?.continuation).toEqual({
+			kind: "check",
+			check: "check",
+			output: "expected 3, got 2",
+			snapshot: { work: 1 },
+			previous: HANDOFF,
+		});
 	});
 
 	test("what was computed from the reopened item's result is gone and is produced again from the new one", () => {
@@ -755,6 +761,7 @@ describe("what a session is told and hands back", () => {
 				continuation: { kind: "answer", answer: "the second", previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
 				depth: 0,
+				chain: 2,
 			},
 			{ board: "/notes/work.md", inherited: false },
 		);
@@ -772,9 +779,10 @@ describe("what a session is told and hands back", () => {
 				box: "work",
 				attempt: 2,
 				inputs: { slice: "a" },
-				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", previous: HANDOFF },
+				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", snapshot: {}, previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
 				depth: 0,
+				chain: 2,
 			},
 			{ board: "/notes/work.md", inherited: false },
 		);
@@ -802,6 +810,210 @@ describe("what a session is told and hands back", () => {
 			handoff: HANDOFF,
 		});
 		expect(interpret(box, 0, { status: "done", value: { n: 1 }, handoff: HANDOFF }, undefined)).toEqual(done({ n: 1 }));
+	});
+});
+
+describe("zipping several `[]` inputs", () => {
+	const A: Json = { agent: "task:low", brief: "A {{x}}", in: { x: "input.xs[]" }, out: OUT };
+	const B: Json = { agent: "task:low", brief: "B {{y}}", in: { y: "input.ys[]" }, out: OUT };
+	const BOTH: Json = { command: "both {{a}} {{b}}", in: { a: "a[]", b: "b[]" } };
+
+	function zipping(xs: Json, ys: Json) {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { a: A, b: B, both: BOTH } });
+		flow.store.submit({ kind: "supply", name: "xs", value: xs });
+		flow.store.submit({ kind: "supply", name: "ys", value: ys });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		return flow;
+	}
+
+	test("a raise port stays alone: two ports, or a port beside a `[]`, are refused", () => {
+		const flow = open();
+		const ask: Json = { ...(A as object), raises: ["q", "r"] };
+		const refusals = (inputs: Json) =>
+			flow.store.submit({ kind: "define", boxes: { a: ask, h: { agent: "task:low", brief: "h", in: inputs, out: OUT } } }).refusals;
+		expect(refusals({ q: "a!q", r: "a!r" })).toEqual(["h: at most one input may be a raise port"]);
+		expect(refusals({ q: "a!q", x: "a[]" })).toEqual(["h: a raise port takes no `[]` input beside it"]);
+	});
+
+	test("items pair the values at the same leaf path, one item per path every input has", () => {
+		const flow = zipping(["x0", "x1"], ["y0", "y1"]);
+		for (const key of ["a#0", "a#1", "b#0", "b#1"]) flow.store.settle(key, 1, done(key));
+		expect(flow.store.advance().map((firing) => [firing.key, firing.inputs])).toEqual([
+			["both#0", { a: "a#0", b: "b#0" }],
+			["both#1", { a: "a#1", b: "b#1" }],
+		]);
+	});
+
+	test("a path only some inputs reach is reported unpaired, and the flow is never complete", () => {
+		const flow = zipping(["x0", "x1"], ["y0", "y1", "y2"]);
+		for (const key of ["a#0", "a#1", "b#0", "b#1", "b#2"]) flow.store.settle(key, 1, done(key));
+		expect(flow.fire()).toEqual(["both#0@1", "both#1@1"]);
+		flow.store.settle("both#0", 1, done("ok"));
+		flow.store.settle("both#1", 1, done("ok"));
+		flow.fire();
+		expect(flow.store.survey().unpaired).toEqual([{ key: "both#2", missing: ["a"] }]);
+		const status = flow.store.everything();
+		expect(status[0]).toStartWith("flow not running");
+		expect(status).toContain("unpaired: both#2 (nothing at this path from a)");
+	});
+
+	test("retracting one upstream item removes only the zipped item at the same path", () => {
+		const flow = zipping(["x0", "x1"], ["y0", "y1"]);
+		for (const key of ["a#0", "a#1", "b#0", "b#1"]) flow.store.settle(key, 1, done(key));
+		flow.fire();
+		flow.store.settle("both#0", 1, done("ok"));
+		flow.store.settle("both#1", 1, done("ok"));
+		flow.store.submit({ kind: "retract", keys: ["a#1"] });
+		expect(Object.keys(flow.store.state.items).sort()).toEqual(["a#0", "b#0", "b#1", "both#0"]);
+	});
+});
+
+describe("checks of several boxes", () => {
+	const A: Json = { agent: "task:low", brief: "A {{x}}", in: { x: "input.xs[]" }, out: OUT, bound: 2 };
+	const B: Json = { agent: "task:low", brief: "B {{x}}", in: { x: "input.xs[]" }, out: OUT, bound: 3 };
+	const REVIEW: Json = { command: "review {{a}} {{b}}", in: { a: "a[]", b: "b[]" }, checks: ["a", "b"] };
+	const rejected = (output: string): Outcome => ({ kind: "rejected", output });
+
+	function reviewing(review: Json = REVIEW) {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { a: A, b: B, review } });
+		flow.store.submit({ kind: "supply", name: "xs", value: ["p", "q"] });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		for (const key of ["a#0", "a#1", "b#0", "b#1"]) flow.store.settle(key, 1, done(`${key} v1`));
+		flow.fire();
+		return flow;
+	}
+
+	test("`checks` names one box or several, as a non-empty list of box names; `rejects` is a command's", () => {
+		const flow = open();
+		const refusals = (boxes: Readonly<Record<string, Json>>) => flow.store.submit({ kind: "define", boxes }).refusals;
+		const agentGate = { agent: "task:low", brief: "{{a}}", in: { a: "a[]" }, out: OUT };
+		expect(refusals({ g: { ...agentGate, checks: [] } })).toEqual(["g: `checks` names a box or is a non-empty array of box names"]);
+		expect(refusals({ g: { ...agentGate, checks: ["bad name"] } })).toEqual([
+			"g: `checks` names a box or is a non-empty array of box names",
+		]);
+		expect(refusals({ g: { ...agentGate, checks: "a", rejects: [1] } })).toEqual([
+			"g: `rejects` belongs to a command box that `checks` another; an agent box rejects through its yield",
+		]);
+		flow.store.submit({ kind: "define", boxes: { a: A, g: { ...agentGate, checks: ["a", "a"] } } });
+		expect(flow.store.state.boxes.g?.checks).toEqual({ boxes: ["a"] });
+		expect(flow.store.survey().problems).toEqual([]);
+	});
+
+	test("a check reaches its box directly or through boxes between them; a box with many items only along the same paths", () => {
+		const flow = open();
+		const problems = (boxes: Readonly<Record<string, Json>>): readonly string[] => {
+			flow.store.submit({ kind: "define", boxes });
+			return flow.store.survey().problems;
+		};
+		const plan: Json = { agent: "task:low", brief: "{{x}}", in: { x: "input.x" }, out: OUT };
+		const sum: Json = { agent: "task:low", brief: "{{p}}", in: { p: "plan" }, out: OUT };
+		expect(problems({ plan, sum, g: { command: "t {{s}}", in: { s: "sum" }, checks: "plan" } })).toEqual([]);
+		const mid: Json = { agent: "task:low", brief: "{{a}}", in: { a: "a[]" }, out: OUT };
+		expect(problems({ a: A, mid, g: { command: "t {{m}}", in: { m: "mid[]" }, checks: "a" } })).toEqual([]);
+		expect(problems({ a: A, mid, g: { command: "t {{m}}", in: { m: "mid" }, checks: "a" } })).toEqual([
+			"g: `a` has many items; take `a[]` as an input so that each item is checked on its own",
+		]);
+		const splitting: Json = { ...(mid as object), splits: 1, isolated: true };
+		expect(problems({ a: A, mid: splitting, g: { command: "t {{m}}", in: { m: "mid[]" }, checks: "a" } })).toEqual([
+			"g: `a` has many items; take `a[]` as an input so that each item is checked on its own",
+		]);
+		expect(problems({ a: A, g: { ...(splitting as object), checks: "a" } })).toEqual([
+			"g: checks `a`, which has many items, so it may not split: its parts' paths name no item of `a`",
+		]);
+	});
+
+	test("a rejection reopens every checked item at its path at once, each given the values the check was given", () => {
+		const flow = reviewing();
+		flow.store.settle("review#1", 1, done("fine"));
+		flow.store.settle("review#0", 1, rejected("a#0 and b#0 disagree"));
+		expect(Object.keys(flow.store.state.items).sort()).toEqual(["a#0", "a#1", "b#0", "b#1", "review#1"]);
+		const snapshot = { a: "a#0 v1", b: "b#0 v1" };
+		expect(flow.store.advance().map((firing) => [firing.key, firing.attempt, firing.chain, firing.continuation])).toEqual([
+			["a#0", 2, 2, { kind: "check", check: "review", output: "a#0 and b#0 disagree", snapshot, previous: HANDOFF }],
+			["b#0", 2, 2, { kind: "check", check: "review", output: "a#0 and b#0 disagree", snapshot, previous: HANDOFF }],
+		]);
+		expect(flow.store.everything()).toContain("wire review ← a[], b[] · exit 1 reopens a, b");
+	});
+
+	test("when any checked item is in its last allowed session, none is reopened and the check fails `bound_exceeded`", () => {
+		const flow = reviewing();
+		flow.store.settle("review#0", 1, rejected("no"));
+		flow.fire();
+		flow.store.settle("a#0", 2, done("a#0 v2"));
+		flow.store.settle("b#0", 2, done("b#0 v2"));
+		flow.fire();
+		flow.store.settle("review#0", 1, rejected("still no"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { key: "review#0", name: "bound_exceeded" } });
+		expect(flow.store.state.items["a#0"]?.phase.kind).toBe("done");
+		expect(flow.store.state.items["b#0"]?.phase.kind).toBe("done");
+	});
+
+	test("an agent box checks like a command does, and its rejection survives the log on disk", () => {
+		const flow = reviewing({ agent: "task:low", brief: "{{a}} {{b}}", in: { a: "a[]", b: "b[]" }, out: OUT, checks: ["a", "b"] });
+		expect(flow.store.everything()).toContain("wire review ← a[], b[] · reject reopens a, b");
+		flow.store.settle("review#0", 1, rejected("disagree"));
+		flow.fire();
+		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-checks-")), "flow.jsonl");
+		for (const action of flow.log) appendLog(file, action);
+		expect(replay(readLog(file))).toEqual(flow.store.state);
+	});
+});
+
+describe("noEscape", () => {
+	const WORK: Json = { agent: "task:low", brief: "Do {{x}} {{y}}", in: { x: "input.x", y: "input.y" }, out: OUT };
+
+	test("`define` turns it on alone, the log keeps it, and a log without it replays it off", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: WORK } });
+		expect(flow.store.state.noEscape).toBe(false);
+		const verdict = flow.store.submit({ kind: "define", boxes: { work: WORK }, noEscape: true });
+		expect(verdict.lines).toContain("noEscape: on");
+		expect(flow.log.filter((action) => action.kind === "defined").map((action) => action.noEscape)).toEqual([undefined, true]);
+		flow.store.submit({ kind: "define", boxes: {} });
+		expect(flow.store.state.noEscape).toBe(true);
+		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-escape-")), "flow.jsonl");
+		for (const action of flow.log) appendLog(file, action);
+		expect(replay(readLog(file)).noEscape).toBe(true);
+		fs.writeFileSync(file, `${JSON.stringify({ kind: "defined", boxes: { work: WORK } })}\n`);
+		expect(replay(readLog(file)).noEscape).toBe(false);
+	});
+
+	test("`run` is refused while any input a box takes has no value", () => {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { work: WORK }, noEscape: true });
+		flow.store.submit({ kind: "supply", name: "x", value: 1 });
+		expect(flow.store.submit({ kind: "run" }).refusals).toEqual([
+			"input.y: not supplied; with noEscape the flow starts only once every input it needs has a value",
+		]);
+		flow.store.submit({ kind: "supply", name: "y", value: 2 });
+		expect(flow.store.submit({ kind: "run" }).accepted).toBe(true);
+	});
+
+	test("a transient failure the box does not handle fires once more; other exceptions and explicit `handle` stand", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: {
+				s: { agent: "task:low", brief: "s", out: OUT },
+				t: { agent: "task:low", brief: "t", out: OUT, handle: { session: 2 } },
+				p: { agent: "task:low", brief: "p", out: OUT },
+			},
+			noEscape: true,
+		});
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("s", 1, failed("session"));
+		flow.store.settle("t", 1, failed("session"));
+		expect(flow.fire()).toEqual(["s@2", "t@2"]);
+		flow.store.settle("t", 2, failed("session"));
+		flow.store.settle("s", 2, failed("schema"));
+		expect(flow.fire()).toEqual(["s@3", "t@3"]);
+		flow.store.settle("p", 1, failed("spawn"));
+		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { key: "p", name: "spawn" } });
 	});
 });
 
@@ -933,6 +1145,21 @@ describe("splitting", () => {
 		expect(brief).toContain("\n\nDo a1 for #1\n\n");
 		expect(brief).not.toContain("## Earlier work");
 		expect(brief).toContain("`flow_split`");
+	});
+
+	test("a box zipping several `[]` inputs may not split: a part takes the place of one element", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: {
+				a: { agent: "task:low", brief: "A {{x}}", in: { x: "input.xs[]" }, out: OUT },
+				b: { agent: "task:low", brief: "B {{x}}", in: { x: "input.xs[]" }, out: OUT },
+				both: { agent: "task:low", brief: "{{a}} {{b}}", in: { a: "a[]", b: "b[]" }, out: OUT, splits: 1, isolated: true },
+			},
+		});
+		expect(flow.store.survey().problems).toEqual([
+			"both: `splits` needs exactly one `[]` input; a part takes the place of one element, not of a pair",
+		]);
 	});
 
 	test("a split and its parts survive the log on disk", () => {

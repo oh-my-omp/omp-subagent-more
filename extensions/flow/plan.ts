@@ -1,5 +1,16 @@
 import { type Box, isArray, isObject, type Json, type Ref } from "./defs.ts";
-import { answerKey, type Continuation, childKey, type Earlier, type Item, isFanned, itemKey, markOf, type State } from "./state.ts";
+import {
+	answerKey,
+	type Continuation,
+	childKey,
+	type Earlier,
+	type Item,
+	isFanned,
+	itemKey,
+	markOf,
+	nextChain,
+	type State,
+} from "./state.ts";
 
 export type Firing = {
 	readonly key: string;
@@ -9,7 +20,10 @@ export type Firing = {
 	readonly continuation: Continuation | null;
 	readonly earlier: Earlier | undefined;
 	readonly depth: number;
+	readonly chain: number;
 };
+
+export type Unpaired = { readonly key: string; readonly missing: readonly string[] };
 
 export type Raised = { readonly key: string; readonly type: string; readonly detail: string; readonly handler: string | undefined };
 
@@ -22,6 +36,7 @@ export type Survey = {
 	readonly raised: readonly Raised[];
 	readonly needs: readonly string[];
 	readonly waiting: readonly string[];
+	readonly unpaired: readonly Unpaired[];
 };
 
 type Start = { readonly continuation: Continuation; readonly earlier: Earlier | undefined; readonly depth: number };
@@ -33,7 +48,13 @@ type Expected = {
 };
 type Expansion =
 	| { readonly kind: "blocked" }
-	| { readonly kind: "items"; readonly fanned: boolean; readonly input: string | undefined; readonly items: readonly Expected[] };
+	| {
+			readonly kind: "items";
+			readonly fanned: boolean;
+			readonly input: string | undefined;
+			readonly items: readonly Expected[];
+			readonly unpaired: readonly Unpaired[];
+	  };
 type Resolved = { readonly kind: "value"; readonly value: Json } | { readonly kind: "missing" };
 type Leaf = { readonly path: readonly number[]; readonly value: Json };
 type Produced =
@@ -78,16 +99,17 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 				problems.push(`${name}: in.${input} → \`${ref.source.box}\` does not raise \`${ref.source.type}\``);
 			}
 		}
-		if (box.kind === "command") {
-			if (box.checks !== undefined) problems.push(...checkProblems(boxes, name, box.checks.box, Object.values(box.inputs)));
-			continue;
-		}
+		for (const target of box.checks?.boxes ?? []) problems.push(...checkProblems(boxes, name, target));
+		if (box.kind === "command") continue;
 		for (const type of box.raises) {
 			const handlers = handlersOf(boxes, name, type);
 			if (handlers.length > 1) problems.push(`${name}!${type}: answered by more than one box (${handlers.join(", ")})`);
 		}
 		if (box.splits > 0 && !isFanned(box)) {
 			problems.push(`${name}: \`splits\` needs a \`[]\` input; the parts of a split item take the place of its element`);
+		}
+		if (box.splits > 0 && Object.values(box.inputs).filter((ref) => ref.multi && ref.source.kind !== "raise").length > 1) {
+			problems.push(`${name}: \`splits\` needs exactly one \`[]\` input; a part takes the place of one element, not of a pair`);
 		}
 		if (box.splits > 0 && box.isolated !== true) {
 			problems.push(`${name}: \`splits\` needs \`isolated: true\`; the parts run as isolated forks of the splitting session`);
@@ -109,17 +131,49 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 	return problems;
 }
 
-function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, checked: string, inputs: readonly Ref[]): string[] {
+const mirrored = (boxes: Readonly<Record<string, Box>>, ref: Ref): string | undefined =>
+	ref.source.kind === "box" && ref.multi && ref.path.length === 0 && isFanned(boxes[ref.source.box]) ? ref.source.box : undefined;
+
+function mirrors(boxes: Readonly<Record<string, Box>>, name: string, target: string, seen: Set<string>): boolean {
+	if (name === target) return true;
+	const box = boxes[name];
+	if (seen.has(name) || (box?.kind === "agent" && box.splits > 0)) return false;
+	seen.add(name);
+	return Object.values(box?.inputs ?? {}).some((ref) => {
+		const source = mirrored(boxes, ref);
+		return source !== undefined && mirrors(boxes, source, target, seen);
+	});
+}
+
+function reaches(boxes: Readonly<Record<string, Box>>, name: string, target: string, seen: Set<string>): boolean {
+	if (seen.has(name)) return false;
+	seen.add(name);
+	return Object.values(boxes[name]?.inputs ?? {}).some(
+		(ref) => ref.source.kind === "box" && (ref.source.box === target || reaches(boxes, ref.source.box, target, seen)),
+	);
+}
+
+function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, checked: string): string[] {
 	const target = boxes[checked];
+	const gate = boxes[name];
 	if (!target) return [`${name}: checks → no box \`${checked}\``];
 	if (target.kind !== "agent") return [`${name}: checks → \`${checked}\` is a command box; only an agent box can be reopened`];
 	if (Object.values(target.inputs).some((ref) => ref.source.kind === "raise")) {
 		return [`${name}: checks → \`${checked}\` answers raises; its items cannot be reopened`];
 	}
-	const refs = inputs.filter((ref) => ref.source.kind === "box" && ref.source.box === checked);
-	if (refs.length === 0) return [`${name}: checks \`${checked}\` but takes no input from it`];
-	if (isFanned(target) && !refs.some((ref) => ref.multi && ref.path.length === 0)) {
-		return [`${name}: \`${checked}\` has many items; take \`${checked}[]\` as an input so that each item is checked on its own`];
+	if (!gate || !reaches(boxes, name, checked, new Set())) {
+		return [`${name}: checks \`${checked}\` but takes no input from it`];
+	}
+	if (isFanned(target)) {
+		if (gate.kind === "agent" && gate.splits > 0)
+			return [`${name}: checks \`${checked}\`, which has many items, so it may not split: its parts' paths name no item of \`${checked}\``];
+		const paired = Object.values(gate.inputs).some((ref) => {
+			const source = mirrored(boxes, ref);
+			return source !== undefined && mirrors(boxes, source, checked, new Set());
+		});
+		if (!paired) {
+			return [`${name}: \`${checked}\` has many items; take \`${checked}[]\` as an input so that each item is checked on its own`];
+		}
 	}
 	return [];
 }
@@ -226,21 +280,24 @@ export function survey(state: State): Survey {
 
 	const expandBox = (name: string, box: Box): Expansion => {
 		const single: Record<string, Json> = {};
-		let multi: { readonly input: string; readonly ref: Ref } | undefined;
+		const fanned: { readonly input: string; readonly ref: Ref }[] = [];
+		let port: { readonly input: string; readonly ref: Ref } | undefined;
 		for (const [input, ref] of Object.entries(box.inputs)) {
+			if (ref.source.kind === "raise") {
+				port = { input, ref };
+				continue;
+			}
 			if (ref.multi) {
-				multi = { input, ref };
+				fanned.push({ input, ref });
 				continue;
 			}
 			const resolved = resolve(ref);
 			if (resolved.kind === "missing") return { kind: "blocked" };
 			single[input] = resolved.value;
 		}
-		if (!multi)
-			return { kind: "items", fanned: false, input: undefined, items: [{ key: name, path: [], inputs: single, start: undefined }] };
-		const { input, ref } = multi;
-		if (ref.source.kind === "raise") {
-			const { box: sourceBox, type } = ref.source;
+		if (port !== undefined && port.ref.source.kind === "raise") {
+			const { input } = port;
+			const { box: sourceBox, type } = port.ref.source;
 			const items = Object.values(state.items)
 				.filter((item) => item.box === sourceBox && item.phase.kind === "raised" && item.phase.type === type)
 				.sort((a, b) => a.key.localeCompare(b.key))
@@ -250,23 +307,38 @@ export function survey(state: State): Survey {
 						phase.kind === "raised" ? { item: item.key, type: phase.type, detail: phase.detail, handoff: phase.handoff } : null;
 					return { key: answerKey(name, item.key, item.attempt), path: [], inputs: { ...single, [input]: raise }, start: undefined };
 				});
-			return { kind: "items", fanned: false, input: undefined, items };
+			return { kind: "items", fanned: false, input: undefined, items, unpaired: [] };
 		}
-		const elements = elementsOf(ref);
-		if (elements === undefined) return { kind: "blocked" };
-		return {
-			kind: "items",
-			fanned: true,
-			input,
-			items: elements.map(
-				(element): Expected => ({
-					key: itemKey(name, element.path),
-					path: element.path,
-					inputs: { ...single, [input]: element.value },
-					start: undefined,
-				}),
-			),
-		};
+		if (fanned.length === 0)
+			return {
+				kind: "items",
+				fanned: false,
+				input: undefined,
+				items: [{ key: name, path: [], inputs: single, start: undefined }],
+				unpaired: [],
+			};
+		const columns: { readonly input: string; readonly byPath: ReadonlyMap<string, Leaf> }[] = [];
+		for (const { input, ref } of fanned) {
+			const elements = elementsOf(ref);
+			if (elements === undefined) return { kind: "blocked" };
+			columns.push({ input, byPath: new Map(elements.map((element) => [element.path.join("."), element])) });
+		}
+		const paths = new Map<string, readonly number[]>();
+		for (const column of columns) for (const [at, leaf] of column.byPath) if (!paths.has(at)) paths.set(at, leaf.path);
+		const items: Expected[] = [];
+		const unpaired: Unpaired[] = [];
+		for (const [at, path] of paths) {
+			const inputs: Record<string, Json> = { ...single };
+			const missing: string[] = [];
+			for (const column of columns) {
+				const leaf = column.byPath.get(at);
+				if (leaf === undefined) missing.push(column.input);
+				else inputs[column.input] = leaf.value;
+			}
+			if (missing.length > 0) unpaired.push({ key: itemKey(name, path), missing });
+			else items.push({ key: itemKey(name, path), path, inputs, start: undefined });
+		}
+		return { kind: "items", fanned: true, input: fanned.length === 1 ? fanned[0]?.input : undefined, items, unpaired };
 	};
 
 	const childrenOf = (item: Item, expected: Expected, input: string | undefined): Expected[] => {
@@ -287,6 +359,7 @@ export function survey(state: State): Survey {
 	const ready: Firing[] = [];
 	const raised: Raised[] = [];
 	const waiting: string[] = [];
+	const unpaired: Unpaired[] = [];
 	for (const name of names) {
 		const box = state.boxes[name];
 		const expansion = expand(name);
@@ -295,6 +368,7 @@ export function survey(state: State): Survey {
 			waiting.push(name);
 			continue;
 		}
+		unpaired.push(...expansion.unpaired);
 		let inFlight = Object.values(state.items).filter((item) => item.box === name && item.phase.kind === "running").length;
 		const queue = [...expansion.items];
 		for (let at = 0; at < queue.length; at += 1) {
@@ -311,6 +385,7 @@ export function survey(state: State): Survey {
 					continuation: expected.start?.continuation ?? null,
 					earlier: expected.start?.earlier,
 					depth: expected.start?.depth ?? 0,
+					chain: nextChain(undefined),
 				};
 			} else {
 				const again = {
@@ -320,6 +395,7 @@ export function survey(state: State): Survey {
 					inputs: expected.inputs,
 					earlier: item.last,
 					depth: item.depth,
+					chain: nextChain(item),
 				};
 				switch (item.phase.kind) {
 					case "running":
@@ -345,7 +421,13 @@ export function survey(state: State): Survey {
 					case "reopened":
 						next = {
 							...again,
-							continuation: { kind: "check", check: item.phase.check, output: item.phase.output, previous: item.phase.handoff },
+							continuation: {
+								kind: "check",
+								check: item.phase.check,
+								output: item.phase.output,
+								snapshot: item.phase.snapshot,
+								previous: item.phase.handoff,
+							},
 						};
 						break;
 					case "failed":
@@ -383,6 +465,7 @@ export function survey(state: State): Survey {
 		raised,
 		needs: [...needs].sort(),
 		waiting,
+		unpaired,
 	};
 }
 
