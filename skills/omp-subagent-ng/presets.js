@@ -4,6 +4,8 @@ const defined = (object) => Object.fromEntries(Object.entries(object).filter(([,
 
 const fanned = (box) => Object.values(box.in ?? {}).some((ref) => ref.endsWith("[]"));
 
+const resultOf = (box) => (box.command === undefined ? { out: OUT } : {});
+
 const named = (kind, spec) => {
 	if (typeof spec?.name !== "string" || spec.name === "") throw new Error(`${kind}: every spec needs a non-empty \`name\``);
 	const { name, ...box } = spec;
@@ -13,12 +15,12 @@ const named = (kind, spec) => {
 const gateOf = (spec, checked) => {
 	const { name = "gate", ...box } = spec;
 	const inputs = Object.fromEntries(checked.map(([source, box]) => [source, fanned(box) ? `${source}[]` : source]));
-	return [name, { ...box, in: { ...inputs, ...box.in }, checks: checked.map(([source]) => source) }];
+	return [name, { ...resultOf(box), ...box, in: { ...inputs, ...box.in }, checks: checked.map(([source]) => source) }];
 };
 
 const reduceOf = (spec, sources) => {
 	const { name = "reduce", ...box } = spec;
-	return [name, { out: OUT, ...box, in: { ...Object.fromEntries(sources.map((source) => [source, source])), ...box.in } }];
+	return [name, { ...resultOf(box), ...box, in: { ...Object.fromEntries(sources.map((source) => [source, source])), ...box.in } }];
 };
 
 const spec = (boxes, options) => ({

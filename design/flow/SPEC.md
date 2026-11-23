@@ -304,6 +304,7 @@ const v = await flow.value(key);   // 静默读取 input.<name>、单元或盒�
 - `options.over` 必须是 `[]` 引用（如 `"input.items[]"`）；每个 agent 都以它为扇出输入（输入名 `options.as`，默认 `"item"`），默认 `flow:worker`、`options.model`、`out: { type: "object" }`，`bound` 取 `options.rounds`。
 - `options.check` 必填，生成一个门禁盒（默认名 `check`）：按路径把每个 agent 的 `<name>[]` 配对，`checks` 指向全部 agent，形成多目标反馈回路。
 - `options.reduce` 生成一个消费该门禁结果的汇总盒；`options.inputs` 与 `options.noEscape` 原样带进规格。
+- 两个预设生成的门禁盒与汇总盒若是 Agent 盒子且未给 `out`，取 `out: { type: "object" }`；Command 盒子不带 `out`。
 
 外置模板用 `%load` 执行，或 `await import()` 取导出的模板函数，返回值都是同样的纯 JSON 规格，可直接交给 `flow.use`，也可把多处产出的盒子合并后交给 `flow.use` / `flow.define`：
 

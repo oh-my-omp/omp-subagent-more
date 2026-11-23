@@ -135,6 +135,20 @@ describe("loop", () => {
 		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { key: "check#0", name: "bound_exceeded" } });
 	});
 
+	test("an agent check or reduce without `out` gets an object schema, a command one gets none, and the engine accepts both", () => {
+		const spec = loop(
+			{
+				over: "input.items[]",
+				check: { agent: "flow:guardian", model: "task:low", brief: "Judge {{red}}" },
+				reduce: { command: "printf %s {{check}}" },
+			},
+			{ name: "red", model: "task:low", brief: "Attack {{item}}" },
+		);
+		expect(spec.boxes.check?.out).toEqual({ type: "object" });
+		expect(spec.boxes.reduce).toEqual({ command: "printf %s {{check}}", in: { check: "check" } });
+		expect(use(open(), spec).refusals).toEqual([]);
+	});
+
 	test("`over` must be a `[]` reference and `check` is required", () => {
 		expect(() => loop({ over: "input.items", check: { command: "true" } }, { name: "a", brief: "x" })).toThrow("`over`");
 		expect(() => loop({ over: "input.items[]" }, { name: "a", brief: "x" })).toThrow("`check`");
