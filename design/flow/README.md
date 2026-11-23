@@ -3,7 +3,7 @@
 本目录存放从会话 `01a1db88-294f-7611-840e-4299ba2a5305` 中完整剥离出来的 **`omp-subagent-ng` 子代理编排原语（`flow`）纯技术设计**，已彻底剔除作为试验品的业务 Issue（`#320/#321/#322`）交付内容。
 
 - **目标**：增强 Oh My Pi 的 `eval`（REPL），提供一套可反悔、可持久化、支持跨模型工作区继承与结构化交接的子代理编排原语；它取代了此前的内存流水线脚本 `orchestrate.js`。
-- **实现**：[`extensions/flow/`](../../extensions/flow/)，随插件加载；eval 辅助 [`skills/omp-subagent-ng/flow.js`](../../skills/omp-subagent-ng/flow.js)，角色 [`agents/flow-*.md`](../../agents/)，单测 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)。
+- **实现**：[`extensions/flow/`](../../extensions/flow/)，随插件加载；eval 辅助 [`skills/omp-subagent-ng/flow.js`](../../skills/omp-subagent-ng/flow.js) 与预设 [`presets.js`](../../skills/omp-subagent-ng/presets.js)，角色 [`agents/flow-*.md`](../../agents/)，单测 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)。
 
 ## 目录导航
 
@@ -42,7 +42,7 @@
 - **严禁大包大揽与支持动态展开**：“严禁把所有流程给一个 subagent，甚至一个过大的流程给一个 subagent，乃至 issue 本身都可以动态拆分……返回值可能可以用于 flatMap”。
 - **流程内建业务回路（Loop）**：“workflow 必须设计成 loop，允许内部的 subagent 逃生后求助”。
   - 子代理遇到未决问题时主动抛出预声明的异常类型（`raises`），流内接线给裁决/答复盒子，答复后原单元以新会话继续。
-  - 程序门禁（`checks` 命令盒子）检验不通过时，带着门禁输出将原单元重开（`reopened`）为新会话，**这属于业务编排自身的回路，不属于运行时异常**。
+  - 门禁（带 `checks` 的命令盒子或 Agent 盒子）检验不通过时，带着门禁输出将同一路径上的全部被检查单元重开（`reopened`）为新会话，**这属于业务编排自身的回路，不属于运行时异常**。
 
 ### 3. 异常模型：模型抛出 vs 运行时异常
 - **模型主动抛出的异常**：等同于输出 Schema 中预声明的端口类型（`<box>!<type>`），在工作流定义中写明由哪个盒子接手处理（或停在边界等待外部 `answer`）。
