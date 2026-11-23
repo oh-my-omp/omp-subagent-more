@@ -1,80 +1,57 @@
 ---
 name: omp-subagent-more
-description: Use for eval JS orchestration of many subagents with schema-checked results, multi-stage items without a global barrier, and subagents that stop to ask the orchestrator a question.
+description: Use for eval JS orchestration of many small subagent sessions as a flow, whose deterministic hand-offs, checks and fan-out run without the main agent relaying between them.
 ---
 
-# Subagent orchestration in eval
+# Flows of small subagent sessions in eval
 
-A library for eval JS cells. Each **item** is a pipeline of **stages**; each stage is one subagent started with the prelude's `agent()`. Items do not wait for each other: an item's next stage starts as soon as its own previous stage is done.
+A flow is a set of **boxes** wired to each other by name. An agent box starts one fresh subagent session per item and takes its structured `yield`; a command box runs one shell command per item. The flow decides what fires next from one append-only store, so the main agent neither dispatches each session nor relays results between them: it defines boxes, supplies outside values, runs the flow and is woken once, when the flow comes to rest or stops. What the flow cannot settle (an unanswered raise, a runtime exception) comes back to the main agent, which handles it the ordinary way and resumes.
 
 ## Load
 
 A JS cell that is only this line:
 
 ```js
-%load skill://omp-subagent-more/orchestrate.js
+%load skill://omp-subagent-more/flow.js
 ```
 
-It defines `orchestrate` for the rest of the kernel's life. A kernel reset drops it and every orchestration in progress; load it again.
+It defines `flow` for the kernel's life. The flow's state lives with the session, not in the kernel: after a kernel reset, load the helper again and the flow is unchanged.
 
-## Start and drive
+## Define, supply, run
 
 ```js
-const run = orchestrate({
-  context: "Shared background every stage receives first.",          // optional
-  items: [
-    {
-      id: "auth",                                                     // unique string
-      stages: [
-        { task: "Read src/auth and list the public functions.", data: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
-        { task: "Write tests for those functions.", data: { type: "object", properties: { files: { type: "array", items: { type: "string" } } }, required: ["files"] }, agent: "task:mid", isolated: true },
-      ],
-    },
-  ],
+const issue = JSON.parse(await sh`gh issue view 12 --json title,body`);
+await flow.define({
+  scout: { agent: "flow:scout", model: "task:mid", brief: "Split this request.\n\n{{issue}}", in: { issue: "input.issue" }, isolated: false,
+    out: { type: "object", required: ["slices"], properties: { slices: { type: "array" } } } },
+  work: { agent: "flow:worker", model: "task:low", brief: "Implement this slice of the request.\n\n{{slice}}\n\n{{issue}}",
+    in: { slice: "scout.slices[]", issue: "input.issue" }, raises: ["question"], isolated: true, limit: 1, prepare: "bun install",
+    out: { type: "object", required: ["files"], properties: { files: { type: "array", items: { type: "string" } } } } },
+  answer: { agent: "flow:adjudicator", model: "task:high", brief: "Rule on what the worker raised.\n\n{{raise}}\n\n{{issue}}",
+    in: { raise: "work!question", issue: "input.issue" }, isolated: false, out: { type: "object" } },
+  gate: { command: "bun test", in: { work: "work[]" }, checks: "work" },
 });
-const view = await run.drive();
+await flow.supply("issue", issue);
+await flow.run();
 ```
 
-A stage needs `task` (text) and `data` (the JSON Schema of the stage's result); `agent` and `isolated` pass through to `agent()`. Every stage is spawned with `schemaMode: "strict"`.
+Every call prints the store's verdict: the headline, what holds the flow back, the `next:` operations open now, and what changed. `run` returns at once; end the turn instead of waiting, and the flow's verdict arrives when it comes to rest or stops.
 
-`drive()` advances every item and returns when either
+- `scout.slices[]` fans out: one `work` item per slice.
+- `work!question` wires a raise: `answer` rules on it, and the raising item continues in a new session given the answer and its own handoff.
+- `gate` checks `work`: an exit code in its `rejects` (`[1]` by default) reopens the checked item in a new session with the output; any other failure stops the flow.
+- Boxes are plain data: `define` one box again to change it, `null` drops it. Results produced under an earlier definition, agent prompt or model setting are reported stale until kept or retracted.
 
-- every item is `done`, `failed` or `needs_input`, or
-- a stage asks a new question (`needs_input`), even while other items still run.
+The fields, references, checks, sessions and exceptions are in `help://flow/boxes`; stopping, resuming, stale values and raises in `help://flow/lifecycle`; the eval helper in `help://flow/eval`.
 
-It returns with nothing pending, so the cell ends normally. The result:
+## Roles
 
-```js
-{
-  done:        [{ id, results: [{ stage, data }] }],
-  failed:      [{ id, stage, reason, results }],
-  needs_input: [{ id, stage, question, options }],
-  running:     [{ id, stage }],
-}
-```
+| Agent | Role |
+|---|---|
+| `flow:scout` | Read-only split of one request into slices, open points and check gaps. |
+| `flow:worker` | Implements one slice; raises what the assignment leaves open. |
+| `flow:adjudicator` | Read-only rulings on raised or open points; never implements. |
+| `flow:guardian` | Read-only judgment, once at the end, of whether the result is what was asked. |
+| `flow:verifier` | Carries out one acceptance step as written; never repairs. |
 
-`run.status()` returns the same view without advancing anything.
-
-## The result protocol
-
-Each stage's subagent is told to call `yield` with its `data` argument set to exactly one of:
-
-- `{"kind": "done", "data": …}` with `data` matching the stage schema;
-- `{"kind": "needs_input", "question": "…", "options": ["…"]}` when it reaches a decision the assignment leaves open, belongs to the orchestrator and must not be guessed. The subagent is told to ask only this way, never through the `ask` tool. This is not a failure.
-
-A subagent that is cancelled, exhausts its schema retries or ends in a yield error makes its item `failed`; other items continue.
-
-## Answering
-
-```js
-await run.answer("auth", "Keep the old API.");
-const next = await run.drive();
-```
-
-The answer goes to the **same** subagent as a message; it continues with its context and yields again (another question, or `done`). Answering an item that is not in `needs_input` throws.
-
-## Being woken
-
-Stages that finish while no `drive()` is running are delivered by OMP as background results, and an idle main session wakes on them. Call `drive()` again to take them in. Results that a `drive()` already collected do not wake the session a second time.
-
-Typical loop: `drive()` → answer what is in `needs_input` → end the turn if items are still `running` → on the wake-up, `drive()` again.
+None of them has a model of its own: `model` names the tier whose model setting the sessions use. Rules of the project go into the `brief`.

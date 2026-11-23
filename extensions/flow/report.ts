@@ -65,7 +65,8 @@ export function wiring(state: State): string[] {
 					? box.raises.map((type) => `raises ${type} → ${handlerOf(state.boxes, name, type) ?? "an answer from outside"}`)
 					: [];
 			const handled = Object.entries(box.handle).map(([exception, times]) => `fires again on ${exception} ×${times}`);
-			const checks = box.kind === "command" && box.checks !== undefined ? [`a rejection reopens ${box.checks}`] : [];
+			const checks =
+				box.kind === "command" && box.checks !== undefined ? [`exit ${box.checks.rejects.join(" or ")} reopens ${box.checks.box}`] : [];
 			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...handled, ...checks];
 			return `wire ${name} ${parts.join(" · ")}`;
 		});

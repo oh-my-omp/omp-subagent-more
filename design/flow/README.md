@@ -2,8 +2,8 @@
 
 本目录存放从会话 `01a1db88-294f-7611-840e-4299ba2a5305` 中完整剥离出来的 **`omp-subagent-more` 子代理编排原语（`flow`）纯技术设计**，已彻底剔除作为试验品的业务 Issue（`#320/#321/#322`）交付内容。
 
-- **目标**：增强 Oh My Pi 的 `eval`（REPL），提供一套可反悔、可持久化、支持跨模型工作区继承与结构化交接的子代理编排原语，取代现有的内存流水线脚本 [`skills/omp-subagent-more/orchestrate.js`](../../skills/omp-subagent-more/orchestrate.js)。
-- **当前原型代码**：[`prototype/flow/`](../../prototype/flow/)（单测见 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)）。
+- **目标**：增强 Oh My Pi 的 `eval`（REPL），提供一套可反悔、可持久化、支持跨模型工作区继承与结构化交接的子代理编排原语；它取代了此前的内存流水线脚本 `orchestrate.js`。
+- **实现**：[`extensions/flow/`](../../extensions/flow/)，随插件加载；eval 辅助 [`skills/omp-subagent-more/flow.js`](../../skills/omp-subagent-more/flow.js)，角色 [`agents/flow-*.md`](../../agents/)，单测 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)。
 
 ## 目录导航
 
@@ -12,13 +12,12 @@
 | [`README.md`](./README.md) | 设计定位、核心基线（用户原话约束）、已证伪并淘汰的替代方案 |
 | [`SPEC.md`](./SPEC.md) | 编排原语完整规范：数据模型、引用语法、Redux 状态机、会话与工作区继承契约、业务回路与异常模型、REPL 接口 |
 | [`HOST_MECHANICS.md`](./HOST_MECHANICS.md) | OMP 宿主内部机制与桥接边界：`TaskTool`、`AsyncJobManager`、完成通知抑制、跨线程文件传输与隔离工作区合并 |
-| [`ROADMAP.md`](./ROADMAP.md) | 现状盘点、业务试验残留清理清单、待决设计问题（O1–O4）与转正发布前的工程修复项（E1–E4） |
 
 ---
 
 ## 一、为什么旧版 `orchestrate.js` 不够用？
 
-现存 [`skills/omp-subagent-more/orchestrate.js`](../../skills/omp-subagent-more/orchestrate.js) 在真实复杂编排中暴露了 6 个根本性缺陷：
+`flow` 之前的 `orchestrate.js` 在真实复杂编排中暴露了 6 个根本性缺陷：
 
 1. **状态在 `eval` 内核内存中**：一旦 cell 被中断或内核重置，正在运行的全部编排进度丢失。
 2. **无法动态拆分（无扇出 / `flatMap`）**：只能写死静态 `items: [{ id, stages: [...] }]`，前一个子代理的返回值无法展开成后续的多个子任务。

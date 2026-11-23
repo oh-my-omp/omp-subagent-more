@@ -10,8 +10,6 @@
 		"includes": [
 			"extensions/**/*.ts",
 			"omomp-shared/**/*.ts",
-			"prototype/**/*.ts",
-			"prototype/**/*.js",
 			"skills/**/*.js",
 			"tests/**/*.ts",
 			"biome.json",

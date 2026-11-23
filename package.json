@@ -1,7 +1,7 @@
 {
 	"name": "omp-subagent-more",
 	"version": "0.3.1",
-	"description": "fork_task, the fork:self agent and eval subagent orchestration for Oh My Pi",
+	"description": "fork_task, the fork:self agent and the flow orchestration primitives for Oh My Pi",
 	"type": "module",
 	"repository": {
 		"type": "git",
@@ -21,7 +21,8 @@
 	},
 	"omp": {
 		"extensions": [
-			"./extensions/fork-task/index.ts"
+			"./extensions/fork-task/index.ts",
+			"./extensions/flow/index.ts"
 		]
 	},
 	"scripts": {

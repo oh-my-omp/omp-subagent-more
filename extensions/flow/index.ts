@@ -7,7 +7,6 @@ import type {
 	AgentSession,
 	AgentToolResult,
 	AgentToolUpdateCallback,
-	BeforeAgentStartEvent,
 	BeforeSubagentSpawnEvent,
 	BeforeSubagentSpawnEventResult,
 	ExtensionAPI,
@@ -26,24 +25,16 @@ import {
 } from "@oh-my-pi/pi-coding-agent/task/settings";
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
-import { callerSession } from "../../extensions/fork-task/caller-session.ts";
-import { errorText } from "../../extensions/fork-task/errors.ts";
-import {
-	applyOverlay,
-	headerCwd,
-	type Inheritance,
-	inheritSourceWorkspace,
-	overlayFilePath,
-	recordStart,
-	writeOverlay,
-} from "../../extensions/fork-task/workspace.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
+import { callerSession } from "../fork-task/caller-session.ts";
+import { errorText } from "../fork-task/errors.ts";
+import { headerCwd, type Inheritance, inheritSourceWorkspace, writeOverlay, writePrepare } from "../fork-task/workspace.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
-import { DESCRIPTION, flowTopics } from "./docs.ts";
+import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
 import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
-import { briefOf, interpret, yieldSchema } from "./session.ts";
+import { briefOf, commandOutcome, interpret, yieldSchema } from "./session.ts";
 import { definitionKey, type Earlier, modelKey, type Outcome, partsOf } from "./state.ts";
 import { type Command, Store } from "./store.ts";
 
@@ -175,13 +166,10 @@ type Prepared = {
 	readonly prepare: string | undefined;
 };
 
-const prepareFilePath = (childFile: string): string => `${overlayFilePath(childFile)}.prepare`;
-
 type Runtime = {
 	readonly pi: ExtensionAPI;
 	readonly flows: Map<string, Flow>;
 	readonly spawns: Map<string, Prepared>;
-	readonly started: Set<string>;
 };
 
 const spawnId = (dir: string, name: string): string => `${dir}\n${name}`;
@@ -266,8 +254,6 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
-const clipOutput = (text: string): string =>
-	text.length > 8000 ? `${text.slice(0, 2000)}\n… ${text.length - 8000} characters left out …\n${text.slice(-6000)}` : text;
 
 function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 	const where = `history://${session}`;
@@ -388,6 +374,15 @@ async function spawnAndWait(
 	signal.removeEventListener("abort", cancel);
 	const outcome = outcomeOfJob(box, job, session);
 	if (outcome.kind !== "done" && outcome.kind !== "raise") return outcome;
+	if (box.isolated !== false && cfgTaskIsolationApply.get(parent.settings)) {
+		const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
+		if (kept !== undefined) {
+			return failed(
+				"workspace",
+				`the session yielded, but OMP kept its changes on branch \`${kept}\` instead of merging them into your checkout, which may be left half-updated (\`git status\`); the item's next session starts from that branch (history://${session})`,
+			);
+		}
+	}
 	const refusal = handBackFailure(job.resultText ?? "");
 	if (refusal === undefined) return outcome;
 	return failed(
@@ -414,12 +409,12 @@ async function runCommand(parent: AgentSession, box: CommandBox, firing: Firing,
 			if (error === null) output += chunk;
 		},
 	);
-	if (result.cancelled) return { kind: "cancelled" };
-	if (result.timedOut) return failed("timeout", clipOutput(output.trim()));
-	if (result.exitCode === 0) return { kind: "done", value: output.trimEnd(), handoff: null };
-	const said = `exit code ${result.exitCode ?? "unknown"}:\n${clipOutput(output.trim())}`;
-	const ran = typeof result.exitCode === "number" && result.exitCode >= 1 && result.exitCode <= 125;
-	return box.checks !== undefined && ran ? { kind: "rejected", output: said } : failed("exit", said);
+	return commandOutcome(box, {
+		exitCode: result.exitCode ?? undefined,
+		timedOut: result.timedOut,
+		cancelled: result.cancelled,
+		output,
+	});
 }
 
 function withBoard(flow: Flow, box: AgentBox, firing: Firing): Firing {
@@ -449,48 +444,11 @@ async function beforeSubagentSpawn(
 	const childFile = path.join(dir, `${event.spawnKey}.jsonl`);
 	try {
 		if (prepared.overlay !== undefined) await writeOverlay(childFile, prepared.overlay);
-		if (prepared.prepare !== undefined) {
-			fs.mkdirSync(path.dirname(prepareFilePath(childFile)), { recursive: true });
-			fs.writeFileSync(prepareFilePath(childFile), prepared.prepare);
-		}
+		if (prepared.prepare !== undefined) await writePrepare(childFile, prepared.prepare);
 	} catch (error) {
 		return { block: true, reason: `flow: handing the new session what was prepared for it failed: ${errorText(error)}` };
 	}
 	return prepared.model === undefined ? undefined : { model: prepared.model };
-}
-
-async function beforeAgentStart(rt: Runtime, _event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<undefined> {
-	const file = ctx.sessionManager.getSessionFile();
-	if (ctx.agent.kind !== "sub" || !file || rt.started.has(file)) return;
-	rt.started.add(file);
-	const cwd = ctx.sessionManager.getCwd();
-	await recordStart(file, cwd, ctx.agent.id).catch((error: unknown) =>
-		rt.pi.logger.warn("flow: recording the workspace start failed", { error: errorText(error) }),
-	);
-	const applied = await applyOverlay(file, cwd).catch((error: unknown) => ({ kind: "failed" as const, message: errorText(error) }));
-	const reason =
-		applied.kind === "failed"
-			? `flow: the changes of the earlier session did not apply to this workspace: ${applied.message}`
-			: await prepareWorkspace(file, cwd);
-	if (reason === undefined) return;
-	rt.pi.logger.warn(reason);
-	callerSession(ctx)?.agent.addBeforeModelCallHook(() => {
-		throw new Error(reason);
-	});
-}
-
-async function prepareWorkspace(file: string, cwd: string): Promise<string | undefined> {
-	const left = prepareFilePath(file);
-	if (!fs.existsSync(left)) return undefined;
-	const command = fs.readFileSync(left, "utf8");
-	fs.rmSync(left, { force: true });
-	let output = "";
-	const result = await new Shell().run({ command, cwd, timeoutMs: 240_000 }, (error, chunk) => {
-		if (error === null) output += chunk;
-	});
-	if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return undefined;
-	const how = result.timedOut ? "timed out" : `exited with ${result.exitCode ?? "no status"}`;
-	return `flow: the box's \`prepare\` command ${how} in this workspace: ${clipOutput(output.trim())}`;
 }
 
 async function fire(rt: Runtime, parent: AgentSession, flow: Flow, firing: Firing): Promise<void> {
@@ -633,9 +591,9 @@ async function executeFlow(
 }
 
 export default function flow(pi: ExtensionAPI): void {
-	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), started: new Set() };
+	const rt: Runtime = { pi, flows: new Map(), spawns: new Map() };
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
-	pi.on("before_agent_start", beforeAgentStart.bind(null, rt));
+	registerFlowTopics();
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "flow",
 		label: tr("Flow", "流程"),

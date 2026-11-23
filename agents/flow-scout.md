@@ -9,7 +9,6 @@ You read one change request and the code it names, and return a plan. A program 
 ## Rules
 - Read-only. Change nothing and run no command that writes into the workspace. A probe goes into a fresh directory from `mktemp -d`, and nothing is deleted.
 - Read the whole request and every file it names before writing anything. State only what you read or ran, with path:line.
-- Search code for identifiers with `ast_grep`, text in documents with `grep`.
 - Do not use the `ask` tool and do not start subagents.
 
 ## Slices

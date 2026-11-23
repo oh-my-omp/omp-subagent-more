@@ -2,10 +2,15 @@
 
 compact 之后先读这一份，再动手。这里只有必须做到的事和它的理由（理由用用户原话）；不写做法，不写进度。进度在 todo 里。
 
-实现位置：`prototype/flow/`，测试 `tests/flow-store.test.ts`，真实运行用 `omp -e prototype/flow/host.ts`。
+实现位置：`extensions/flow/`（随 omp-subagent-more 插件加载），eval 辅助 `skills/omp-subagent-more/flow.js`，角色 `agents/flow-*.md`，测试 `tests/flow-store.test.ts`。
 
 ## 它为什么存在
 
+- &#32;**一套workflow原语，以一个普通的目标做案例验证编排原语的实际可行性** 
+- subagent的控制反转，把主agent从无尽的调度和传话中解放
+- 确定性的交接和状态机判断，减少模型因为判断跑偏
+- 减少确定性事件需要模型来回传话和判断，平白无故消耗token和推理时间
+- 工作流的目的不是langraph式的一下子所有内容跑通，而是在确定性编排的部分尝试去编排，不确定的部分llm退回普通方式，提供最大的灵活性。
 - 目的是“低成本模型处理所有这些issue的一个详细编排方案”（omp-config 的 issue 树 320/321/322）：中等及以下难度的工作全部拆给 free、low、mid 模型。流程工具是手段，交付物是那份编排方案；工具做出来以后要拿真实的 issue 试跑，用观察到的模型行为决定怎么组合。“你可以试着跑一个issue并观察这些模型的行为来在编排上选择如何组合”。
 - 它属于 subagent more：“为了subagent more去定制增强eval…eval就有了实际上可用的经验”，“把之前设计的东西挪过来，因为这是subagent more的一部分”。
 

@@ -10,6 +10,7 @@ import {
 	taskIsolationBaseDir,
 	type WorktreeBaseline,
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
+import { Shell } from "@oh-my-pi/pi-natives";
 import { errorText } from "./errors.ts";
 import type { WorkingDirectory } from "./fork-diff.ts";
 import { readOptional, sessionArtifactsDir } from "./replica-file.ts";
@@ -223,4 +224,33 @@ export async function writeOverlay(childFile: string, patch: string): Promise<vo
 	const file = overlayFilePath(childFile);
 	await fs.mkdir(path.dirname(file), { recursive: true });
 	await fs.writeFile(file, patch);
+}
+
+function prepareFilePath(childFile: string): string {
+	return path.join(sessionArtifactsDir(childFile), "fork-task.prepare");
+}
+
+export async function writePrepare(childFile: string, command: string): Promise<void> {
+	const file = prepareFilePath(childFile);
+	await fs.mkdir(path.dirname(file), { recursive: true });
+	await fs.writeFile(file, command);
+}
+
+export type PrepareResult = { readonly kind: "none" } | { readonly kind: "ran" } | { readonly kind: "failed"; readonly message: string };
+
+const PREPARE_TIMEOUT_MS = 240_000;
+const PREPARE_OUTPUT_KEPT = 6000;
+
+export async function runPrepare(childFile: string, cwd: string): Promise<PrepareResult> {
+	const file = prepareFilePath(childFile);
+	const command = await readOptional(file);
+	if (command === undefined) return { kind: "none" };
+	await fs.rm(file, { force: true });
+	let output = "";
+	const result = await new Shell().run({ command, cwd, timeoutMs: PREPARE_TIMEOUT_MS }, (error, chunk) => {
+		if (error === null) output += chunk;
+	});
+	if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return { kind: "ran" };
+	const how = result.timedOut ? "timed out" : `exited with ${result.exitCode ?? "no status"}`;
+	return { kind: "failed", message: `the \`prepare\` command ${how} in this workspace: ${output.trim().slice(-PREPARE_OUTPUT_KEPT)}` };
 }

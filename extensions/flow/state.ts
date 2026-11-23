@@ -111,8 +111,8 @@ export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): s
 	const parts = partsOf(key);
 	const box = boxes[parts.box];
 	if (box?.kind !== "command" || box.checks === undefined) return undefined;
-	if (!isFanned(boxes[box.checks])) return box.checks;
-	return parts.index === undefined ? undefined : itemKey(box.checks, parts.index);
+	if (!isFanned(boxes[box.checks.box])) return box.checks.box;
+	return parts.index === undefined ? undefined : itemKey(box.checks.box, parts.index);
 }
 
 function dependents(state: State, changedInputs: ReadonlySet<string>, changedItems: ReadonlySet<string>): Set<string> {

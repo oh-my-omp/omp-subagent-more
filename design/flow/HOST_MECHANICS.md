@@ -12,7 +12,7 @@
 - 当 `ownerId` 匹配且主会话处于空闲（`!isStreaming`）时，Job 的 `run` 函数返回的字符串会经由 `yieldQueue.enqueueWithReceipt("async-result", ...)` 自动触发 `injectIdle` → `agent.prompt(...)`，**唤醒主会话开启新一轮回复**。
 
 ### `flow` 的设计利用
-- `flow.run()` 调用 `ensureDriver()`（[`host.ts`](../../prototype/flow/host.ts)），向 `asyncJobManager` 注册一个 `id: "flow"`、`ownerId: parent.getAgentId()` 的后台 Job。
+- `flow.run()` 调用 `ensureDriver()`（[`index.ts`](../../extensions/flow/index.ts)），向 `asyncJobManager` 注册一个 `id: "flow"`、`ownerId: parent.getAgentId()` 的后台 Job。
 - 该 Job 内部运行 `drive()` 循环：不断调用 `store.advance()` 启动就绪单元、等待单元结算、取消孤儿会话（`store.orphans`），直到 `store.state.mode.kind !== "running" && flow.running.size === 0` 时返回 `flow.store.changes().join("\n")`。
 - 因此，无论流内部串联或并联了多少个子代理会话，**主会话只在整条流全部完成（`idle`）或因异常/未答复问题停下时被唤醒一次**。
 
@@ -33,7 +33,7 @@
      - `job.status`: `"running" | "completed" | "failed" | "cancelled"`
      - `job.structured`: `{ source, mode, status: "valid" | "invalid" | "unavailable", data?: unknown, error?: string }`
      - `job.resultText`（成功时的交付文本，含 `<merge-summary>`）与 `job.errorText`（失败或取消时的文本）。
-   - 即使 Schema 校验失败导致 `job.status === "failed"`，`TaskJobError` 仍会将 `structured` 挂载到 `job.structured` 上，因此 [`host.ts`](../../prototype/flow/host.ts) 的 `outcomeOfJob()` 能精确区分 `schema`、`protocol` 与普通 `session` 失败。
+   - 即使 Schema 校验失败导致 `job.status === "failed"`，`TaskJobError` 仍会将 `structured` 挂载到 `job.structured` 上，因此 [`index.ts`](../../extensions/flow/index.ts) 的 `outcomeOfJob()` 能精确区分 `schema`、`protocol` 与普通 `session` 失败。
 
 ---
 
@@ -45,12 +45,12 @@
 - `before_agent_start` 钩子运行在**子代理所在线程**（可能是另一个 Worker 线程），此时子代理线程内存里的 `rt.spawns` 是空的！
 
 ### `flow` 的设计利用
-- 在父线程的 `before_subagent_spawn` 中（[`host.ts`](../../prototype/flow/host.ts) 的 `beforeSubagentSpawn()`）：
+- 在父线程的 `before_subagent_spawn` 中（[`index.ts`](../../extensions/flow/index.ts) 的 `beforeSubagentSpawn()`）：
   - 通过 `{ model: prepared.model }` 返回值直接覆盖子代理的模型绑定；
   - 将继承的工作区补丁通过 `writeOverlay(childFile, prepared.overlay)` 写入子代理会话 artifacts 目录下的 `fork-task.overlay.patch`；
-  - 将填充好参数的 `prepare` 命令写入同目录下的 `fork-task.overlay.patch.prepare` 文件。
-- 在子代理线程的 `before_agent_start` 中（[`host.ts`](../../prototype/flow/host.ts) 的 `beforeAgentStart()`）：
-  - 根据自身的 `ctx.sessionManager.getSessionFile()` 得到同一个 artifacts 目录，依次执行 `recordStart` → `applyOverlay` → `prepareWorkspace`（读取并删除 `.prepare` 文件）。
+  - 将填充好参数的 `prepare` 命令通过 `writePrepare(childFile, command)` 写入同目录下的 `fork-task.prepare`。
+- 在子代理线程的 `before_agent_start` 中（[`extensions/fork-task/index.ts`](../../extensions/fork-task/index.ts) 的 `beforeAgentStart()`，`fork_task` 与 `flow` 共用这一个钩子）：
+  - 根据自身的 `ctx.sessionManager.getSessionFile()` 得到同一个 artifacts 目录，依次执行 `recordStart` → `applyOverlay` → `runPrepare`（读取并删除 `fork-task.prepare`）；补丁或命令失败都挂载 `BeforeModelCallHook` 抛错，会话在任何模型调用前停下。
 
 ---
 
@@ -63,5 +63,5 @@
    - 因此依赖安装必须通过盒子的 `prepare` 命令（如 `"bun install"`）在 worktree 内生成真实的被 `.gitignore` 忽略的目录。
 2. **隔离子代理 `yield` 成功不代表改动已合入主检出**：
    - 当隔离子代理成功调用 `yield` 时，无论后续 git 合并是否成功，`job.status` 都是 `"completed"` 且 `job.structured.status === "valid"`。
-   - 若合入主检出发生冲突，宿主在 `branch` 模式下会保留分支 `omp/task/<agentId>`（`task/isolation-runner.ts`），并在 `job.resultText` 的 `<merge-summary>` 块内写入转义后的 `&lt;system-notification>...` 提示文本。
-   - `flow` 在 [`host.ts`](../../prototype/flow/host.ts) 的 `handBackFailure()` 中检查这一情况：一旦发现合入失败，将单元结果改判为 `failed("workspace", ...)` 停流，且下一次会话通过 `keptTaskBranch()` 直接从 `omp/task/<agentId>` 分支继承改动。
+   - `branch` 模式下 `mergeIsolatedChanges()`（`task/isolation-runner.ts`）合入成功后调用 `cleanupTaskBranches()` 删除分支 `omp/task/<agentId>`，合入失败时保留该分支，并在 `job.resultText` 的 `<merge-summary>` 块内写入转义后的 `&lt;system-notification>...` 提示文本；`patch` 模式没有分支，只有这段文本。
+   - `flow` 在 [`index.ts`](../../extensions/flow/index.ts) 的 `spawnAndWait()` 中检查这一情况：`task.isolation.apply` 开启且会话已交回时，先看 `keptTaskBranch()` 是否还留着该分支，再看 `handBackFailure()` 是否读到那段文本；任一成立即把单元结果改判为 `failed("workspace", ...)` 停流，下一次会话通过 `keptTaskBranch()` 从该分支继承改动。

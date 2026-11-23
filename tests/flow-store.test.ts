@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fill, type Json, shellWord } from "../prototype/flow/defs.ts";
-import { appendLog, readLog } from "../prototype/flow/journal.ts";
-import type { Firing } from "../prototype/flow/plan.ts";
-import { briefOf, interpret, yieldSchema } from "../prototype/flow/session.ts";
-import { type Action, definitionKey, modelKey, type Outcome, replay } from "../prototype/flow/state.ts";
-import { moves, Store } from "../prototype/flow/store.ts";
+import { fill, type Json, shellWord } from "../extensions/flow/defs.ts";
+import { appendLog, readLog } from "../extensions/flow/journal.ts";
+import type { Firing } from "../extensions/flow/plan.ts";
+import { briefOf, commandOutcome, interpret, yieldSchema } from "../extensions/flow/session.ts";
+import { type Action, definitionKey, modelKey, type Outcome, replay } from "../extensions/flow/state.ts";
+import { moves, Store } from "../extensions/flow/store.ts";
 
 const HANDOFF: Json = { did: "work", decided: [], unverified: [] };
 const done = (value: Json): Outcome => ({ kind: "done", value, handoff: HANDOFF });
@@ -211,6 +211,30 @@ describe("runtime exceptions", () => {
 		expect(flow.fire()).toEqual(["gate@3"]);
 		flow.store.settle("gate", 3, failed("timeout"));
 		expect(flow.store.state.mode).toMatchObject({ kind: "stopped", cause: { name: "timeout" } });
+	});
+
+	test("retracting one item of a fanned box removes only what was computed from that item, through every level", () => {
+		const flow = open();
+		flow.store.submit({
+			kind: "define",
+			boxes: {
+				a: { agent: "task:low", brief: "{{v}}", in: { v: "input.list[]" }, out: OUT },
+				b: { agent: "task:low", brief: "{{v}}", in: { v: "a[]" }, out: OUT },
+				c: { command: "c {{v}}", in: { v: "b[]" } },
+				all: { command: "all {{v}}", in: { v: "b" } },
+			},
+		});
+		flow.store.submit({ kind: "supply", name: "list", value: [1, 2] });
+		flow.store.submit({ kind: "run" });
+		for (const box of ["a", "b", "c"]) {
+			flow.fire();
+			flow.store.settle(`${box}#0`, 1, done(0));
+			flow.store.settle(`${box}#1`, 1, done(1));
+		}
+		flow.fire();
+		flow.store.settle("all", 1, done("both"));
+		flow.store.submit({ kind: "retract", keys: ["a#1"] });
+		expect(Object.keys(flow.store.state.items).sort()).toEqual(["a#0", "b#0", "c#0"]);
 	});
 
 	test("a session that outlived its item reports to nothing", () => {
@@ -458,6 +482,33 @@ describe("checks", () => {
 		expect(flow.store.state.items["work#1"]?.phase).toMatchObject({ kind: "done", value: 1 });
 	});
 
+	test("only the exit codes in `rejects` reopen the checked item; any other non-zero exit is the `exit` exception", () => {
+		const flow = open();
+		const define = (rejects: Json | undefined) => {
+			flow.store.submit({ kind: "define", boxes: { work: CHECKED, check: { ...(CHECK as object), ...(rejects ? { rejects } : {}) } } });
+			const box = flow.store.state.boxes.check;
+			if (box?.kind !== "command") throw new Error("check is a command box");
+			return box;
+		};
+		const run = (exitCode: number) => ({ exitCode, timedOut: false, cancelled: false, output: "out" });
+		const usual = define(undefined);
+		expect(commandOutcome(usual, run(1))).toEqual({ kind: "rejected", output: "exit code 1:\nout" });
+		expect(commandOutcome(usual, run(2))).toMatchObject({ kind: "failed", name: "exit" });
+		expect(commandOutcome(usual, run(127))).toMatchObject({ kind: "failed", name: "exit" });
+		const typed = define([1, 2]);
+		expect(commandOutcome(typed, run(2))).toMatchObject({ kind: "rejected" });
+		expect(commandOutcome(typed, run(124))).toMatchObject({ kind: "failed", name: "exit" });
+		expect(commandOutcome(typed, run(0))).toEqual({ kind: "done", value: "out", handoff: null });
+	});
+
+	test("`rejects` belongs to a check and holds exit codes from 1 to 125", () => {
+		const flow = open();
+		const refusals = (check: Json): readonly string[] => flow.store.submit({ kind: "define", boxes: { work: CHECKED, check } }).refusals;
+		expect(refusals({ command: "build", rejects: [1] })).toEqual(["check: `rejects` belongs to a box that `checks` another"]);
+		expect(refusals({ ...(CHECK as object), rejects: [0] })).toEqual(["check: `rejects` is a non-empty array of exit codes from 1 to 125"]);
+		expect(refusals({ ...(CHECK as object), rejects: [] })).toEqual(["check: `rejects` is a non-empty array of exit codes from 1 to 125"]);
+	});
+
 	test("a check of a box with one item reopens that item", () => {
 		const flow = open();
 		flow.store.submit({
@@ -493,7 +544,7 @@ describe("checks", () => {
 
 	test("the full report says which item a check's rejection reopens", () => {
 		const flow = checking();
-		expect(flow.store.everything()).toContain("wire check ← work[] · a rejection reopens work");
+		expect(flow.store.everything()).toContain("wire check ← work[] · exit 1 reopens work");
 		flow.store.changes();
 		flow.store.settle("check#1", 1, reject("expected 3,\n got 2"));
 		expect(flow.store.changes()).toContain("~ work#1: reopened after session 1 by check `check`: expected 3, got 2");

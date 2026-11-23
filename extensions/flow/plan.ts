@@ -64,7 +64,7 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 			}
 		}
 		if (box.kind === "command") {
-			if (box.checks !== undefined) problems.push(...checkProblems(boxes, name, box.checks, Object.values(box.inputs)));
+			if (box.checks !== undefined) problems.push(...checkProblems(boxes, name, box.checks.box, Object.values(box.inputs)));
 			continue;
 		}
 		for (const type of box.raises) {

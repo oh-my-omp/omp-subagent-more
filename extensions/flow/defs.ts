@@ -36,10 +36,12 @@ export type AgentBox = Common & {
 	readonly bound: number;
 };
 
+export type Check = { readonly box: string; readonly rejects: readonly number[] };
+
 export type CommandBox = Common & {
 	readonly kind: "command";
 	readonly command: string;
-	readonly checks: string | undefined;
+	readonly checks: Check | undefined;
 };
 
 export type Box = AgentBox | CommandBox;
@@ -111,7 +113,9 @@ const AGENT_KEYS: Record<string, true> = {
 	limit: true,
 	bound: true,
 };
-const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true };
+const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true, rejects: true };
+const DEFAULT_REJECTS: readonly number[] = [1];
+const isRejectCode = (value: Json): value is number => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 125;
 
 export function parseBox(name: string, raw: Json): Result<Box> {
 	const problems: string[] = [];
@@ -187,8 +191,17 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	if (!isAgent) {
 		const checksRaw = raw.checks;
 		if (checksRaw !== undefined && (typeof checksRaw !== "string" || !NAME.test(checksRaw))) say("`checks` names a box");
+		const rejectsRaw = raw.rejects;
+		if (rejectsRaw !== undefined) {
+			if (checksRaw === undefined) say("`rejects` belongs to a box that `checks` another");
+			else if (!isArray(rejectsRaw) || rejectsRaw.length === 0 || !rejectsRaw.every(isRejectCode))
+				say("`rejects` is a non-empty array of exit codes from 1 to 125");
+		}
 		if (problems.length > 0) return { ok: false, problems };
-		const checks = typeof checksRaw === "string" ? checksRaw : undefined;
+		const checks: Check | undefined =
+			typeof checksRaw === "string"
+				? { box: checksRaw, rejects: rejectsRaw !== undefined && isArray(rejectsRaw) ? rejectsRaw.filter(isRejectCode) : DEFAULT_REJECTS }
+				: undefined;
 		return { ok: true, value: { kind: "command", command: template, checks, inputs, handle, limit, fingerprint } };
 	}
 

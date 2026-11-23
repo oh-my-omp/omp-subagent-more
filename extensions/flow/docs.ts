@@ -1,4 +1,4 @@
-import * as path from "node:path";
+import { registerToolTopics, type ToolTopicDoc, toDocTopics } from "../../omomp-shared/internal-url.ts";
 
 export const DESCRIPTION = `Runs a flow of boxes (fresh subagent sessions and shell commands, wired to each other by name) from one append-only store, and answers every call with the store's verdict. Use it to split work into many small sessions whose results feed later ones. Call it from \`eval\` cells to hand values computed in code (a \`gh\` result, a parsed file) to the flow without retyping them.
 
@@ -15,17 +15,29 @@ An agent box runs one fresh subagent session per item:
 
 \`\`\`json
 {
-  "agent": "task:low",
-  "brief": "List the files this issue touches.\\n\\n{{issue}}",
-  "in": { "issue": "input.issue" },
+  "agent": "flow:worker",
+  "model": "task:low",
+  "brief": "Implement this slice.\\n\\n{{slice}}",
+  "in": { "slice": "scout.slices[]" },
   "out": { "type": "object", "required": ["files"], "properties": { "files": { "type": "array", "items": { "type": "string" } } } },
   "raises": ["question"],
   "handle": { "session": 1 },
   "limit": 2,
   "bound": 3,
-  "isolated": true
+  "isolated": true,
+  "prepare": "bun install"
 }
 \`\`\`
+
+The plugin ships one agent per role a flow usually needs. Each has its own system prompt and no model of its own: name the tier whose model setting it runs on in \`model\`. Rules of the project the flow works in go into the \`brief\`.
+
+| Agent | Role |
+|---|---|
+| \`flow:scout\` | Read-only. Splits one request into slices, open points and check gaps for later boxes to fan out over. |
+| \`flow:worker\` | Implements one slice in its workspace; raises what the assignment leaves open instead of guessing. |
+| \`flow:adjudicator\` | Read-only. Rules on raised points or open points; never implements. |
+| \`flow:guardian\` | Read-only. Judges once, at the end, whether what was built is what the request asked for. |
+| \`flow:verifier\` | Carries out one acceptance step as written and reports what it observed; never repairs. |
 
 A command box runs one shell command per item, in POSIX syntax. Its result is the command's output text:
 
@@ -46,6 +58,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
 | \`bound\` | agent | Most sessions one item may take through answered raises and rejections by a check: the first, and one per answer or rejection. 3 when absent. |
 | \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
+| \`rejects\` | command | With \`checks\`: the exit codes that reject the checked result, \`[1]\` when absent. Name every code the check uses for a rejection, for example \`[1, 2]\` for \`tsc\`. |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
 | \`prepare\` | agent | A command run in the session's workspace before its first turn, for what the session needs and no model should spend a turn on (\`bun install\`). \`{{name}}\` is replaced by the input's text as one quoted shell word. When it fails, the session does not start. |
 
@@ -74,8 +87,8 @@ The command's exit code is its verdict:
 | Exit code | Meaning |
 |---|---|
 | 0 | The check accepts. The output is the box's result. |
-| 1–125 | The check rejects. The item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow goes on; no exception is raised. |
-| 126 and above | The command could not run or was killed. This is the \`exit\` exception, as for any command box; nothing is reopened. |
+| One of \`rejects\` | The check rejects. The item it checks is reopened: it continues in a new session that is given the earlier session's handoff and the command's output, and everything computed from its earlier result, this check included, is removed and produced again from the new result. The flow goes on; no exception is raised. |
+| Any other | The check itself went wrong: a missing program, a syntax error, a kill. This is the \`exit\` exception, as for any command box; nothing is reopened. |
 
 Each reopening is one of the checked box's \`bound\` sessions. A rejection of the result of an item's last allowed session raises \`bound_exceeded\`.
 
@@ -101,7 +114,7 @@ A worktree holds no ignored files of your checkout (installed dependencies, buil
 | \`schema\` | The yielded result does not match \`out\`. |
 | \`protocol\` | The yielded object is not a result or a declared raise. |
 | \`bound_exceeded\` | An item raised in its last allowed session, or a check rejected the result of an item's last allowed session. |
-| \`exit\` | A command exited non-zero; for a check, with 126 or above. |
+| \`exit\` | A command exited non-zero; for a check, with a code not in its \`rejects\`. |
 | \`timeout\` | A command timed out. |
 | \`host\` | Starting or reading the session threw. |`;
 
@@ -146,12 +159,7 @@ An item records what it ran under: its box, the definition of the box's \`agent\
 
 An item that raised waits for its answer while the rest of the flow goes on. The answer is the result of the box that takes \`<box>!<type>\` as an input, or the value of an \`answer\` call when no box does. A flow that comes to rest with a raise nobody answers reports it as \`raised and unanswered\`; \`answer\` it and \`run\` again.`;
 
-export function flowTopics(): Readonly<Record<string, string>> {
-	const helper = path.join(import.meta.dir, "helper.js");
-	return {
-		boxes: BOXES,
-		lifecycle: LIFECYCLE,
-		eval: `# Calling the flow from an eval cell
+const EVAL = `# Calling the flow from an eval cell
 
 In a JavaScript cell the tool is \`tool.flow\`. Definitions and values travel as JSON text:
 
@@ -163,19 +171,19 @@ print(r.text);
 
 The call resolves to \`{text, details}\`: \`text\` is the verdict, \`details.accepted\` says whether the call was applied, and \`details.values\` holds the values of a \`value\` call by key. A refused call resolves with \`hasError: true\`; it does not throw. Nothing reaches the transcript unless the cell prints it.
 
-The helper wraps this. Load it once per kernel:
+The skill's helper wraps this. Load it once per kernel, in a cell of its own:
 
 \`\`\`
-%load ${helper}
+%load skill://omp-subagent-more/flow.js
 \`\`\`
 
 It defines \`flow\`, whose functions take JavaScript values, print the verdict when the call returns, and throw when the call is refused:
 
 \`\`\`js
-await flow.define({ scout: { agent: "task:low", brief: "…{{issue}}", in: { issue: "input.issue" }, out: { type: "object" } } });
+await flow.define({ scout: { agent: "flow:scout", model: "task:low", brief: "…{{issue}}", in: { issue: "input.issue" }, out: { type: "object" } } });
 await flow.supply("issue", issue);
 await flow.run();
-const { files } = await flow.value("scout");
+const { slices } = await flow.value("scout");
 \`\`\`
 
 | Function | Returns |
@@ -184,6 +192,28 @@ const { files } = await flow.value("scout");
 | \`flow.retract(...keys)\`, \`flow.keep(...keys)\`, \`flow.retry(...keys)\`, \`flow.answer(key, value)\` | nothing; the verdict is printed |
 | \`flow.value(key)\` | the stored value of that key; prints nothing |
 
-The helper holds no state. After a kernel restart the flow is unchanged: load the helper again, or call \`tool.flow\` directly.`,
-	};
+The helper holds no state. After a kernel restart the flow is unchanged: load the helper again, or call \`tool.flow\` directly.`;
+
+const FLOW_TOPICS: readonly ToolTopicDoc[] = [
+	{ tool: "flow", topic: "boxes", title: "Box definitions", when: "before writing or changing box definitions", body: BOXES },
+	{
+		tool: "flow",
+		topic: "lifecycle",
+		title: "Running, stopping and resuming a flow",
+		when: "before `run`, or after a verdict that says STOPPED, stale, illegal, raised or refused",
+		body: LIFECYCLE,
+	},
+	{
+		tool: "flow",
+		topic: "eval",
+		title: "Calling the flow from an eval cell",
+		when: "before calling the tool from an eval cell",
+		body: EVAL,
+	},
+];
+
+export const flowTopics: () => Readonly<Record<string, string>> = toDocTopics(FLOW_TOPICS);
+
+export function registerFlowTopics(): void {
+	registerToolTopics("omp-subagent-more/flow", FLOW_TOPICS);
 }

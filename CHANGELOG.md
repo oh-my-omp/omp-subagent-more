@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- The `flow` tool runs a flow of boxes, fresh subagent sessions and shell commands wired to each other by name, from one append-only log per session: one background job starts every ready item and wakes the main session once when the flow comes to rest or stops; fan-out (`<box>[]`), wired raises (`<box>!<type>`), checks that reopen the checked item, forced handoffs, per-item notes files, workspace carried between sessions of an item across models, named runtime exceptions that stop the flow, and stale results after a definition, agent prompt or model setting changes
+- `rejects` on a check box names the exit codes that reject the checked result (`[1]` when absent); any other non-zero exit of a check is the `exit` exception
+- The agents `flow:scout`, `flow:worker`, `flow:adjudicator`, `flow:guardian` and `flow:verifier`, with their own system prompts and no model of their own; a box's `model` names the tier they run on
+- `%load skill://omp-subagent-more/flow.js` defines `flow.*` for eval cells: each call takes JavaScript values, prints the verdict and throws when refused
+- A box's `prepare` command runs in the subagent's workspace after inherited changes are applied and before its first turn, as part of the same start of every subagent that applies `fork_task` overlays
+
+### Removed
+
+- `skill://omp-subagent-more/orchestrate.js` and its `orchestrate(spec)`, `drive()` and `answer()`: answering continued the same subagent session, and its state lived in the eval kernel; `flow.js` replaces it
+
 ### Changed
 
 - Updated the shared copy of `compact-handoff.ts` to oh-my-omp/shared@db9dde4.

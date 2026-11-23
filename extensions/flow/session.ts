@@ -1,4 +1,4 @@
-import { type AgentBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
+import { type AgentBox, type CommandBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
 import type { Continuation, Outcome } from "./state.ts";
 
@@ -93,6 +93,26 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 	);
 	parts.push(finish.join("\n"));
 	return parts.join("\n\n");
+}
+
+export type CommandRun = {
+	readonly exitCode: number | undefined;
+	readonly timedOut: boolean;
+	readonly cancelled: boolean;
+	readonly output: string;
+};
+
+const clipOutput = (text: string): string =>
+	text.length > 8000 ? `${text.slice(0, 2000)}\n… ${text.length - 8000} characters left out …\n${text.slice(-6000)}` : text;
+
+export function commandOutcome(box: CommandBox, run: CommandRun): Outcome {
+	if (run.cancelled) return { kind: "cancelled" };
+	const output = clipOutput(run.output.trim());
+	if (run.timedOut) return { kind: "failed", name: "timeout", reason: output };
+	if (run.exitCode === 0) return { kind: "done", value: run.output.trimEnd(), handoff: null };
+	const said = `exit code ${run.exitCode ?? "unknown"}:\n${output}`;
+	const rejected = box.checks !== undefined && run.exitCode !== undefined && box.checks.rejects.includes(run.exitCode);
+	return rejected ? { kind: "rejected", output: said } : { kind: "failed", name: "exit", reason: said };
 }
 
 export function interpret(box: AgentBox, data: Json | undefined): Outcome {

@@ -36,7 +36,7 @@ import { serveSources } from "./source-channel.ts";
 import { allocatedFrom, claimsName, discardPending, moveFile, type PendingFork, stageFork } from "./stage.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
 import { docTopics, registerForkTaskTopics } from "./topics.ts";
-import { applyOverlay, recordStart, rejection, resolveForkWorkspace, workingDirectory, writeOverlay } from "./workspace.ts";
+import { applyOverlay, recordStart, rejection, resolveForkWorkspace, runPrepare, workingDirectory, writeOverlay } from "./workspace.ts";
 
 const progressSchema = z.object({ progress: z.array(z.object({ index: z.number(), id: z.string() }).passthrough()) }).passthrough();
 
@@ -148,6 +148,15 @@ async function beforeAgentStart(
 			rt.pi.logger.warn(`fork_task: ${reason}`);
 			// The assignment assumes the inherited changes; do not run it without them.
 			refuseModelCalls(session, reason);
+			return;
+		}
+		const prepared = await runPrepare(file, cwd).catch((error: unknown): { readonly kind: "failed"; readonly message: string } => ({
+			kind: "failed",
+			message: errorText(error),
+		}));
+		if (prepared.kind === "failed") {
+			rt.pi.logger.warn(`fork_task: ${prepared.message}`);
+			refuseModelCalls(session, prepared.message);
 			return;
 		}
 	}

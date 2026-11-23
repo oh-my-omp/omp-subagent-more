@@ -1,12 +1,12 @@
 # `flow` 编排原语完整技术规范
 
-本文档定义 `omp-subagent-more` 中 `flow` 编排原语的数据模型、引用解析、Redux 状态机、会话交接协议与 REPL 接口规范（对应 [`prototype/flow/`](../../prototype/flow/) 的实现）。
+本文档定义 `omp-subagent-more` 中 `flow` 编排原语的数据模型、引用解析、Redux 状态机、会话交接协议与 REPL 接口规范（对应 [`extensions/flow/`](../../extensions/flow/) 的实现）。
 
 ---
 
 ## 1. 盒子定义（Boxes）与引用语法（References）
 
-一条流程（Flow）由一组按名字相互引用的**盒子（Box）**组成。盒子定义是纯 JSON 数据，不含任何 JS 函数或闭包（见 [`defs.ts`](../../prototype/flow/defs.ts)）。
+一条流程（Flow）由一组按名字相互引用的**盒子（Box）**组成。盒子定义是纯 JSON 数据，不含任何 JS 函数或闭包（见 [`defs.ts`](../../extensions/flow/defs.ts)）。
 
 ### 1.1 两种盒子类型
 
@@ -46,6 +46,7 @@
   "command": "bun test {{work}}",
   "in": { "work": "work[]" },
   "checks": "work",
+  "rejects": [1],
   "handle": { "exit": 1 },
   "limit": 1
 }
@@ -66,6 +67,7 @@
 | `isolated` | Agent | `boolean?` | 三态：`true` 表示每个会话在独立 git worktree 中运行并自动继承同一单元上一会话留下的未交回变更；`false` 表示显式共享调用方工作区（用于只读/计算型盒子，避免触发 isolation-nudge 拦截）；省略则遵循宿主默认设置。 |
 | `prepare` | Agent | `string?` | 在子代理会话首轮开始前、在子代理自己的工作区内执行的 shell 命令（支持 `{{name}}` 替换，如 `"bun install"`）。失败时会话不启动，记为 `session` 异常。 |
 | `checks` | Command | `string?` | 声明该命令盒子是对指定 Agent 盒子的门禁检查（见第 4 节）。 |
+| `rejects` | Command | `number[]?` | 仅与 `checks` 同用：表示“拒绝被检查结果”的退出码，取值 1–125，非空；省略时为 `[1]`。 |
 | `limit` | 两者 | `number?` | 该盒子同时处于 `running` 状态的最大单元数。省略表示不限并发。 |
 | `bound` | Agent | `number?` | 单个单元通过“抛出问题被答复”和“门禁拒绝重开”串联起来的最大会话总数（含首次会话）。默认值为 `3`。 |
 
@@ -79,7 +81,7 @@
 | `"work!question"` | `{ kind: "raise", box: "work", type: "question" }` | `true` | **业务异常端口**：每当 `work` 的某个单元（如 `work#1` 在第 2 次尝试时）抛出 `question`，自动为当前盒子生成一个答复单元，键名为 `<box><work#1@2>`。输入值为 `{ item, type, detail, handoff, board }`。 |
 
 ### 1.4 静态合法性检查（`lint`）
-在 `define` 和 `run` 时，[`plan.ts`](../../prototype/flow/plan.ts) 执行以下静态检查，任何一项不满足则拒绝执行并一次列出全部问题：
+在 `define` 和 `run` 时，[`plan.ts`](../../extensions/flow/plan.ts) 执行以下静态检查，任何一项不满足则拒绝执行并一次列出全部问题：
 1. **单重展开限制**：一个盒子的 `in` 中最多只能有 **1 个** `multi: true`（`[]` 或 `!type`）引用。
 2. **模板占位符完备**：`brief`、`command`、`prepare` 中出现的每个 `{{name}}` 必须在 `in` 中有定义。
 3. **引用源存在性**：`box` 引用指向的盒子必须已定义；`<box>!<type>` 指向的盒子必须是 Agent 盒子且其 `raises` 包含 `<type>`。
@@ -91,7 +93,7 @@
 
 ## 2. 集中式状态机（Redux Store & Action Log）
 
-状态管理器（[`state.ts`](../../prototype/flow/state.ts)、[`store.ts`](../../prototype/flow/store.ts)、[`journal.ts`](../../prototype/flow/journal.ts)）是纯函数式的：磁盘上的 `flow.jsonl` 是唯一持久物，内存中的 `State` 完全由 `replay(actions)` 折叠得出。
+状态管理器（[`state.ts`](../../extensions/flow/state.ts)、[`store.ts`](../../extensions/flow/store.ts)、[`journal.ts`](../../extensions/flow/journal.ts)）是纯函数式的：磁盘上的 `flow.jsonl` 是唯一持久物，内存中的 `State` 完全由 `replay(actions)` 折叠得出。
 
 ### 2.1 状态结构（`State`）
 
@@ -123,7 +125,7 @@ type State = {
 
 ### 2.3 级联失效（`dependents`）
 
-当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts`](../../prototype/flow/state.ts) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。
+当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts`](../../extensions/flow/state.ts) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。按 `<box>[]` 逐项对应的扇出单元只随同序号的上游单元失效，多级扇出逐级如此；引用整个扇出盒子结果的单元随任一上游单元失效。
 
 ### 2.4 14 种日志动作（`Action`）
 
@@ -148,7 +150,7 @@ type State = {
 ## 3. 单次点火契约（Session, Handoff, Whiteboard & Workspace）
 
 ### 3.1 严格交回协议（`yieldSchema`）
-每个 Agent 盒子通过 `task` 工具派发时，固定设置 `schemaMode: "strict"`，其 `outputSchema` 由 [`session.ts`](../../prototype/flow/session.ts) 生成：
+每个 Agent 盒子通过 `task` 工具派发时，固定设置 `schemaMode: "strict"`，其 `outputSchema` 由 [`session.ts`](../../extensions/flow/session.ts) 生成：
 
 ```json
 {
@@ -182,16 +184,16 @@ type State = {
 - 当单元因 `retract` 或上游重算被移除时，`pruneBoards()` 自动删除对应的白板文件。
 
 ### 3.3 隔离工作区继承与 `prepare` 命令
-对于 `isolated: true` 的 Agent 盒子，当同一 `item.key` 进行第 $N$ ($N > 1$) 次点火且存在上一次已结束的会话 `earlier: { session, yielded }` 时，[`host.ts`](../../prototype/flow/host.ts) 的 `inheritFrom()` 按以下优先级提取工作区变更：
+对于 `isolated: true` 的 Agent 盒子，当同一 `item.key` 进行第 $N$ ($N > 1$) 次点火且存在上一次已结束的会话 `earlier: { session, yielded }` 时，[`index.ts`](../../extensions/flow/index.ts) 的 `inheritFrom()` 按以下优先级提取工作区变更：
 1. **上一会话正常 `yield` 且宿主已自动合入主检出**（`earlier.yielded && cfgTaskIsolationApply` 且无残留分支）：无需额外 overlay，新 worktree 直接基于已更新的主检出创建。
 2. **宿主未能合并而保留的任务分支**（`keptTaskBranch` 存在 `refs/heads/omp/task/<session>`）：调用 `inheritKeptBranch()` 计算 `git diff <merge-base>..<branch>` 作为 overlay 补丁。
 3. **宿主释放的补丁文件**（`<sessionDir>/<session>.patch` 存在）：调用 `inheritReleasedPatch()` 读取补丁并校验 `git apply --check`。
 4. **仍在存活或未释放的隔离目录**：调用 `inheritSourceWorkspace()` 对比首轮记录的 `recordStart` 基线生成增量补丁。
 
-在子代理线程的 `before_agent_start` 钩子中，依次执行：
+子代理启动由 `fork_task` 与 `flow` 共用的一个 `before_agent_start` 钩子（[`extensions/fork-task/index.ts`](../../extensions/fork-task/index.ts)）完成，依次执行：
 1. `recordStart(file, cwd, id)` 记录当前 worktree 的初始基线；
 2. `applyOverlay(file, cwd)` 应用继承的补丁（失败则挂载 `BeforeModelCallHook` 抛错阻止模型运行）；
-3. `prepareWorkspace(file, cwd)` 执行盒子的 `prepare` 命令（超时 240s，非零退出同样阻止模型运行）。
+3. `runPrepare(file, cwd)` 执行盒子留下的 `prepare` 命令（超时 240s，非零退出同样阻止模型运行）。
 
 ---
 
@@ -201,7 +203,7 @@ type State = {
 
 | 维度 | 业务回路 1：模型主动抛出 (`raise`) | 业务回路 2：门禁检查拒绝 (`checks`) | 运行时异常 (`failed`) |
 |---|---|---|---|
-| **触发条件** | 子代理 `yield` 返回 `status: "raise"` | 带 `checks: "<box>"` 的命令盒子以退出码 `1–125` 结束 | `spawn` / `workspace` / `session` / `schema` / `protocol` / `bound_exceeded` / `exit` (普通命令非零或检查命令 `126+`) / `timeout` / `host` |
+| **触发条件** | 子代理 `yield` 返回 `status: "raise"` | 带 `checks: "<box>"` 的命令盒子以其 `rejects` 中的退出码结束 | `spawn` / `workspace` / `session` / `schema` / `protocol` / `bound_exceeded` / `exit` (普通命令非零，或检查命令的退出码不在 `rejects` 中) / `timeout` / `host` |
 | **是否停止整条流** | **否**（其他就绪单元继续运行） | **否**（直接重开被检查的单元） | 若 `spent < box.handle[name]` 则原地重火；**否则整条流立即 `STOPPED` 并取消所有在跑会话** |
 | **下游产物处理** | 尚未产生下游产物 | 调用 `dependents()` 级联清除该单元此前产出的所有下游结果（含本次 `check` 自身） | 保留已有上游产物，当前单元进入 `failed` |
 | **后续如何接回** | `<box>!<type>` 盒子产出结果或外部调用 `flow.answer()` 后，原单元带着 `{ kind: "answer", answer, previous: handoff }` 开新会话 | 原单元立即变为 `reopened`，下一轮调度带着 `{ kind: "check", check, output, previous: handoff }` 开新会话 | 调用方必须 `define`（修改该盒子定义）、`retract`（撤回）或 `retry`（显式重试）后才允许再次 `flow.run()` |
@@ -215,10 +217,10 @@ type State = {
 扩展注册名为 `flow` 的工具（`loadMode: "essential"`），附带三个按需读取的文档主题：
 - `help://flow/boxes`：盒子字段、引用语法、门禁检查与异常说明。
 - `help://flow/lifecycle`：10 个操作原语、判定输出格式、停止恢复与过期值处理。
-- `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `helper.js` 的方法。
+- `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `skill://omp-subagent-more/flow.js` 的方法。
 
-### 5.2 内核辅助层（`helper.js`）
-通过 `%load <path>/helper.js` 加载后定义 `globalThis.flow`，自身不保存任何状态：
+### 5.2 内核辅助层（`flow.js`）
+通过 `%load skill://omp-subagent-more/flow.js` 加载后定义 `globalThis.flow`，自身不保存任何状态：
 
 ```js
 await flow.define(boxes);          // 登记、覆盖或删除(null)盒子；打印 Verdict
@@ -234,9 +236,9 @@ const v = await flow.value(key);   // 静默读取 input.<name>、单元或盒�
 ```
 
 ### 5.3 判定输出格式（Verdict）
-每次除 `value` 外的调用均返回并由 `helper.js` 隐式 `print` 以下结构的文本（[`report.ts`](../../prototype/flow/report.ts)）：
+每次除 `value` 外的调用均返回并由 `flow.js` 隐式 `print` 以下结构的文本（[`report.ts`](../../extensions/flow/report.ts)）：
 1. **状态头行**：`flow running | complete | not running | STOPPED · X done · Y running · Z raised · W failed · V cancelled`
 2. **停止原因与阻断项**（按需出现）：`cause: ...`、`problem: ...`、`needs: ...`、`waiting for inputs: ...`、`stale: ...`、`illegal: ...`、`raised and unanswered: ...`
-3. **合法下一步提示**：`next: supply issue | keep or retract work#0 | run | stop`（由 [`store.ts`](../../prototype/flow/store.ts) 的 `moves(state)` 直接调用与 `judge` 相同的判定逻辑生成，保证列出的操作 100% 会被接受）。
-4. **接线图**（仅 `status` 输出）：`wire work ← input.slices[] · raises question → answer · fires again on session ×1`
+3. **合法下一步提示**：`next: supply issue | keep or retract work#0 | run | stop`（由 [`store.ts`](../../extensions/flow/store.ts) 的 `moves(state)` 直接调用与 `judge` 相同的判定逻辑生成，保证列出的操作 100% 会被接受）。
+4. **接线图**（仅 `status` 输出）：`wire work ← input.slices[] · raises question → answer · fires again on session ×1`；门禁盒子写作 `wire check ← work[] · exit 1 reopens work`
 5. **状态增量（Delta）**：自上次 Verdict 以来新增（`+`）、变更（`~`）或移除（`-`）的盒子、输入与单元行。
