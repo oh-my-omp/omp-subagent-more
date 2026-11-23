@@ -1,6 +1,6 @@
 {
 	"name": "omp-subagent-ng",
-	"version": "0.3.1",
+	"version": "0.4.0",
 	"description": "fork_task, the fork:self agent and the flow orchestration primitives for Oh My Pi",
 	"type": "module",
 	"repository": {

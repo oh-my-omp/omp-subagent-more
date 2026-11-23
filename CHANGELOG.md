@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
 ### Breaking Changes
 
 - The plugin is renamed from `omp-subagent-more` to `omp-subagent-ng`: the package name and install URL (`https://github.com/oh-my-omp/omp-subagent-ng`), the model role `@omp-subagent-ng`, the skill `omp-subagent-ng` (`skill://omp-subagent-ng/flow.js`), the topic namespaces, reminder sources and log lines all use the new name; subagent progress recorded in sessions by earlier versions still loads
