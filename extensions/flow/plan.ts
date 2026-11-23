@@ -89,6 +89,9 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 		if (box.splits > 0 && !isFanned(box)) {
 			problems.push(`${name}: \`splits\` needs a \`[]\` input; the parts of a split item take the place of its element`);
 		}
+		if (box.splits > 0 && box.isolated !== true) {
+			problems.push(`${name}: \`splits\` needs \`isolated: true\`; the parts run as isolated forks of the splitting session`);
+		}
 	}
 	const done = new Set<string>();
 	const visit = (name: string, trail: readonly string[]): void => {
@@ -268,13 +271,13 @@ export function survey(state: State): Survey {
 
 	const childrenOf = (item: Item, expected: Expected, input: string | undefined): Expected[] => {
 		if (item.phase.kind !== "split" || input === undefined) return [];
-		const { parts, handoff } = item.phase;
+		const { parts } = item.phase;
 		return parts.map((part, index) => ({
 			key: childKey(item.key, index),
 			path: [...expected.path, index],
 			inputs: { ...expected.inputs, [input]: part },
 			start: {
-				continuation: { kind: "part", part: index, of: parts.length, previous: handoff },
+				continuation: { kind: "part", part: index, of: parts.length },
 				earlier: item.last,
 				depth: item.depth + 1,
 			},

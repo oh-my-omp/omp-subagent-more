@@ -4,7 +4,7 @@ export const DESCRIPTION = `Runs a flow of boxes (fresh subagent sessions and sh
 
 Topics — read the one a call needs before making it:
 - \`help://flow/boxes\` — before writing or changing box definitions
-- \`help://flow/lifecycle\` — before \`run\`, or after a verdict that says STOPPED, stale, illegal, raised or refused
+- \`help://flow/lifecycle\` — before \`run\`, before answering a split request, or after a verdict that says STOPPED, stale, illegal, raised or refused
 - \`help://flow/eval\` — before calling the tool from an eval cell`;
 
 const BOXES = `# Box definitions
@@ -57,7 +57,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
 | \`bound\` | agent | Most sessions one item may take through answered raises and rejections by a check: the first, and one per answer or rejection. 3 when absent. |
-| \`splits\` | agent | How many levels deep one element may be split (see Splitting): \`1\` lets an item split, its parts not. Needs a \`[]\` input. Absent: no session may split. |
+| \`splits\` | agent | How many levels deep one element may be split (see Splitting): \`1\` lets an item split, its parts not. Needs a \`[]\` input and \`isolated: true\`. Absent: no session may split. |
 | \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
 | \`rejects\` | command | With \`checks\`: the exit codes that reject the checked result, \`[1]\` when absent. Name every code the check uses for a rejection, for example \`[1, 2]\` for \`tsc\`. |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
@@ -97,13 +97,13 @@ The command box must take an input from the box it checks. When that box has man
 
 ## Splitting
 
-A session of a box with \`splits\` that finds its element too large for one session yields \`{"status": "split", "parts": […]}\` instead of a result. The item then has no result of its own. Each part takes the place of the element as an item of the same box, named by appending its index (\`work#0\` splits into \`work#0.0\`, \`work#0.1\`). A part runs in a new session that starts from the splitting session's changes and is given its handoff, and it may split again while \`splits\` allows (\`work#0.1.0\`).
+A session of a box with \`splits\` that finds its element too large for one session asks you, the author of the flow, for a split: it calls its \`flow_split\` tool with the parts and the details you need to judge them, and that call blocks until you answer (see \`help://flow/lifecycle\`). When you disagree, the session gets your reason and goes on. When you agree, it yields \`{"status": "split", …}\` instead of a result, and the item has no result of its own. Each part takes the place of the element as an item of the same box, named by appending its index (\`work#0\` splits into \`work#0.0\`, \`work#0.1\`). A part's first session is a fork of the splitting session: it keeps that session's conversation, starts in its own worktree from the changes the splitting session handed back, and is told which part is its own. A part may split again while \`splits\` allows (\`work#0.1.0\`).
 
 Nothing joins the parts. Whatever reads \`work\` reads its leaves, the items that ended with a result, in key order: \`work[]\` makes one item per leaf with the same path, and \`work\` is the array of the leaves' results, so a box that reduces them is an ordinary box taking \`work\`. Each leaf is checked, reopened and retracted on its own; retracting the split item removes its parts and what was computed from them, and the item fires again whole.
 
 ## Sessions
 
-Every session is new: none continues an earlier one. A session ends by yielding its result, one of its box's \`raises\` types or, where \`splits\` allows, a split, and a handoff with it. What a later session of the same item has of an earlier one:
+Every session but a part's first is new: it continues no earlier one. A session ends by yielding its result, one of its box's \`raises\` types or a split you agreed to, and a handoff with it. What a later session of the same item has of an earlier one:
 
 - the handoff the earlier session yielded, when it raised and the raise was answered, or when a check reopened the item;
 - the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
@@ -119,7 +119,7 @@ A worktree holds no ignored files of your checkout (installed dependencies, buil
 | \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session, or a session yielded and OMP reported that its changes did not reach your checkout (the reason quotes OMP). |
 | \`session\` | The session failed, aborted itself, or ended without yielding; or its \`prepare\` command failed. |
 | \`schema\` | The yielded result does not match \`out\`. |
-| \`protocol\` | The yielded object is not a result, a declared raise or an allowed split. |
+| \`protocol\` | The yielded object is not a result, a declared raise or a split you agreed to within what \`splits\` allows. |
 | \`bound_exceeded\` | An item raised in its last allowed session, or a check rejected the result of an item's last allowed session. |
 | \`exit\` | A command exited non-zero; for a check, with a code not in its \`rejects\`. |
 | \`timeout\` | A command timed out. |
@@ -143,6 +143,8 @@ One flow belongs to one session. Its state is an append-only log of actions kept
 | \`keep\` | Declares a stale item's value still good under the current definition. |
 | \`retry\` | Lets a failed item fire again unchanged. |
 | \`answer\` | Answers an item's raise from outside the flow; the item continues in a new session. |
+| \`agree\` | Approves the split a running session asks for; the session yields it, and each part runs as a fork of it. |
+| \`disagree\` | Refuses that split, with a \`reason\`; the session gets the reason and goes on. |
 
 ## Verdicts
 
@@ -164,7 +166,11 @@ An item records what it ran under: its box, the definition of the box's \`agent\
 
 ## Raises
 
-An item that raised waits for its answer while the rest of the flow goes on. The answer is the result of the box that takes \`<box>!<type>\` as an input, or the value of an \`answer\` call when no box does. A flow that comes to rest with a raise nobody answers reports it as \`raised and unanswered\`; \`answer\` it and \`run\` again.`;
+An item that raised waits for its answer while the rest of the flow goes on. The answer is the result of the box that takes \`<box>!<type>\` as an input, or the value of an \`answer\` call when no box does. A flow that comes to rest with a raise nobody answers reports it as \`raised and unanswered\`; \`answer\` it and \`run\` again.
+
+## Split requests
+
+A running session of a box with \`splits\` may ask to split its element. The request reaches you as a message that names the item, quotes the session's details and lists the parts; while it waits, \`status\` lists it as \`split asked\`. The session is blocked until you call \`agree\` or \`disagree\` with the item's key, so answer it rather than end your turn on it. Each part is a value of the box's fanned input: check that the parts together cover the element and that each can be done and checked on its own.`;
 
 const EVAL = `# Calling the flow from an eval cell
 
@@ -196,7 +202,7 @@ const { slices } = await flow.value("scout");
 | Function | Returns |
 |---|---|
 | \`flow.define(boxes)\`, \`flow.supply(name, value)\`, \`flow.run()\`, \`flow.stop(reason)\`, \`flow.status()\` | nothing; the verdict is printed |
-| \`flow.retract(...keys)\`, \`flow.keep(...keys)\`, \`flow.retry(...keys)\`, \`flow.answer(key, value)\` | nothing; the verdict is printed |
+| \`flow.retract(...keys)\`, \`flow.keep(...keys)\`, \`flow.retry(...keys)\`, \`flow.answer(key, value)\`, \`flow.agree(key)\`, \`flow.disagree(key, reason)\` | nothing; the verdict is printed |
 | \`flow.value(key)\` | the stored value of that key; prints nothing |
 
 The helper holds no state. After a kernel restart the flow is unchanged: load the helper again, or call \`tool.flow\` directly.`;
@@ -207,7 +213,7 @@ const FLOW_TOPICS: readonly ToolTopicDoc[] = [
 		tool: "flow",
 		topic: "lifecycle",
 		title: "Running, stopping and resuming a flow",
-		when: "before `run`, or after a verdict that says STOPPED, stale, illegal, raised or refused",
+		when: "before `run`, before answering a split request, or after a verdict that says STOPPED, stale, illegal, raised or refused",
 		body: LIFECYCLE,
 	},
 	{

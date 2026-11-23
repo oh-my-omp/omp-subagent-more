@@ -65,3 +65,18 @@
    - 当隔离子代理成功调用 `yield` 时，无论后续 git 合并是否成功，`job.status` 都是 `"completed"` 且 `job.structured.status === "valid"`。
    - `branch` 模式下 `mergeIsolatedChanges()`（`task/isolation-runner.ts`）合入成功后调用 `cleanupTaskBranches()` 删除分支 `omp/task/<agentId>`，合入失败时保留该分支，并在 `job.resultText` 的 `<merge-summary>` 块内写入转义后的 `&lt;system-notification>...` 提示文本；`patch` 模式没有分支，只有这段文本。
    - `flow` 在 [`index.ts`](../../extensions/flow/index.ts) 的 `spawnAndWait()` 中检查这一情况：`task.isolation.apply` 开启且会话已交回时，先看 `keptTaskBranch()` 是否还留着该分支，再看 `handBackFailure()` 是否读到那段文本；任一成立即把单元结果改判为 `failed("workspace", ...)` 停流，下一次会话通过 `keptTaskBranch()` 从该分支继承改动。
+
+---
+
+## 5. 拆分请求：子代理在一次工具调用里阻塞等待编写者
+
+### 宿主事实
+- 扩展工厂按会话绑定（`extensibility/extensions/loader.ts` 的 `bindExtension`），每个会话有自己的 `pi`；`pi.sendMessage(..., { deliverAs: "aside", triggerTurn: true })` 只投递到这个会话：空闲时开启新一轮，忙时在下一个步骤边界注入，不打断进行中的工具调用。
+- 同一进程的线程之间可以用 `BroadcastChannel` 通信，同一线程里的两个实例之间也互相投递（Bun 实测）；`fork_task` 的 [`source-channel.ts`](../../extensions/fork-task/source-channel.ts) 已用它跨线程取请求副本。
+- `defaultInactive: true` 的扩展工具不进会话的初始启用集；agent 定义里的 `tools` 列表不阻止扩展随后经 `setActiveTools` 启用它（真机：`flow:worker` 的 `tools` 不含 `flow_split`，会话请求里仍有该工具）。
+- `fork_task` 的 `isolated_from_source` 拒绝已交回改动的源（`source-handed-back`）。源会话结束时，fork-task 把它最后一次模型请求存为 parked 请求，之后仍可用 `from` fork 它。
+
+### `flow` 的设计利用
+- 父线程的 `before_subagent_spawn` 为还能拆分的会话在其 artifacts 目录写 `flow.splittable`；子代理线程在 `session_start` 读到它后按规范顺序启用 `flow_split`（[`split.ts`](../../extensions/flow/split.ts)）。
+- `flow_split` 经 `BroadcastChannel("omp-subagent-more/flow-split")` 发出请求。驱动流程的后台 Job 存活期间监听该频道，按会话 ID 认领属于自己的请求，先回 `waiting`，再向编写者会话发 `aside` 消息；5 秒内无人认领时工具直接返回拒绝。编写者的 `agree`/`disagree` 经同一频道送回，工具调用随之返回。
+- 编写者同意后，worker 交回 `split` 并结束，改动照常交回调用方检出；各部分随后以 `fork_task`（`from` 为 worker，`workspace: "isolated_from_caller"`，`shake: false`）派发，从已含 worker 改动的检出新建 worktree。`task.isolation.apply` 关闭时，worker 的改动由 `inheritFrom()` 读出，经 overlay 交给 fork。

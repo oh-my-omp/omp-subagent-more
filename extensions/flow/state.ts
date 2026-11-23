@@ -13,7 +13,7 @@ export type Earlier = { readonly session: string; readonly yielded: boolean };
 export type Continuation =
 	| { readonly kind: "answer"; readonly answer: Json; readonly previous: Json }
 	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json }
-	| { readonly kind: "part"; readonly part: number; readonly of: number; readonly previous: Json };
+	| { readonly kind: "part"; readonly part: number; readonly of: number };
 
 export type Action =
 	| { readonly kind: "defined"; readonly boxes: Readonly<Record<string, Json>> }

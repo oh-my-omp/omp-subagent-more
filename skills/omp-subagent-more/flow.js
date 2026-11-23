@@ -19,6 +19,8 @@
 		keep: (...keys) => verdict({ op: "keep", keys }),
 		retry: (...keys) => verdict({ op: "retry", keys }),
 		answer: (key, value) => verdict({ op: "answer", keys: [key], value: JSON.stringify(value) }),
+		agree: (key) => verdict({ op: "agree", keys: [key] }),
+		disagree: (key, reason) => verdict({ op: "disagree", keys: [key], reason }),
 		value: async (key) => (await call({ op: "value", keys: [key] })).details.values[key],
 	};
 })();

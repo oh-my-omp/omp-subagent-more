@@ -1,5 +1,6 @@
-import { type AgentBox, type CommandBox, fill, isArray, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
+import { type AgentBox, type CommandBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
+import { SPLIT_TOOL } from "./split.ts";
 import type { Continuation, Outcome } from "./state.ts";
 
 const HANDOFF_SCHEMA: JsonObject = {
@@ -29,7 +30,6 @@ export function yieldSchema(box: AgentBox, depth: number): JsonObject {
 			status: { enum: ["done", ...(raising ? ["raise"] : []), ...(splitting ? ["split"] : [])] },
 			value: box.out,
 			...(raising ? { raise: { enum: box.raises }, detail: { type: "string" } } : {}),
-			...(splitting ? { parts: { type: "array", minItems: 2 } } : {}),
 			handoff: HANDOFF_SCHEMA,
 		},
 	};
@@ -40,7 +40,7 @@ export type Surroundings = {
 	readonly inherited: boolean;
 };
 
-function continuationText(continuation: Continuation): string {
+function continuationText(continuation: Exclude<Continuation, { kind: "part" }>): string {
 	switch (continuation.kind) {
 		case "answer":
 			return [
@@ -61,14 +61,6 @@ function continuationText(continuation: Continuation): string {
 				continuation.output,
 				"Find what in the work makes the check fail and correct it. The check itself is not yours to change.",
 			].join("\n");
-		case "part":
-			return [
-				"## Continuation",
-				`An earlier session was given the larger assignment this one is part of and split it into ${continuation.of} parts; this assignment is part ${continuation.part + 1}. What that session changed is in your workspace. You start fresh: nothing of that session reaches you except its handoff.`,
-				"Handoff of the earlier session:",
-				textOf(continuation.previous),
-				"Do this part only: every other part is the assignment of another session.",
-			].join("\n");
 		default: {
 			const unreachable: never = continuation;
 			return unreachable;
@@ -77,8 +69,20 @@ function continuationText(continuation: Continuation): string {
 }
 
 export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
-	const parts = [fill(box.brief, firing.inputs).trim()];
-	if (around.inherited && firing.continuation?.kind !== "part") {
+	const brief = fill(box.brief, firing.inputs).trim();
+	const continuation = firing.continuation;
+	const parts =
+		continuation?.kind === "part"
+			? [
+					[
+						"## Your part",
+						`The conversation above is yours up to your split, which the author of this flow approved. You are now one of ${continuation.of} forks of that session, each given one part, and what you changed before the split is in your workspace. This fork is given part ${continuation.part + 1}, and this assignment replaces the whole assignment above:`,
+					].join("\n"),
+					brief,
+					"Do this part only: every other part is the assignment of another fork.",
+				]
+			: [brief];
+	if (around.inherited && continuation?.kind !== "part") {
 		parts.push(
 			[
 				"## Earlier work",
@@ -92,7 +96,7 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 			`\`${around.board}\` belongs to this assignment alone. Read it before you start: earlier sessions of this assignment may have left notes. Append short notes a later session would need (what you tried, what you found). It is scratch: your result and handoff go through \`yield\`, and nothing reads the notes for you.`,
 		].join("\n"),
 	);
-	if (firing.continuation) parts.push(continuationText(firing.continuation));
+	if (continuation !== null && continuation.kind !== "part") parts.push(continuationText(continuation));
 	const finish = [
 		"## How to finish",
 		"Finish by calling `yield` with its `data` argument set to exactly one object. Never use `yield`'s `error` argument: it aborts the session and nothing of your work reaches anyone.",
@@ -106,7 +110,7 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 	const input = fannedInput(box);
 	if (splittable(box, firing.depth) && input !== undefined) {
 		finish.push(
-			`- The assignment is too large for one session and falls into pieces that can each be done and checked on their own: \`{"status": "split", "parts": [<piece>, …], "handoff": {…}}\`, with at least two pieces. Each piece takes the place of the \`${input}\` input of this assignment, in the same form, and becomes an assignment of its own for a new session that starts from your changes. Together the pieces cover everything of this assignment you leave undone; nothing of it comes back to you. Do not do the pieces yourself.`,
+			`- The assignment is too large for one session and falls into pieces that can each be done and checked on their own: ask the author of this flow for a split with the \`${SPLIT_TOOL}\` tool, giving the pieces and the details the author needs to judge them. Each piece takes the place of the \`${input}\` input of this assignment, in the same form; together the pieces cover everything of this assignment you leave undone, and nothing of it comes back to you. The call blocks until the author answers. If the author disagrees, the tool result gives the reason and you continue this session. If the author agrees, yield \`{"status": "split", "handoff": {…}}\` at once and do not do the pieces yourself: each piece goes to a fork of this session, which keeps this conversation and starts in an isolated workspace from your changes.`,
 		);
 	}
 	finish.push(
@@ -136,7 +140,7 @@ export function commandOutcome(box: CommandBox, run: CommandRun): Outcome {
 	return rejected ? { kind: "rejected", output: said } : { kind: "failed", name: "exit", reason: said };
 }
 
-export function interpret(box: AgentBox, depth: number, data: Json | undefined): Outcome {
+export function interpret(box: AgentBox, depth: number, data: Json | undefined, approved: readonly Json[] | undefined): Outcome {
 	const protocol = (reason: string): Outcome => ({ kind: "failed", name: "protocol", reason });
 	if (data === undefined || !isObject(data)) return protocol("the session ended without yielding an object");
 	const handoff = data.handoff;
@@ -153,10 +157,9 @@ export function interpret(box: AgentBox, depth: number, data: Json | undefined):
 	}
 	if (data.status === "split") {
 		if (!splittable(box, depth)) return protocol("split, which this session may not do: its box allows no further split");
-		const parts = data.parts;
-		if (parts === undefined || !isArray(parts) || parts.length < 2)
-			return protocol("`status` is `split` but `parts` is not an array of at least two");
-		return { kind: "split", parts, handoff };
+		if (approved === undefined)
+			return protocol(`yielded \`split\` without a split the author of the flow approved through \`${SPLIT_TOOL}\``);
+		return { kind: "split", parts: approved, handoff };
 	}
 	return protocol(`unknown status \`${String(data.status)}\``);
 }

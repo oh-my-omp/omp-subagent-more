@@ -71,7 +71,7 @@
 | `rejects` | Command | `number[]?` | 仅与 `checks` 同用：表示“拒绝被检查结果”的退出码，取值 1–125，非空；省略时为 `[1]`。 |
 | `limit` | 两者 | `number?` | 该盒子同时处于 `running` 状态的最大单元数。省略表示不限并发。 |
 | `bound` | Agent | `number?` | 单个单元通过“抛出问题被答复”和“门禁拒绝重开”串联起来的最大会话总数（含首次会话）。默认值为 `3`。 |
-| `splits` | Agent | `number?` | 一个元素最多可以被逐层拆分几层（见 4.1 节）：`1` 表示单元可以拆分、拆出的部分不能再拆。只用于扇出盒子。省略表示会话不能拆分。 |
+| `splits` | Agent | `number?` | 一个元素最多可以被逐层拆分几层（见 4.1 节）：`1` 表示单元可以拆分、拆出的部分不能再拆。只用于 `isolated: true` 的扇出盒子。省略表示会话不能拆分。 |
 
 ### 1.3 四种输入引用语法（`Ref`）
 
@@ -90,7 +90,7 @@
 4. **异常处理器唯一性**：同一个 `<box>!<type>` 最多只能被 **1 个** 下游盒子引用。
 5. **无依赖环（DAG）**：沿 `box` 引用边遍历不得存在环（`cycle: a → b → a`）。
 6. **`checks` 对齐约束**：声明 `checks: "work"` 的命令盒子：① `work` 必须是已定义的 Agent 盒子；② `work` 本身不能是接 `!type` 的答复盒子；③ 命令盒子必须至少有一个输入引用自 `work`；④ 若 `work` 是扇出盒子（`isFanned`），命令盒子必须以 `work[]` 作为输入，从而保证 `check#i` 与 `work#i` 一一对应。
-7. **拆分需要扇出**：声明 `splits` 的 Agent 盒子必须有一个非答复端口的 `[]` 输入，拆出的部分替换的就是这个输入的元素。
+7. **拆分需要扇出与隔离**：声明 `splits` 的 Agent 盒子必须有一个非答复端口的 `[]` 输入，拆出的部分替换的就是这个输入的元素；它还必须声明 `isolated: true`，因为各部分以隔离的 fork 运行。
 
 ---
 
@@ -146,7 +146,7 @@ type State = {
 | `halted` | `flow.stop(reason)` 或进程崩溃重启后 `recover()` | `mode` 设为 `{ kind: "stopped", cause: { kind: "halt", reason } }` |
 | `idled` | 调度器发现 `ready` 与 `running` 均为空 | `mode` 从 `running` 设为 `{ kind: "idle" }` |
 | `fired` | 调度器启动一个就绪单元 | 创建/更新 `item`，`phase: "running"`，若前态为 `raised` 或 `reopened` 则 `chain + 1`；新的拆分部分记 `depth = 被拆单元的 depth + 1` |
-| `spawned` | `task` 工具分配了子代理会话 ID | 记录 `item.session = sessionId` |
+| `spawned` | `task` 或 `fork_task` 工具分配了子代理会话 ID | 记录 `item.session = sessionId` |
 | `settled` | 子代理会话或命令执行结束 | 调用 `settle()` 将 `Outcome` 折叠为最终 `Phase`（见第 4 节） |
 
 ---
@@ -154,7 +154,7 @@ type State = {
 ## 3. 单次点火契约（Session, Handoff, Whiteboard & Workspace）
 
 ### 3.1 严格交回协议（`yieldSchema`）
-每个 Agent 盒子通过 `task` 工具派发时，固定设置 `schemaMode: "strict"`，其 `outputSchema` 由 [`session.ts`](../../extensions/flow/session.ts) 生成：
+每个 Agent 盒子的会话通过 `task` 工具派发（拆分部分的首个会话通过 `fork_task` 派发，见 4.1 节）时，固定设置 `schemaMode: "strict"`，其 `outputSchema` 由 [`session.ts`](../../extensions/flow/session.ts) 生成：
 
 ```json
 {
@@ -166,7 +166,6 @@ type State = {
     "value": { "...": "盒子的 out Schema" },
     "raise": { "enum": ["盒子的 raises 列表"] },
     "detail": { "type": "string" },
-    "parts": { "type": "array", "minItems": 2 },
     "handoff": {
       "type": "object",
       "additionalProperties": false,
@@ -181,8 +180,8 @@ type State = {
 }
 ```
 - 任务书末尾自动追加 `## How to finish` 说明：严禁调用子代理的 `ask` 工具，严禁使用 `yield` 的 `error` 参数，必须通过 `yield({ data: ... })` 提交。
-- `raise` 只在盒子声明了 `raises` 时出现；`split` 与 `parts` 只在该单元的 `depth < box.splits` 时出现。
-- 若交回对象缺少 `handoff`、`status: "done"` 缺少 `value`、`status: "raise"` 抛出了未在 `box.raises` 声明的类型、或在不允许拆分的会话里交回 `split`、或 `parts` 少于两份，均由 `interpret()` 判定为 `protocol` 运行时异常。
+- `raise` 只在盒子声明了 `raises` 时出现；`split` 只在该单元的 `depth < box.splits` 时出现。交回对象里没有各部分：各部分来自编写者批准的拆分请求（见 4.1 节）。
+- 若交回对象缺少 `handoff`、`status: "done"` 缺少 `value`、`status: "raise"` 抛出了未在 `box.raises` 声明的类型、在不允许拆分的会话里交回 `split`、或交回 `split` 时本会话没有被批准的拆分请求，均由 `interpret()` 判定为 `protocol` 运行时异常。
 
 ### 3.2 单元专属白板文件（Notes file）
 - 路径：`<sessionDir>/flow-boards/<encodeURIComponent(item.key)>.md`。
@@ -217,10 +216,14 @@ type State = {
 
 ### 4.1 拆分（flatMap）
 
-拆分是第三种业务回路，语义是 flatMap：声明了 `splits` 的扇出盒子，其会话判断自己的元素太大、不适合一个会话完成时，交回 `{ status: "split", parts: [...], handoff }` 而不是结果。
+拆分是第三种业务回路，语义是 flatMap：声明了 `splits` 的扇出盒子，其会话判断自己的元素太大、不适合一个会话完成时，先请流程的编写者批准，批准后交回 `{ status: "split", handoff }` 而不是结果。
 
+- **请求与阻塞**：会话调用 `flow_split` 工具，一次调用里给出各部分（每份是替换扇出元素的 JSON 文本）和供编写者判断的详情。该工具只在 `depth < box.splits` 的会话里启用。这次工具调用阻塞到编写者回复为止。
+- **送达编写者**：驱动该流程的编写者会话收到一条消息，写明单元键名、会话、详情与各部分；等待期间 `status` 列出 `split asked`。编写者只能回复 `agree`，或 `disagree` 加理由 `reason`。
+- **不同意**：工具调用返回编写者的理由，会话在同一会话里继续，可以完成任务，也可以再次请求拆分。
+- **同意**：工具调用返回后，会话立即交回 `{ status: "split", handoff }`；交回时被批准的各部分成为单元的 `parts`。
 - **原地替换**：被拆单元进入 `split` 阶段，自身不再产出值。每一份 `part` 取代该单元的扇出元素，成为同一盒子的新单元，键名为被拆单元键名加序号（`work#0.0`、`work#0.1`），其余输入原样保留。
-- **新会话起点**：每个部分开新会话，`continuation` 为 `{ kind: "part", part, of, previous: handoff }`；工作区从拆分会话交回的改动开始（`earlier` 取被拆单元最后一个会话）。部分在 `depth < box.splits` 时可以继续拆分。
+- **部分以 fork 开始**：每个部分的首个会话是拆分会话的 fork（`fork_task` 的 `from` 取被拆单元最后一个会话，`workspace: "isolated_from_caller"`，不 shake），继承拆分会话的对话，`continuation` 为 `{ kind: "part", part, of }`，任务书写明自己是第几份。工作区是独立 worktree，从拆分会话交回的改动开始（`earlier` 取被拆单元最后一个会话）。部分在 `depth < box.splits` 时可以继续拆分；部分被门禁重开或答复后续接的会话仍是新会话。
 - **没有汇合会话**：盒子的结果就是它的叶子（以结果结束的单元）按编号路径排序的结果。`work[]` 对每个叶子生成一个同编号路径的下游单元，`work` 是叶子结果的数组；归约（reduce）由一个以 `work` 为输入的普通盒子完成。
 - **逐叶处理**：门禁按叶子检查，拒绝时只重开该叶子；撤回被拆单元会撤回它的全部部分及其下游，然后被拆单元作为一个整体重新点火。
 
@@ -231,7 +234,7 @@ type State = {
 ### 5.1 工具层（`tool.flow`）
 扩展注册名为 `flow` 的工具（`loadMode: "essential"`），附带三个按需读取的文档主题：
 - `help://flow/boxes`：盒子字段、引用语法、门禁检查与异常说明。
-- `help://flow/lifecycle`：10 个操作原语、判定输出格式、停止恢复与过期值处理。
+- `help://flow/lifecycle`：12 个操作原语、判定输出格式、停止恢复、过期值处理与拆分请求的答复。
 - `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `skill://omp-subagent-more/flow.js` 的方法。
 
 ### 5.2 内核辅助层（`flow.js`）
@@ -247,6 +250,8 @@ await flow.retract(...keys);       // 撤回输入或单元及其下游；打印
 await flow.keep(...keys);          // 确认保留过期(stale)单元的值；打印 Verdict
 await flow.retry(...keys);         // 允许未改定义的 failed 单元重新点火；打印 Verdict
 await flow.answer(key, value);     // 从外部答复未接线的 raise；打印 Verdict
+await flow.agree(key);             // 批准该单元会话的拆分请求；打印结果
+await flow.disagree(key, reason);  // 拒绝该拆分请求并给出理由；打印结果
 const v = await flow.value(key);   // 静默读取 input.<name>、单元或盒子的存储值（不打印）
 ```
 

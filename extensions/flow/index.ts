@@ -28,24 +28,26 @@ import { Shell } from "@oh-my-pi/pi-natives";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { callerSession } from "../fork-task/caller-session.ts";
 import { errorText } from "../fork-task/errors.ts";
+import type { ForkItem } from "../fork-task/schema.ts";
 import { headerCwd, type Inheritance, inheritSourceWorkspace, writeOverlay, writePrepare } from "../fork-task/workspace.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
 import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
-import { briefOf, commandOutcome, interpret, yieldSchema } from "./session.ts";
+import { briefOf, commandOutcome, interpret, splittable, yieldSchema } from "./session.ts";
+import { markSplittable, registerSplitTool, type SplitAnswer, type SplitAsk, serveSplits } from "./split.ts";
 import { definitionKey, type Earlier, modelKey, type Outcome, partsOf } from "./state.ts";
 import { type Command, Store } from "./store.ts";
 
-const OPS = ["define", "supply", "run", "stop", "status", "value", "retract", "keep", "retry", "answer"] as const;
+const OPS = ["define", "supply", "run", "stop", "status", "value", "retract", "keep", "retry", "answer", "agree", "disagree"] as const;
 type Op = (typeof OPS)[number];
 
 const paramsSchema = z.object({
 	op: z
 		.enum(OPS)
 		.describe(
-			"What to do. `define`: add, replace or drop boxes. `supply`: give an outside input its value. `run`: start the flow or resume a stopped one. `stop`: stop a running flow. `status`: report the whole state. `value`: read stored values. `retract`: remove items or inputs and what was computed from them. `keep`: let stale items stand. `retry`: let failed items fire again unchanged. `answer`: answer an item's raise.",
+			"What to do. `define`: add, replace or drop boxes. `supply`: give an outside input its value. `run`: start the flow or resume a stopped one. `stop`: stop a running flow. `status`: report the whole state. `value`: read stored values. `retract`: remove items or inputs and what was computed from them. `keep`: let stale items stand. `retry`: let failed items fire again unchanged. `answer`: answer an item's raise. `agree`: approve the split a running session asks for; it yields and each part runs as an isolated fork of it. `disagree`: refuse that split; the session continues with your reason.",
 		),
 	boxes: z
 		.string()
@@ -62,9 +64,14 @@ const paramsSchema = z.object({
 		.array(z.string())
 		.optional()
 		.describe(
-			"Keys as verdicts print them: an item (`scout`, `work#1`, `answer<work#1@1>`), and for `retract` and `value` also `input.<name>`; `value` takes a box name too. Required by `value`, `retract`, `keep` and `retry`; `answer` takes exactly one.",
+			"Keys as verdicts print them: an item (`scout`, `work#1`, `answer<work#1@1>`), and for `retract` and `value` also `input.<name>`; `value` takes a box name too. Required by `value`, `retract`, `keep` and `retry`; `answer`, `agree` and `disagree` take exactly one, the item whose session raised or asks to split.",
 		),
-	reason: z.string().optional().describe("Why the flow is stopped; recorded with the stop. Only with `stop`. Optional."),
+	reason: z
+		.string()
+		.optional()
+		.describe(
+			"With `stop`, optional: why the flow is stopped, recorded with the stop. With `disagree`, required: why the split is refused; the session that asked continues with it.",
+		),
 });
 type Params = z.infer<typeof paramsSchema>;
 
@@ -73,7 +80,10 @@ const progressSchema = z.object({ progress: z.array(z.object({ id: z.string() })
 type Request =
 	| { readonly kind: "command"; readonly command: Command }
 	| { readonly kind: "status" }
-	| { readonly kind: "value"; readonly keys: readonly string[] };
+	| { readonly kind: "value"; readonly keys: readonly string[] }
+	| { readonly kind: "decide"; readonly key: string; readonly verdict: Verdict };
+
+type Verdict = { readonly kind: "agree" } | { readonly kind: "disagree"; readonly reason: string };
 
 const FIELDS: Record<Op, Partial<Record<"boxes" | "name" | "value" | "keys" | "reason", "required" | "optional">>> = {
 	define: { boxes: "required" },
@@ -86,6 +96,8 @@ const FIELDS: Record<Op, Partial<Record<"boxes" | "name" | "value" | "keys" | "r
 	keep: { keys: "required" },
 	retry: { keys: "required" },
 	answer: { keys: "required", value: "required" },
+	agree: { keys: "required" },
+	disagree: { keys: "required", reason: "required" },
 };
 
 function parseRequest(params: Params): Result<Request> {
@@ -142,6 +154,17 @@ function parseRequest(params: Params): Result<Request> {
 			if (keys.length !== 1) problems.push("`answer` takes exactly one key");
 			request = command({ kind: "answer", key: keys[0] ?? "", value: json("value") });
 			break;
+		case "agree":
+			if (keys.length !== 1) problems.push("`agree` takes exactly one key");
+			request = { kind: "decide", key: keys[0] ?? "", verdict: { kind: "agree" } };
+			break;
+		case "disagree": {
+			if (keys.length !== 1) problems.push("`disagree` takes exactly one key");
+			const reason = params.reason?.trim() ?? "";
+			if (params.reason !== undefined && reason === "") problems.push("`disagree` needs a non-empty `reason`");
+			request = { kind: "decide", key: keys[0] ?? "", verdict: { kind: "disagree", reason } };
+			break;
+		}
 		default: {
 			const unreachable: never = params.op;
 			return unreachable;
@@ -152,10 +175,28 @@ function parseRequest(params: Params): Result<Request> {
 
 type Running = { readonly key: string; readonly attempt: number; readonly abort: AbortController };
 
+type SplitState =
+	| { readonly kind: "none" }
+	| {
+			readonly kind: "asked";
+			readonly parts: readonly Json[];
+			readonly answer: (answer: SplitAnswer) => void;
+	  }
+	| { readonly kind: "approved"; readonly parts: readonly Json[] };
+
+type Live = {
+	readonly key: string;
+	readonly attempt: number;
+	readonly box: AgentBox;
+	readonly depth: number;
+	split: SplitState;
+};
+
 type Flow = {
 	readonly store: Store;
 	readonly dir: string;
 	readonly running: Map<string, Running>;
+	readonly live: Map<string, Live>;
 	kick: () => void;
 	driving: boolean;
 };
@@ -164,6 +205,7 @@ type Prepared = {
 	readonly overlay: string | undefined;
 	readonly model: string | string[] | undefined;
 	readonly prepare: string | undefined;
+	readonly splittable: boolean;
 };
 
 type Runtime = {
@@ -186,7 +228,7 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 	const log = readLog(file);
 	const store = new Store(log, (action) => appendLog(file, action));
 	if (log.length > 0) store.recover();
-	const flow: Flow = { store, dir, running: new Map(), kick: () => {}, driving: false };
+	const flow: Flow = { store, dir, running: new Map(), live: new Map(), kick: () => {}, driving: false };
 	rt.flows.set(sessionFile, flow);
 	return flow;
 }
@@ -255,7 +297,7 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
 
-function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: string): Outcome {
+function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: string, approved: readonly Json[] | undefined): Outcome {
 	const where = `history://${session}`;
 	const structured = job.structured;
 	switch (job.status) {
@@ -268,7 +310,7 @@ function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: stri
 				return failed("protocol", `the session ended without yielding an object (${where})`);
 			}
 			const data = parseJson(JSON.stringify(structured.data ?? null));
-			return data.ok ? interpret(box, depth, data.value) : failed("protocol", `${data.problems.join("; ")} (${where})`);
+			return data.ok ? interpret(box, depth, data.value, approved) : failed("protocol", `${data.problems.join("; ")} (${where})`);
 		}
 		case "failed":
 			if (structured?.status === "invalid")
@@ -297,8 +339,12 @@ async function runAgent(
 	if (box.isolated === true && !cfgTaskIsolationEnabled.get(parent.settings)) {
 		return failed("spawn", "the box is `isolated`, and this session does not allow isolated subagents (`task.isolation.enabled`)");
 	}
+	const forkOf = firing.continuation?.kind === "part" ? firing.earlier?.session : undefined;
+	if (firing.continuation?.kind === "part" && forkOf === undefined) {
+		return failed("spawn", "the part has no splitting session to fork");
+	}
 	let model: string | string[] | undefined;
-	if (box.model !== undefined) {
+	if (box.model !== undefined && forkOf === undefined) {
 		model = (await lookUpAgents(parent, [box.model])).models.get(box.model);
 		if (model === undefined) return failed("spawn", `agent \`${box.model}\` has no model setting of its own to use`);
 	}
@@ -318,40 +364,61 @@ async function runAgent(
 	if (!fs.existsSync(board)) fs.writeFileSync(board, "");
 
 	const name = sessionName(firing);
-	const item: TaskItem = {
-		name,
-		agent: box.agent,
-		task: briefOf(box, firing, { board, inherited: overlay !== undefined }),
-		solutionSpace: "as the assignment states",
-		outputSchema: yieldSchema(box, firing.depth),
-		schemaMode: "strict",
-		...(box.isolated === undefined ? {} : { isolated: box.isolated }),
-	};
+	const task = briefOf(box, firing, { board, inherited: overlay !== undefined });
+	const outputSchema = yieldSchema(box, firing.depth);
+	let launch: Launch;
+	if (forkOf === undefined) {
+		const item: TaskItem = {
+			name,
+			agent: box.agent,
+			task,
+			solutionSpace: "as the assignment states",
+			outputSchema,
+			schemaMode: "strict",
+			...(box.isolated === undefined ? {} : { isolated: box.isolated }),
+		};
+		launch = { tool: "task", item };
+	} else {
+		const item: ForkItem = {
+			name,
+			from: forkOf,
+			agent: undefined,
+			task,
+			workspace: "isolated_from_caller",
+			shake: false,
+			effort: undefined,
+			outputSchema,
+			schemaMode: "strict",
+		};
+		launch = { tool: "fork_task", item };
+	}
 	const prepared = spawnId(flow.dir, name);
 	const prepare = box.prepare === undefined ? undefined : fill(box.prepare, firing.inputs, shellWord);
-	rt.spawns.set(prepared, { overlay, model, prepare });
+	rt.spawns.set(prepared, { overlay, model, prepare, splittable: splittable(box, firing.depth) });
 	try {
-		return await spawnAndWait(parent, flow, box, firing, item, signal);
+		return await spawnAndWait(parent, flow, box, firing, launch, signal);
 	} finally {
 		rt.spawns.delete(prepared);
 	}
 }
+
+type Launch = { readonly tool: "task"; readonly item: TaskItem } | { readonly tool: "fork_task"; readonly item: ForkItem };
 
 async function spawnAndWait(
 	parent: AgentSession,
 	flow: Flow,
 	box: AgentBox,
 	firing: Firing,
-	item: TaskItem,
+	launch: Launch,
 	signal: AbortSignal,
 ): Promise<Outcome> {
-	const taskTool = parent.getToolByName("task");
+	const tool = parent.getToolByName(launch.tool);
 	const manager = parent.asyncJobManager;
-	if (!taskTool || !manager) return failed("spawn", "the `task` tool or background jobs are unavailable in this session");
-	const result = await taskTool
+	if (!tool || !manager) return failed("spawn", `the \`${launch.tool}\` tool or background jobs are unavailable in this session`);
+	const result = await tool
 		.execute(`flow-${randomUUID()}`, {
 			context: "One session of a flow of small assignments. The assignment is complete in itself.",
-			tasks: [item],
+			tasks: [launch.item],
 		})
 		.catch((error: unknown) => errorText(error));
 	if (typeof result === "string") return failed("spawn", clip(result));
@@ -360,11 +427,13 @@ async function spawnAndWait(
 	const job = id === undefined ? undefined : manager.getJob(id);
 	if (id === undefined || !job) {
 		const said = result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
-		return failed("spawn", clip(said || "the task tool started no background job"));
+		return failed("spawn", clip(said || `the \`${launch.tool}\` tool started no background job`));
 	}
 	manager.acknowledgeDeliveries([id]);
 	const session = job.agentId ?? id;
 	flow.store.spawned(firing.key, firing.attempt, session);
+	const live: Live = { key: firing.key, attempt: firing.attempt, box, depth: firing.depth, split: { kind: "none" } };
+	flow.live.set(session, live);
 	const cancel = (): void => {
 		manager.cancel(id);
 	};
@@ -372,7 +441,8 @@ async function spawnAndWait(
 	else signal.addEventListener("abort", cancel, { once: true });
 	await job.promise;
 	signal.removeEventListener("abort", cancel);
-	const outcome = outcomeOfJob(box, firing.depth, job, session);
+	flow.live.delete(session);
+	const outcome = outcomeOfJob(box, firing.depth, job, session, live.split.kind === "approved" ? live.split.parts : undefined);
 	if (outcome.kind !== "done" && outcome.kind !== "raise" && outcome.kind !== "split") return outcome;
 	if (box.isolated !== false && cfgTaskIsolationApply.get(parent.settings)) {
 		const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
@@ -445,6 +515,7 @@ async function beforeSubagentSpawn(
 	try {
 		if (prepared.overlay !== undefined) await writeOverlay(childFile, prepared.overlay);
 		if (prepared.prepare !== undefined) await writePrepare(childFile, prepared.prepare);
+		if (prepared.splittable) await markSplittable(childFile);
 	} catch (error) {
 		return { block: true, reason: `flow: handing the new session what was prepared for it failed: ${errorText(error)}` };
 	}
@@ -482,6 +553,78 @@ async function drive(rt: Runtime, parent: AgentSession, flow: Flow): Promise<voi
 	}
 }
 
+function claimSplit(rt: Runtime, flow: Flow, ask: SplitAsk, answer: (answer: SplitAnswer) => void): boolean {
+	const live = flow.live.get(ask.session);
+	if (!live) return false;
+	const refuse = (reason: string): true => {
+		answer({ kind: "refused", reason });
+		return true;
+	};
+	if (!splittable(live.box, live.depth)) return refuse("this session's box allows it no further split");
+	if (live.split.kind === "asked") return refuse("an earlier split request of this session is still waiting for the author");
+	if (live.split.kind === "approved")
+		return refuse('the author already agreed to a split of this session; yield `{"status": "split", …}` now');
+	const parts: Json[] = [];
+	for (const [index, text] of ask.parts.entries()) {
+		const parsed = parseJson(text);
+		if (!parsed.ok) return refuse(`piece ${index + 1} is not JSON text: ${parsed.problems.join("; ")}`);
+		parts.push(parsed.value);
+	}
+	if (parts.length < 2) return refuse("a split needs at least two pieces");
+	live.split = { kind: "asked", parts, answer };
+	answer({ kind: "waiting" });
+	rt.pi.sendMessage(
+		{ customType: "flow-split", content: splitNotice(live, ask.session, parts, ask.details), display: true },
+		{ deliverAs: "aside", triggerTurn: true },
+	);
+	return true;
+}
+
+function splitNotice(live: Live, session: string, parts: readonly Json[], details: string): string {
+	return [
+		`Flow item \`${live.key}\` (session \`${session}\`, history://${session}) asks to split its assignment into ${parts.length} parts. The session is blocked until you answer.`,
+		"",
+		"Details from the session:",
+		details,
+		"",
+		"Parts, each taking the place of the item's fanned input:",
+		...parts.map((part, index) => `${index + 1}. ${JSON.stringify(part)}`),
+		"",
+		`Answer with the \`flow\` tool: op \`agree\` with keys ["${live.key}"], or op \`disagree\` with keys ["${live.key}"] and a \`reason\`. On agree the session yields, and each part runs as an isolated fork of it; on disagree the session continues with your reason.`,
+	].join("\n");
+}
+
+function waitingSplits(flow: Flow): string[] {
+	return [...flow.live.entries()].flatMap(([session, live]) =>
+		live.split.kind === "asked"
+			? [`split asked: ${live.key} (session ${session}) into ${live.split.parts.length} parts, waiting for \`agree\` or \`disagree\``]
+			: [],
+	);
+}
+
+function decide(flow: Flow, key: string, verdict: Verdict): Result<string> {
+	const live = [...flow.live.values()].find((candidate) => candidate.key === key);
+	if (live?.split.kind !== "asked") return { ok: false, problems: [`no split request of \`${key}\` is waiting for an answer`] };
+	const { parts, answer } = live.split;
+	switch (verdict.kind) {
+		case "agree":
+			live.split = { kind: "approved", parts };
+			answer({ kind: "agreed" });
+			return {
+				ok: true,
+				value: `agreed: ${key} yields its split, and each of its ${parts.length} parts runs as an isolated fork of its session`,
+			};
+		case "disagree":
+			live.split = { kind: "none" };
+			answer({ kind: "disagreed", reason: verdict.reason });
+			return { ok: true, value: `disagreed: ${key} continues its session with your reason` };
+		default: {
+			const unreachable: never = verdict;
+			return unreachable;
+		}
+	}
+}
+
 function ensureDriver(rt: Runtime, parent: AgentSession, flow: Flow): string | undefined {
 	if (flow.driving) {
 		flow.kick();
@@ -500,10 +643,12 @@ function ensureDriver(rt: Runtime, parent: AgentSession, flow: Flow): string | u
 					flow.kick();
 				};
 				signal.addEventListener("abort", cancelled, { once: true });
+				const splits = serveSplits((ask, answer) => claimSplit(rt, flow, ask, answer));
 				try {
 					await drive(rt, parent, flow);
 					return flow.store.changes().join("\n");
 				} finally {
+					splits.close();
 					signal.removeEventListener("abort", cancelled);
 					flow.driving = false;
 				}
@@ -546,7 +691,11 @@ async function executeFlow(
 
 		switch (request.value.kind) {
 			case "status":
-				return reply(store.everything(), { accepted: true, mode: store.state.mode.kind });
+				return reply([...store.everything(), ...waitingSplits(flow)], { accepted: true, mode: store.state.mode.kind });
+			case "decide": {
+				const decided = decide(flow, request.value.key, request.value.verdict);
+				return decided.ok ? reply([decided.value], { accepted: true }) : refuse(decided.problems);
+			}
 			case "value": {
 				const values: Record<string, Json> = {};
 				const missing: string[] = [];
@@ -593,6 +742,7 @@ async function executeFlow(
 export default function flow(pi: ExtensionAPI): void {
 	const rt: Runtime = { pi, flows: new Map(), spawns: new Map() };
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
+	registerSplitTool(pi);
 	registerFlowTopics();
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "flow",

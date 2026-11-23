@@ -76,7 +76,7 @@ function continuationOf(data: JsonObject): Continuation | undefined {
 			continuation = { kind: "check", check: fields.text("check"), output: fields.text("output"), previous: fields.json("previous") };
 			break;
 		case "part":
-			continuation = { kind: "part", part: fields.count("part"), of: fields.count("of"), previous: fields.json("previous") };
+			continuation = { kind: "part", part: fields.count("part"), of: fields.count("of") };
 			break;
 		default:
 			return undefined;
