@@ -35,7 +35,7 @@ import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
 import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
-import { briefOf, commandOutcome, interpret, splittable, yieldSchema } from "./session.ts";
+import { type Allowed, allowedOf, briefOf, commandOutcome, interpret, yieldSchema } from "./session.ts";
 import { markSplittable, registerSplitTool, type SplitAnswer, type SplitAsk, serveSplits } from "./split.ts";
 import { definitionKey, type Earlier, modelKey, type Outcome, partsOf } from "./state.ts";
 import { type Command, Store } from "./store.ts";
@@ -53,7 +53,13 @@ const paramsSchema = z.object({
 		.string()
 		.optional()
 		.describe(
-			"JSON text of an object mapping box names to box definitions; `null` drops a box. Required by `define`, which takes nothing else.",
+			"JSON text of an object mapping box names to box definitions; `null` drops a box. Required by `define`, which takes nothing else but `noEscape`.",
+		),
+	noEscape: z
+		.boolean()
+		.optional()
+		.describe(
+			"With `define`, optional: `true` keeps everything inside the flow (a raise no box answers is not offered to sessions, splits are approved without asking you, `run` needs every input), `false` lifts that; omitted leaves it as it is.",
 		),
 	name: z.string().optional().describe("Name of the outside input, the `<name>` of `input.<name>`. Required by `supply`."),
 	value: z
@@ -85,8 +91,10 @@ type Request =
 
 type Verdict = { readonly kind: "agree" } | { readonly kind: "disagree"; readonly reason: string };
 
-const FIELDS: Record<Op, Partial<Record<"boxes" | "name" | "value" | "keys" | "reason", "required" | "optional">>> = {
-	define: { boxes: "required" },
+type Field = "boxes" | "noEscape" | "name" | "value" | "keys" | "reason";
+
+const FIELDS: Record<Op, Partial<Record<Field, "required" | "optional">>> = {
+	define: { boxes: "required", noEscape: "optional" },
 	supply: { name: "required", value: "required" },
 	run: {},
 	stop: { reason: "optional" },
@@ -103,7 +111,7 @@ const FIELDS: Record<Op, Partial<Record<"boxes" | "name" | "value" | "keys" | "r
 function parseRequest(params: Params): Result<Request> {
 	const problems: string[] = [];
 	const allowed = FIELDS[params.op];
-	for (const field of ["boxes", "name", "value", "keys", "reason"] as const) {
+	for (const field of ["boxes", "noEscape", "name", "value", "keys", "reason"] as const) {
 		if (params[field] !== undefined && allowed[field] === undefined) problems.push(`\`${field}\` does not belong to \`${params.op}\``);
 		if (params[field] === undefined && allowed[field] === "required") problems.push(`\`${params.op}\` needs \`${field}\``);
 	}
@@ -120,7 +128,11 @@ function parseRequest(params: Params): Result<Request> {
 		case "define": {
 			const boxes = json("boxes");
 			if (!isObject(boxes)) problems.push("`boxes` is a JSON object of box names to boxes");
-			request = command({ kind: "define", boxes: isObject(boxes) ? boxes : {} });
+			request = command({
+				kind: "define",
+				boxes: isObject(boxes) ? boxes : {},
+				...(params.noEscape === undefined ? {} : { noEscape: params.noEscape }),
+			});
 			break;
 		}
 		case "supply":
@@ -188,7 +200,7 @@ type Live = {
 	readonly key: string;
 	readonly attempt: number;
 	readonly box: AgentBox;
-	readonly depth: number;
+	readonly allowed: Allowed;
 	split: SplitState;
 };
 
@@ -297,7 +309,7 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
 
-function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: string, approved: readonly Json[] | undefined): Outcome {
+function outcomeOfJob(box: AgentBox, allowed: Allowed, job: AsyncJob, session: string, approved: readonly Json[] | undefined): Outcome {
 	const where = `history://${session}`;
 	const structured = job.structured;
 	switch (job.status) {
@@ -310,7 +322,7 @@ function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: stri
 				return failed("protocol", `the session ended without yielding an object (${where})`);
 			}
 			const data = parseJson(JSON.stringify(structured.data ?? null));
-			return data.ok ? interpret(box, depth, data.value, approved) : failed("protocol", `${data.problems.join("; ")} (${where})`);
+			return data.ok ? interpret(box, allowed, data.value, approved) : failed("protocol", `${data.problems.join("; ")} (${where})`);
 		}
 		case "failed":
 			if (structured?.status === "invalid")
@@ -364,8 +376,9 @@ async function runAgent(
 	if (!fs.existsSync(board)) fs.writeFileSync(board, "");
 
 	const name = sessionName(firing);
-	const task = briefOf(box, firing, { board, inherited: overlay !== undefined });
-	const outputSchema = yieldSchema(box, firing.depth);
+	const allowed = allowedOf(flow.store.state, box, firing);
+	const task = briefOf(box, firing, allowed, { board, inherited: overlay !== undefined });
+	const outputSchema = yieldSchema(box, allowed);
 	let launch: Launch;
 	if (forkOf === undefined) {
 		const item: TaskItem = {
@@ -394,9 +407,9 @@ async function runAgent(
 	}
 	const prepared = spawnId(flow.dir, name);
 	const prepare = box.prepare === undefined ? undefined : fill(box.prepare, firing.inputs, shellWord);
-	rt.spawns.set(prepared, { overlay, model, prepare, splittable: splittable(box, firing.depth) });
+	rt.spawns.set(prepared, { overlay, model, prepare, splittable: allowed.split });
 	try {
-		return await spawnAndWait(parent, flow, box, firing, launch, signal);
+		return await spawnAndWait(parent, flow, box, allowed, firing, launch, signal);
 	} finally {
 		rt.spawns.delete(prepared);
 	}
@@ -408,6 +421,7 @@ async function spawnAndWait(
 	parent: AgentSession,
 	flow: Flow,
 	box: AgentBox,
+	allowed: Allowed,
 	firing: Firing,
 	launch: Launch,
 	signal: AbortSignal,
@@ -432,7 +446,7 @@ async function spawnAndWait(
 	manager.acknowledgeDeliveries([id]);
 	const session = job.agentId ?? id;
 	flow.store.spawned(firing.key, firing.attempt, session);
-	const live: Live = { key: firing.key, attempt: firing.attempt, box, depth: firing.depth, split: { kind: "none" } };
+	const live: Live = { key: firing.key, attempt: firing.attempt, box, allowed, split: { kind: "none" } };
 	flow.live.set(session, live);
 	const cancel = (): void => {
 		manager.cancel(id);
@@ -442,7 +456,7 @@ async function spawnAndWait(
 	await job.promise;
 	signal.removeEventListener("abort", cancel);
 	flow.live.delete(session);
-	const outcome = outcomeOfJob(box, firing.depth, job, session, live.split.kind === "approved" ? live.split.parts : undefined);
+	const outcome = outcomeOfJob(box, allowed, job, session, live.split.kind === "approved" ? live.split.parts : undefined);
 	if (outcome.kind !== "done" && outcome.kind !== "raise" && outcome.kind !== "split") return outcome;
 	if (box.isolated !== false && cfgTaskIsolationApply.get(parent.settings)) {
 		const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
@@ -560,7 +574,7 @@ function claimSplit(rt: Runtime, flow: Flow, ask: SplitAsk, answer: (answer: Spl
 		answer({ kind: "refused", reason });
 		return true;
 	};
-	if (!splittable(live.box, live.depth)) return refuse("this session's box allows it no further split");
+	if (!live.allowed.split) return refuse("this session's box allows it no further split");
 	if (live.split.kind === "asked") return refuse("an earlier split request of this session is still waiting for the author");
 	if (live.split.kind === "approved")
 		return refuse('the author already agreed to a split of this session; yield `{"status": "split", …}` now');
@@ -571,6 +585,11 @@ function claimSplit(rt: Runtime, flow: Flow, ask: SplitAsk, answer: (answer: Spl
 		parts.push(parsed.value);
 	}
 	if (parts.length < 2) return refuse("a split needs at least two pieces");
+	if (flow.store.state.noEscape) {
+		live.split = { kind: "approved", parts };
+		answer({ kind: "agreed" });
+		return true;
+	}
 	live.split = { kind: "asked", parts, answer };
 	answer({ kind: "waiting" });
 	rt.pi.sendMessage(
