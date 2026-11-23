@@ -123,7 +123,7 @@ type State = {
 
 ### 2.3 级联失效（`dependents`）
 
-当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts:156-191`](../../prototype/flow/state.ts#L156-L191) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。
+当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts`](../../prototype/flow/state.ts) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。
 
 ### 2.4 14 种日志动作（`Action`）
 
@@ -182,7 +182,7 @@ type State = {
 - 当单元因 `retract` 或上游重算被移除时，`pruneBoards()` 自动删除对应的白板文件。
 
 ### 3.3 隔离工作区继承与 `prepare` 命令
-对于 `isolated: true` 的 Agent 盒子，当同一 `item.key` 进行第 $N$ ($N > 1$) 次点火且存在上一次已结束的会话 `earlier: { session, yielded }` 时，[`host.ts:291-310`](../../prototype/flow/host.ts#L291-L310) 的 `inheritFrom()` 按以下优先级提取工作区变更：
+对于 `isolated: true` 的 Agent 盒子，当同一 `item.key` 进行第 $N$ ($N > 1$) 次点火且存在上一次已结束的会话 `earlier: { session, yielded }` 时，[`host.ts`](../../prototype/flow/host.ts) 的 `inheritFrom()` 按以下优先级提取工作区变更：
 1. **上一会话正常 `yield` 且宿主已自动合入主检出**（`earlier.yielded && cfgTaskIsolationApply` 且无残留分支）：无需额外 overlay，新 worktree 直接基于已更新的主检出创建。
 2. **宿主未能合并而保留的任务分支**（`keptTaskBranch` 存在 `refs/heads/omp/task/<session>`）：调用 `inheritKeptBranch()` 计算 `git diff <merge-base>..<branch>` 作为 overlay 补丁。
 3. **宿主释放的补丁文件**（`<sessionDir>/<session>.patch` 存在）：调用 `inheritReleasedPatch()` 读取补丁并校验 `git apply --check`。
@@ -213,9 +213,9 @@ type State = {
 
 ### 5.1 工具层（`tool.flow`）
 扩展注册名为 `flow` 的工具（`loadMode: "essential"`），附带三个按需读取的文档主题：
-- `xd://flow/boxes`：盒子字段、引用语法、门禁检查与异常说明。
-- `xd://flow/lifecycle`：10 个操作原语、判定输出格式、停止恢复与过期值处理。
-- `xd://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `helper.js` 的方法。
+- `help://flow/boxes`：盒子字段、引用语法、门禁检查与异常说明。
+- `help://flow/lifecycle`：10 个操作原语、判定输出格式、停止恢复与过期值处理。
+- `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `helper.js` 的方法。
 
 ### 5.2 内核辅助层（`helper.js`）
 通过 `%load <path>/helper.js` 加载后定义 `globalThis.flow`，自身不保存任何状态：

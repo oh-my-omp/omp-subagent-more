@@ -1,31 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
-import { DESCRIPTION, paramsSchema, resolveForkWorkspace } from "../extensions/fork-task/index.ts";
-import { docTopics, FORK_TASK_TOPICS, registerForkTaskTopics } from "../extensions/fork-task/topics.ts";
-import { clearToolTopics, listToolTopics, resolveToolTopic } from "../omomp-shared/internal-url.ts";
-
-afterEach(() => {
-	clearToolTopics("omp-subagent-more");
-});
-
-test("fork_task registers only limits under help://fork_task and docTopics, keeping description <= 200 chars", () => {
-	registerForkTaskTopics();
-	expect(DESCRIPTION.length).toBeLessThanOrEqual(200);
-	expect(DESCRIPTION).toContain("help://fork_task/limits");
-	expect(DESCRIPTION).not.toContain("xd://");
-	expect(DESCRIPTION).not.toContain("tool://");
-
-	const listed = listToolTopics("fork_task");
-	expect(listed.map((doc) => doc.topic)).toEqual(["limits"]);
-	const body = FORK_TASK_TOPICS[0]?.body;
-	expect(typeof body).toBe("string");
-	expect(body).not.toContain("xd://");
-	expect(body).not.toContain("tool://");
-	expect(docTopics()).toEqual({ limits: String(body) });
-
-	const resolved = resolveToolTopic("fork_task", "limits");
-	expect(resolved?.content).toContain("await tool.fork_task");
-	expect(resolved?.content).toContain("isolated_from_source");
-});
+import { expect, test } from "bun:test";
+import { paramsSchema } from "../extensions/fork-task/schema.ts";
+import { resolveForkWorkspace } from "../extensions/fork-task/workspace.ts";
 
 test("fork_task paramsSchema accepts object outputSchema and 3-state workspace enum", () => {
 	const parsed = paramsSchema.parse({
@@ -53,11 +28,12 @@ test("fork_task paramsSchema accepts object outputSchema and 3-state workspace e
 	expect(paramsSchema.safeParse({ context: "c", tasks: [{ task: "t", workspace: "caller" }] }).success).toBe(false);
 });
 
-test("resolveForkWorkspace maps defaults and planMode consistently", () => {
-	expect(resolveForkWorkspace(undefined, false, false)).toEqual({ workspace: "shared", isolated: false });
-	expect(resolveForkWorkspace(undefined, true, false)).toEqual({ workspace: "isolated_from_caller", isolated: true });
-	expect(resolveForkWorkspace("isolated_from_caller", false, false)).toEqual({ workspace: "isolated_from_caller", isolated: true });
-	expect(resolveForkWorkspace("isolated_from_source", false, false)).toEqual({ workspace: "isolated_from_source", isolated: true });
-	expect(resolveForkWorkspace("shared", true, false)).toEqual({ workspace: "shared", isolated: false });
-	expect(resolveForkWorkspace("isolated_from_source", true, true)).toEqual({ workspace: "isolated_from_source", isolated: false });
+test("resolveForkWorkspace defaults by role and lets plan mode force a shared child", () => {
+	expect(resolveForkWorkspace(undefined, false, false)).toEqual({ kind: "shared" });
+	expect(resolveForkWorkspace(undefined, true, false)).toEqual({ kind: "isolated" });
+	expect(resolveForkWorkspace("isolated_from_caller", false, false)).toEqual({ kind: "isolated" });
+	expect(resolveForkWorkspace("isolated_from_source", false, false)).toEqual({ kind: "inherit" });
+	expect(resolveForkWorkspace("shared", true, false)).toEqual({ kind: "shared" });
+	expect(resolveForkWorkspace(undefined, true, true)).toEqual({ kind: "shared" });
+	expect(resolveForkWorkspace("isolated_from_source", true, true)).toMatchObject({ kind: "rejected", code: "child-not-isolated" });
 });

@@ -5,6 +5,7 @@
 ### Changed
 
 - Updated the shared copy of `compact-handoff.ts` to oh-my-omp/shared@db9dde4.
+- `workspace: "isolated_from_source"` in plan mode is refused with `child-not-isolated` and a reason that names plan mode, instead of one that also named an explicit `workspace: "shared"`, which that field cannot combine with
 
 ## [0.3.1] - 2026-11-23
 

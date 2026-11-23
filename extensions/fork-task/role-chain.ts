@@ -1,4 +1,4 @@
-import { completeSimple, type Model } from "@oh-my-pi/pi-ai";
+import { type AssistantMessage, completeSimple, type Model } from "@oh-my-pi/pi-ai";
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-catalog";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { resolveRoleChain } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
@@ -26,16 +26,8 @@ export type ChainReply =
 
 const label = (model: Model): string => `${model.provider}/${model.id}`;
 
-function textOf(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	const texts: string[] = [];
-	for (const block of content) {
-		if (typeof block !== "object" || block === null) continue;
-		if (!("type" in block) || block.type !== "text") continue;
-		if ("text" in block && typeof block.text === "string") texts.push(block.text);
-	}
-	return texts.join("");
+function textOf(content: AssistantMessage["content"]): string {
+	return content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
 }
 
 function candidates(ctx: ExtensionContext, roles: readonly string[]): Candidate[] {

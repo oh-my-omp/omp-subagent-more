@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "@oh-my-pi/omptype/zod";
+import { errorText } from "./errors.ts";
 import { type SharedSource, shareSource } from "./replica.ts";
 import { parsePortableSource } from "./replica-file.ts";
 

@@ -1,4 +1,9 @@
 import { z } from "@oh-my-pi/omptype/zod";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { errorText } from "./errors.ts";
+import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
+
+const ROLE = "omp-subagent-more";
 
 export const VERDICTS_LOG = "omp-subagent-more report-limit verdicts";
 
@@ -89,4 +94,40 @@ export function createReportLimit(log: { info: Log; warn: Log }) {
 			return flagged.length === 0 ? null : blockReason(flagged.join("、"));
 		},
 	};
+}
+
+export function registerReportLimit(pi: ExtensionAPI): void {
+	const reportLimit = createReportLimit({
+		info: (message, data) => pi.logger.info(message, data),
+		warn: (message, data) => pi.logger.warn(message, data),
+	});
+	// A throwing tool_call handler blocks the tool, so every failure lets the call run.
+	pi.on("tool_call", async (event, ctx) => {
+		try {
+			const reason = await reportLimit.inspect(event.toolName, event.input, async (systemPrompt, prompt, signal, deadlineAt) => {
+				const reply = await completeRoles(ctx, [ROLE, "default"], systemPrompt, prompt, MEDIUM_EFFORT, deadlineAt, signal);
+				switch (reply.kind) {
+					case "text":
+						pi.logger.info("omp-subagent-more report-limit answered", { model: reply.model, failures: reply.failures });
+						return { kind: "text", text: reply.text };
+					case "no-model":
+						return { kind: "failed", why: `no model: assign @${ROLE} or the default role in /model` };
+					case "deadline":
+						return { kind: "failed", why: "deadline" };
+					case "all-failed":
+						return { kind: "failed", why: `every model failed: ${reply.failures.join("; ")}` };
+					case "error":
+						return { kind: "failed", why: reply.error };
+					default: {
+						const unreachable: never = reply;
+						return unreachable;
+					}
+				}
+			});
+			return reason === null ? undefined : { block: true, reason };
+		} catch (error) {
+			pi.logger.warn("omp-subagent-more report-limit skipped a fork_task call", { error: errorText(error) });
+			return undefined;
+		}
+	});
 }

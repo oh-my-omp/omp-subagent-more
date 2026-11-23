@@ -21,19 +21,13 @@ type RequestSnapshot = {
 
 type ObservedRequest = { readonly request: RequestSnapshot; response: number | undefined };
 
-/** A context file as a system prompt carried it: the file's path and the prompt text built from it. */
 export type ContextFragment = { readonly path: string; readonly text: string };
 
 const requests = new WeakMap<AgentSession, ObservedRequest>();
 const observed = new WeakSet<AgentSession>();
 const liveSessions = new Map<string, AgentSession>();
-/** A replicated child sends its source's system prompt, so its context files are the ones that prompt carried. */
 const replicatedContext = new WeakMap<AgentSession, readonly ContextFragment[]>();
 
-/**
- * The context files `prompt` (a request's system prompt) carries: each file's text as the session built it,
- * kept when the sent prompt still contains it, also after a hook rewrote other parts of its block.
- */
 function promptContextFiles(session: AgentSession, prompt: readonly string[] | undefined): ContextFragment[] {
 	const inherited = replicatedContext.get(session);
 	if (inherited) return [...inherited];
@@ -169,7 +163,6 @@ export type Replica = {
 	readonly request: RequestSnapshot;
 	readonly systemPrompt: readonly string[];
 	readonly contextFiles: readonly ContextFragment[];
-	/** The working directory the source ran in when it sent `request`. */
 	readonly cwd: string;
 	readonly sourceModel: string;
 	readonly replay: Replay;
@@ -219,8 +212,6 @@ export function captureReplica(source: PortableSource, options: { readonly inher
 type PrefixReplay = Extract<Replay, { kind: "prefix" }>;
 
 function childStart(messages: readonly Message[], replay: PrefixReplay): number {
-	// It cannot stop at the
-	// notice, because a duplicate notice before it makes the notice ambiguous.
 	const noticeTimestamp = replay.notice.timestamp;
 	const { response } = replay;
 	let notice = -1;
@@ -296,11 +287,7 @@ function forcedToolName(choice: ToolChoice | undefined): string | undefined {
 
 type WireTools = { readonly tools: Tool[] | undefined; readonly toolChoice: ToolChoice | undefined };
 
-/**
- * The declaration is always the source's. A choice forcing a tool it does not
- * declare (the executor pins its final reminder to the child's own `yield`)
- * would name a tool absent from the request, so that pin is dropped.
- */
+// Never force a tool the source declaration lacks: the executor pins its final reminder to the child's own `yield`.
 function wireTools(source: Tool[] | undefined, choice: ToolChoice | undefined): WireTools {
 	const forced = forcedToolName(choice);
 	const declared = forced === undefined || (source?.some((tool) => tool.name === forced) ?? false);
@@ -317,7 +304,6 @@ function replicateContext(session: AgentSession, replica: Replica, current: Cont
 	};
 }
 
-/** The child's registered `yield`, and whether the replicated declaration names a tool `yield` too. */
 export type OwnYield = { readonly tool: AgentTool; readonly declared: boolean };
 
 export function applyReplica(session: AgentSession, replica: Replica): OwnYield | undefined {

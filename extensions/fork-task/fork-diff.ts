@@ -1,13 +1,8 @@
 import type { Delta } from "../../omomp-shared/context-delta.ts";
 import type { ContextFragment } from "./replica.ts";
 
-/** A working directory and the root of the git repository holding it, when there is one. */
 export type WorkingDirectory = { readonly path: string; readonly repoRoot: string | undefined };
 
-/**
- * What the child's replicated request carries from its source: the working directory the conversation ran in,
- * the declared tools and the context files of the system prompt.
- */
 export type ForkBaseline = {
 	readonly cwd: WorkingDirectory;
 	readonly tools: readonly string[];
@@ -16,17 +11,12 @@ export type ForkBaseline = {
 
 export type ContextFile = { readonly path: string; readonly content: string };
 
-/** What the child actually has: its working directory, the tools the host registered for it and the context files there. */
 export type ForkCurrent = {
 	readonly cwd: WorkingDirectory;
 	readonly tools: readonly string[];
 	readonly contextFiles: readonly ContextFile[];
 };
 
-/**
- * An isolated workspace is a copy of the source's repository, so a path under the source's repository root
- * names the same relative path under the child's.
- */
 function workingDirectoryChange(source: WorkingDirectory, current: WorkingDirectory): string | undefined {
 	if (source.path === current.path) return;
 	const moved = `The conversation above ran in \`${source.path}\`; your working directory is \`${current.path}\`.`;
@@ -34,7 +24,6 @@ function workingDirectoryChange(source: WorkingDirectory, current: WorkingDirect
 	return `${moved} A path under \`${source.repoRoot}\` in the conversation is the same relative path under \`${current.repoRoot}\` for you.`;
 }
 
-/** Tools the baseline declares that the child has no registration for, in declaration order. */
 export function unavailableTools(baseline: ForkBaseline, registered: readonly string[]): string[] {
 	const own = new Set(registered);
 	return baseline.tools.filter((name) => !own.has(name));
@@ -50,11 +39,6 @@ function carries(fragment: ContextFragment, file: ContextFile): boolean {
 	return fragment.text.includes(file.content.trim());
 }
 
-/**
- * Paths are matched first. A baseline file absent at its path but whose content an unmatched current file
- * repeats is relocated (an isolated workspace holds the same file elsewhere); an unmatched current file whose
- * content the source prompt already carries adds nothing.
- */
 function contextChanges(baseline: readonly ContextFragment[], current: readonly ContextFile[]): FileChange[] {
 	const now = new Map(current.map((file) => [file.path, file]));
 	const before = new Set(baseline.map((fragment) => fragment.path));
@@ -99,10 +83,6 @@ function describeChange(change: FileChange): string {
 	}
 }
 
-/**
- * The difference between what the replicated request tells the child and what it has.
- * `restored` names tools reported unavailable earlier in this session that are registered now.
- */
 export function forkDiff(baseline: ForkBaseline, current: ForkCurrent, restored: readonly string[]): Delta {
 	const sections: string[] = [];
 	const moved = workingDirectoryChange(baseline.cwd, current.cwd);

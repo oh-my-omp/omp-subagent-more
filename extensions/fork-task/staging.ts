@@ -71,9 +71,10 @@ export async function finalizeStaging(
 			written += bytesWritten;
 		}
 	};
-	const emit = (line: string): void => {
+	const emit = async (line: string): Promise<void> => {
 		chunk.push(line);
 		chunkLength += line.length + 1;
+		if (chunkLength >= FLUSH_CHARS) await flush();
 	};
 	const dropped = new Map<string, string | null>();
 	const nextSurviving = new Map<string, string>();
@@ -95,14 +96,12 @@ export async function finalizeStaging(
 					headerSeen = true;
 					const next = { ...header.data, cwd: options.isolated ? "" : options.cwd };
 					if (options.isolated) delete next.additionalDirectories;
-					emit(JSON.stringify(next));
-					if (chunkLength >= FLUSH_CHARS) await flush();
+					await emit(JSON.stringify(next));
 					continue;
 				}
 				const parsed = sessionEntrySchema.safeParse(record);
 				if (!parsed.success) {
-					emit(line);
-					if (chunkLength >= FLUSH_CHARS) await flush();
+					await emit(line);
 					continue;
 				}
 				const entry = parsed.data;
@@ -123,8 +122,7 @@ export async function finalizeStaging(
 					const replacement = nextSurviving.get(next.firstKeptEntryId);
 					if (replacement) next.firstKeptEntryId = replacement;
 				}
-				emit(JSON.stringify(next));
-				if (chunkLength >= FLUSH_CHARS) await flush();
+				await emit(JSON.stringify(next));
 			}
 		}
 		await flush();

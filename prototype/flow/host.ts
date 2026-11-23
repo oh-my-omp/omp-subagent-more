@@ -32,10 +32,7 @@ import {
 	applyOverlay,
 	headerCwd,
 	type Inheritance,
-	inheritKeptBranch,
-	inheritReleasedPatch,
 	inheritSourceWorkspace,
-	keptTaskBranch,
 	overlayFilePath,
 	recordStart,
 	writeOverlay,
@@ -43,6 +40,7 @@ import {
 import { tr } from "../../omomp-shared/i18n.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics } from "./docs.ts";
+import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
 import { briefOf, interpret, yieldSchema } from "./session.ts";

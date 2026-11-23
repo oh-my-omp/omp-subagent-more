@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "@oh-my-pi/omptype/zod";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import { hasErrorCode } from "./errors.ts";
 import type { PortableSource, Replica } from "./replica.ts";
 
 const requestSchema = z.object({
@@ -90,7 +91,7 @@ export async function readOptional(file: string): Promise<string | undefined> {
 	try {
 		return await fs.readFile(file, "utf8");
 	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		if (hasErrorCode(error, "ENOENT")) return undefined;
 		throw error;
 	}
 }
