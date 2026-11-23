@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { fill, type Json, shellWord } from "../extensions/flow/defs.ts";
 import { appendLog, readLog } from "../extensions/flow/journal.ts";
 import { type Firing, lookup } from "../extensions/flow/plan.ts";
-import { briefOf, commandOutcome, interpret, yieldSchema } from "../extensions/flow/session.ts";
+import { allowedOf, briefOf, commandOutcome, interpret, yieldSchema } from "../extensions/flow/session.ts";
 import { type Action, definitionKey, modelKey, type Outcome, replay } from "../extensions/flow/state.ts";
 import { moves, Store } from "../extensions/flow/store.ts";
 
@@ -749,67 +749,133 @@ describe("what a session is told and hands back", () => {
 	});
 	const box = store.state.boxes.work;
 	if (box?.kind !== "agent") throw new Error("work is an agent box");
+	const first: Firing = {
+		key: "work",
+		box: "work",
+		attempt: 1,
+		inputs: { slice: "a" },
+		continuation: null,
+		earlier: undefined,
+		depth: 0,
+		chain: 1,
+	};
+	const allowed = allowedOf(store.state, box, first);
 
 	test("a continuation carries the earlier handoff and the answer, since the session itself is new", () => {
-		const brief = briefOf(
-			box,
-			{
-				key: "work",
-				box: "work",
-				attempt: 2,
-				inputs: { slice: "a" },
-				continuation: { kind: "answer", answer: "the second", previous: HANDOFF },
-				earlier: { session: "S1", yielded: true },
-				depth: 0,
-				chain: 2,
-			},
-			{ board: "/notes/work.md", inherited: false },
-		);
+		const firing: Firing = {
+			...first,
+			attempt: 2,
+			continuation: { kind: "answer", answer: "the second", previous: HANDOFF },
+			earlier: { session: "S1", yielded: true },
+			chain: 2,
+		};
+		const brief = briefOf(box, firing, allowedOf(store.state, box, firing), { board: "/notes/work.md", inherited: false });
 		expect(brief).toStartWith("Do a\n\n## Notes file\n`/notes/work.md`");
 		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
 		expect(brief).toContain("the second");
 		expect(brief).not.toContain("## Earlier work");
 	});
 
-	test("a session reopened by a check is given the earlier handoff and the check's output", () => {
-		const brief = briefOf(
-			box,
-			{
-				key: "work",
-				box: "work",
+	test("a session reopened by a check is given the earlier handoff, the check's output and what the check was given", () => {
+		const reopened = (snapshot: Readonly<Record<string, Json>>): string => {
+			const firing: Firing = {
+				...first,
 				attempt: 2,
-				inputs: { slice: "a" },
-				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", snapshot: {}, previous: HANDOFF },
+				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", snapshot, previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
-				depth: 0,
 				chain: 2,
-			},
-			{ board: "/notes/work.md", inherited: false },
-		);
+			};
+			return briefOf(box, firing, allowedOf(store.state, box, firing), { board: "/notes/work.md", inherited: false });
+		};
+		const brief = reopened({ a: { n: 1 }, b: "partner result" });
 		expect(brief).toContain("the check `gate`");
 		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
 		expect(brief).toContain("expected 3, got 2");
+		expect(brief).toContain(`### a\n${JSON.stringify({ n: 1 }, null, 1)}\n### b\npartner result`);
+		const old = reopened({});
+		expect(old).toContain("expected 3, got 2");
+		expect(old).not.toContain("was given in that round");
 	});
 
 	test("the result schema requires a handoff and offers only the declared raise types", () => {
-		const schema = yieldSchema(box, 0);
+		const schema = yieldSchema(box, allowed);
 		expect(schema.required).toEqual(["status", "handoff"]);
 		expect(schema.properties).toMatchObject({ raise: { enum: ["question"] } });
 	});
 
 	test("yielded data outside the protocol is the runtime exception `protocol`", () => {
-		expect(interpret(box, 0, { status: "done", value: 1 }, undefined)).toMatchObject({ kind: "failed", name: "protocol" });
-		expect(interpret(box, 0, { status: "raise", raise: "other", detail: "", handoff: HANDOFF }, undefined)).toMatchObject({
+		expect(interpret(box, allowed, { status: "done", value: 1 }, undefined)).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, allowed, { status: "raise", raise: "other", detail: "", handoff: HANDOFF }, undefined)).toMatchObject({
 			kind: "failed",
 			name: "protocol",
 		});
-		expect(interpret(box, 0, { status: "raise", raise: "question", detail: "which?", handoff: HANDOFF }, undefined)).toEqual({
+		expect(interpret(box, allowed, { status: "raise", raise: "question", detail: "which?", handoff: HANDOFF }, undefined)).toEqual({
 			kind: "raise",
 			type: "question",
 			detail: "which?",
 			handoff: HANDOFF,
 		});
-		expect(interpret(box, 0, { status: "done", value: { n: 1 }, handoff: HANDOFF }, undefined)).toEqual(done({ n: 1 }));
+		expect(interpret(box, allowed, { status: "done", value: { n: 1 }, handoff: HANDOFF }, undefined)).toEqual(done({ n: 1 }));
+		expect(interpret(box, allowed, { status: "reject", feedback: "no", handoff: HANDOFF }, undefined)).toMatchObject({
+			kind: "failed",
+			name: "protocol",
+		});
+	});
+
+	test("an item's last allowed session is offered no raise, and a raise it yields anyway is `protocol`", () => {
+		const last = allowedOf(store.state, box, { ...first, attempt: 3, chain: 3 });
+		expect(last.raises).toEqual([]);
+		expect(yieldSchema(box, last).properties).toMatchObject({ status: { enum: ["done"] } });
+		expect(yieldSchema(box, last).properties).not.toHaveProperty("raise");
+		expect(briefOf(box, first, last, { board: "/notes/work.md", inherited: false })).not.toContain('"status": "raise"');
+		expect(interpret(box, last, { status: "raise", raise: "question", detail: "?", handoff: HANDOFF }, undefined)).toMatchObject({
+			kind: "failed",
+			name: "protocol",
+		});
+	});
+
+	test("with noEscape a session is offered only the raises a box of the flow answers", () => {
+		const flow = open();
+		const work: Json = { agent: "task:low", brief: "w", out: OUT, raises: ["question", "ask_user"] };
+		const answer: Json = { agent: "task:mid", brief: "{{r}}", in: { r: "work!question" }, out: OUT };
+		flow.store.submit({ kind: "define", boxes: { work, answer } });
+		const sealed = flow.store.state.boxes.work;
+		if (sealed?.kind !== "agent") throw new Error("work is an agent box");
+		const firing: Firing = { ...first, inputs: {} };
+		expect(allowedOf(flow.store.state, sealed, firing).raises).toEqual(["question", "ask_user"]);
+		flow.store.submit({ kind: "define", boxes: {}, noEscape: true });
+		const offered = allowedOf(flow.store.state, sealed, firing);
+		expect(offered.raises).toEqual(["question"]);
+		expect(yieldSchema(sealed, offered).properties).toMatchObject({ raise: { enum: ["question"] } });
+		expect(interpret(sealed, offered, { status: "raise", raise: "ask_user", detail: "?", handoff: HANDOFF }, undefined)).toMatchObject({
+			kind: "failed",
+			name: "protocol",
+		});
+		flow.store.submit({ kind: "define", boxes: { answer: null } });
+		const none = allowedOf(flow.store.state, sealed, firing);
+		expect(yieldSchema(sealed, none).properties).toMatchObject({ status: { enum: ["done"] } });
+		expect(yieldSchema(sealed, none).properties).not.toHaveProperty("detail");
+	});
+
+	test("an agent box that checks others may reject with feedback, which reopens what it checks", () => {
+		const flow = open();
+		const work: Json = { agent: "task:low", brief: "w {{x}}", in: { x: "input.xs[]" }, out: OUT };
+		const review: Json = { agent: "task:mid", brief: "r {{w}}", in: { w: "work[]" }, out: OUT, checks: "work" };
+		flow.store.submit({ kind: "define", boxes: { work, review } });
+		const gate = flow.store.state.boxes.review;
+		if (gate?.kind !== "agent") throw new Error("review is an agent box");
+		const firing: Firing = { ...first, key: "review#0", box: "review", inputs: { w: 1 } };
+		const offered = allowedOf(flow.store.state, gate, firing);
+		expect(yieldSchema(gate, offered).properties).toMatchObject({ status: { enum: ["done", "reject"] }, feedback: { type: "string" } });
+		expect(briefOf(gate, firing, offered, { board: "/notes/r.md", inherited: false })).toContain('{"status": "reject", "feedback": "…"');
+		expect(interpret(gate, offered, { status: "reject", feedback: "the sum is off", handoff: HANDOFF }, undefined)).toEqual({
+			kind: "rejected",
+			output: "the sum is off",
+		});
+		expect(interpret(gate, offered, { status: "reject", feedback: " ", handoff: HANDOFF }, undefined)).toMatchObject({
+			kind: "failed",
+			name: "protocol",
+		});
 	});
 });
 
@@ -1117,13 +1183,24 @@ describe("splitting", () => {
 		const flow = splitting();
 		const box = flow.store.state.boxes.work;
 		if (box?.kind !== "agent") throw new Error("work is an agent box");
-		expect(yieldSchema(box, 1).properties).toMatchObject({ status: { enum: ["done", "split"] } });
-		expect(yieldSchema(box, 1).properties).not.toHaveProperty("parts");
-		expect(yieldSchema(box, 2).properties).toMatchObject({ status: { enum: ["done"] } });
-		expect(interpret(box, 2, { status: "split", handoff: HANDOFF }, ["x", "y"])).toMatchObject({ kind: "failed", name: "protocol" });
-		expect(interpret(box, 0, { status: "split", handoff: HANDOFF }, undefined)).toMatchObject({ kind: "failed", name: "protocol" });
-		expect(interpret(box, 0, { status: "split", handoff: HANDOFF }, ["x", "y"])).toEqual(split("x", "y"));
-		expect(interpret(box, 0, { status: "done", value: { n: 1 }, handoff: HANDOFF }, ["x", "y"])).toEqual(done({ n: 1 }));
+		const at = (depth: number) =>
+			allowedOf(flow.store.state, box, {
+				key: "work#0",
+				box: "work",
+				attempt: 1,
+				inputs: {},
+				continuation: null,
+				earlier: undefined,
+				depth,
+				chain: 1,
+			});
+		expect(yieldSchema(box, at(1)).properties).toMatchObject({ status: { enum: ["done", "split"] } });
+		expect(yieldSchema(box, at(1)).properties).not.toHaveProperty("parts");
+		expect(yieldSchema(box, at(2)).properties).toMatchObject({ status: { enum: ["done"] } });
+		expect(interpret(box, at(2), { status: "split", handoff: HANDOFF }, ["x", "y"])).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, at(0), { status: "split", handoff: HANDOFF }, undefined)).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, at(0), { status: "split", handoff: HANDOFF }, ["x", "y"])).toEqual(split("x", "y"));
+		expect(interpret(box, at(0), { status: "done", value: { n: 1 }, handoff: HANDOFF }, ["x", "y"])).toEqual(done({ n: 1 }));
 		flow.store.submit({ kind: "define", boxes: { lone: { ...(SCOUT as object), splits: 1 } } });
 		expect(flow.store.survey().problems).toEqual([
 			"lone: `splits` needs a `[]` input; the parts of a split item take the place of its element",
@@ -1138,7 +1215,7 @@ describe("splitting", () => {
 		flow.store.settle("work#0", 1, split("a1", "a2"));
 		const [part] = flow.store.advance();
 		if (!part) throw new Error("a part fires");
-		const brief = briefOf(box, part, { board: "/notes/work#0.0.md", inherited: true });
+		const brief = briefOf(box, part, allowedOf(flow.store.state, box, part), { board: "/notes/work#0.0.md", inherited: true });
 		expect(brief).toStartWith("## Your part");
 		expect(brief).toContain("one of 2 forks of that session");
 		expect(brief).toContain("This fork is given part 1");
