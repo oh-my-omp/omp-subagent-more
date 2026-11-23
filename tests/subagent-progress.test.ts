@@ -13,7 +13,7 @@ import {
 	startInquiry,
 	withProgress,
 } from "../extensions/fork-task/subagent-progress.ts";
-import { getSharedCompactCoordinator } from "../omomp-shared/compact-handoff.ts";
+import { type FileOpsPruneReport, getSharedCompactCoordinator } from "../omomp-shared/compact-handoff.ts";
 
 type Probe = {
 	readonly subagent: Subagent;
@@ -193,6 +193,16 @@ describe("subagent progress placement", () => {
 	});
 });
 
+const EMPTY_PRUNE_REPORT: FileOpsPruneReport = {
+	totalInputPaths: 0,
+	strippedQueryCount: 0,
+	filteredNoiseCount: 0,
+	keptUniqueCandidateCount: 0,
+	selectedCount: 0,
+	repoSourcePathsSelected: [],
+	selectedPaths: [],
+};
+
 describe("registerSubagentProgress compact handoff", () => {
 	afterEach(() => {
 		AgentRegistry.resetGlobalForTests();
@@ -226,18 +236,7 @@ describe("registerSubagentProgress compact handoff", () => {
 					sessionManager: { getSessionFile: () => undefined },
 				} as unknown as ExtensionContext,
 			},
-			{
-				isUpdate: false,
-				fileOpsPruneReport: {
-					totalInputPaths: 0,
-					strippedQueryCount: 0,
-					filteredNoiseCount: 0,
-					keptUniqueCandidateCount: 0,
-					selectedCount: 0,
-					repoSourcePathsSelected: [],
-					selectedPaths: [],
-				},
-			},
+			EMPTY_PRUNE_REPORT,
 		);
 
 		expect(snapshot.inactiveStatefulPluginIds).toContain("omp-subagent-more");
@@ -273,18 +272,7 @@ describe("registerSubagentProgress compact handoff", () => {
 					sessionManager: { getSessionFile: () => undefined },
 				} as unknown as ExtensionContext,
 			},
-			{
-				isUpdate: false,
-				fileOpsPruneReport: {
-					totalInputPaths: 0,
-					strippedQueryCount: 0,
-					filteredNoiseCount: 0,
-					keptUniqueCandidateCount: 0,
-					selectedCount: 0,
-					repoSourcePathsSelected: [],
-					selectedPaths: [],
-				},
-			},
+			EMPTY_PRUNE_REPORT,
 		);
 
 		const handoff = snapshot.activeHandoffs.find((h) => h.pluginId === "omp-subagent-more");
