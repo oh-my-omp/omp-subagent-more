@@ -164,7 +164,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 	registerCompactHandoff(
 		pi,
 		defineStatefulHarnessHandoff<{ readonly subagentIds: readonly string[] }>({
-			pluginId: "omp-subagent-more",
+			pluginId: "omp-subagent-ng",
 			captureState(compactCtx) {
 				const extCtx = compactCtx.extensionCtx;
 				const subagents = extCtx ? liveSubagents(extCtx.agent.id, extCtx.sessionManager.getSessionFile()) : [];
@@ -175,7 +175,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 				};
 			},
 			renderCompactPromptClaim(s) {
-				return `\`omp-subagent-more\` (\`<subagent-progress>\`) is querying live subagents (${s.subagentIds.join(", ")}) out-of-band during compaction and will splice their live progress block and \`agent://\`/\`history://\` handles right after the compaction boundary — NEVER write prose subagent inventories or status tables.`;
+				return `\`omp-subagent-ng\` (\`<subagent-progress>\`) is querying live subagents (${s.subagentIds.join(", ")}) out-of-band during compaction and will splice their live progress block and \`agent://\`/\`history://\` handles right after the compaction boundary — NEVER write prose subagent inventories or status tables.`;
 			},
 			renderPostCompactInjection() {
 				return { source: PROGRESS_TYPE, delivery: "plugin-managed" };
@@ -193,7 +193,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 				id: subagent.id,
 				ask: async (signal: AbortSignal) => {
 					const text = await subagent.ask(signal);
-					pi.logger.info("omp-subagent-more subagent answered", { id: subagent.id, at: new Date().toISOString() });
+					pi.logger.info("omp-subagent-ng subagent answered", { id: subagent.id, at: new Date().toISOString() });
 					return text;
 				},
 			})),
@@ -211,7 +211,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		unsubscribe = callerSession(ctx)?.subscribe((event) => {
 			if ((event.type === "manual_compaction_end" || event.type === "auto_compaction_end") && event.result === undefined) running.stop();
 		});
-		pi.logger.info("omp-subagent-more asked subagents for progress", { subagents: inquiry.order });
+		pi.logger.info("omp-subagent-ng asked subagents for progress", { subagents: inquiry.order });
 		return undefined;
 	});
 
@@ -226,11 +226,11 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		state.running = undefined;
 		const entry = event.compactionEntry;
 		const compactedAt = Date.parse(entry.timestamp);
-		pi.logger.info("omp-subagent-more summary returned", { compactionId: entry.id, at: new Date().toISOString() });
+		pi.logger.info("omp-subagent-ng summary returned", { compactionId: entry.id, at: new Date().toISOString() });
 		const text = finishInquiry(running.inquiry, GRACE_MS)
 			.then((replies) => {
 				running.stop();
-				pi.logger.info("omp-subagent-more subagent progress collected", {
+				pi.logger.info("omp-subagent-ng subagent progress collected", {
 					compactionId: entry.id,
 					answered: replies.map((reply) => reply.id),
 					abandoned: running.inquiry.order.filter((id) => !replies.some((reply) => reply.id === id)),
@@ -242,7 +242,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 			})
 			.catch((error: unknown) => {
 				running.stop();
-				warn("omp-subagent-more could not record subagent progress", error);
+				warn("omp-subagent-ng could not record subagent progress", error);
 				return undefined;
 			});
 		state.progress = { compactedAt, text };
@@ -259,7 +259,7 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 			const text = await state.progress.text;
 			return text === undefined ? undefined : { messages: withProgress(event.messages, text) };
 		} catch (error) {
-			warn("omp-subagent-more could not attach subagent progress", error);
+			warn("omp-subagent-ng could not attach subagent progress", error);
 			return undefined;
 		}
 	});

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- The plugin is renamed from `omp-subagent-more` to `omp-subagent-ng`: the package name and install URL (`https://github.com/oh-my-omp/omp-subagent-ng`), the model role `@omp-subagent-ng`, the skill `omp-subagent-ng` (`skill://omp-subagent-ng/flow.js`), the topic namespaces, reminder sources and log lines all use the new name; subagent progress recorded in sessions by earlier versions still loads
+
 ### Added
 
 - The `flow` tool runs a flow of boxes, fresh subagent sessions and shell commands wired to each other by name, from one append-only log per session: one background job starts every ready item and wakes the main session once when the flow comes to rest or stops; fan-out (`<box>[]`), wired raises (`<box>!<type>`), checks that reopen the checked item, forced handoffs, per-item notes files, workspace carried between sessions of an item across models, named runtime exceptions that stop the flow, and stale results after a definition, agent prompt or model setting changes
@@ -9,12 +13,12 @@
 - `splits` on a fanned, isolated agent box lets a session ask the flow's author for a split with its `flow_split` tool: the call carries the parts and the details for the author and blocks until the author answers with `flow` op `agree`, or op `disagree` and a `reason`, which the session continues with. After an agree the session yields `{"status": "split", "handoff": …}`, each approved part becomes an item of the same box (`work#0.0`, `work#0.1`) whose first session is a fork of the splitting session in its own worktree, without shake; `<box>[]` fans out over the leaves by path, `<box>` is the array of the leaves' results, and no session joins the parts
 - `flow.agree(key)` and `flow.disagree(key, reason)` in `flow.js` answer a split request from an eval cell
 - The agents `flow:scout`, `flow:worker`, `flow:adjudicator`, `flow:guardian` and `flow:verifier`, with their own system prompts and no model of their own; a box's `model` names the tier they run on
-- `%load skill://omp-subagent-more/flow.js` defines `flow.*` for eval cells: each call takes JavaScript values, prints the verdict and throws when refused
+- `%load skill://omp-subagent-ng/flow.js` defines `flow.*` for eval cells: each call takes JavaScript values, prints the verdict and throws when refused
 - A box's `prepare` command runs in the subagent's workspace after inherited changes are applied and before its first turn, as part of the same start of every subagent that applies `fork_task` overlays
 
 ### Removed
 
-- `skill://omp-subagent-more/orchestrate.js` and its `orchestrate(spec)`, `drive()` and `answer()`: answering continued the same subagent session, and its state lived in the eval kernel; `flow.js` replaces it
+- `skill://omp-subagent-ng/orchestrate.js` and its `orchestrate(spec)`, `drive()` and `answer()`: answering continued the same subagent session, and its state lived in the eval kernel; `flow.js` replaces it
 
 ### Changed
 

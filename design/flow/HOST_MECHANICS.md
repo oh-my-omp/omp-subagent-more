@@ -78,5 +78,5 @@
 
 ### `flow` 的设计利用
 - 父线程的 `before_subagent_spawn` 为还能拆分的会话在其 artifacts 目录写 `flow.splittable`；子代理线程在 `session_start` 读到它后按规范顺序启用 `flow_split`（[`split.ts`](../../extensions/flow/split.ts)）。
-- `flow_split` 经 `BroadcastChannel("omp-subagent-more/flow-split")` 发出请求。驱动流程的后台 Job 存活期间监听该频道，按会话 ID 认领属于自己的请求，先回 `waiting`，再向编写者会话发 `aside` 消息；5 秒内无人认领时工具直接返回拒绝。编写者的 `agree`/`disagree` 经同一频道送回，工具调用随之返回。
+- `flow_split` 经 `BroadcastChannel("omp-subagent-ng/flow-split")` 发出请求。驱动流程的后台 Job 存活期间监听该频道，按会话 ID 认领属于自己的请求，先回 `waiting`，再向编写者会话发 `aside` 消息；5 秒内无人认领时工具直接返回拒绝。编写者的 `agree`/`disagree` 经同一频道送回，工具调用随之返回。
 - 编写者同意后，worker 交回 `split` 并结束，改动照常交回调用方检出；各部分随后以 `fork_task`（`from` 为 worker，`workspace: "isolated_from_caller"`，`shake: false`）派发，从已含 worker 改动的检出新建 worktree。`task.isolation.apply` 关闭时，worker 的改动由 `inheritFrom()` 读出，经 overlay 交给 fork。

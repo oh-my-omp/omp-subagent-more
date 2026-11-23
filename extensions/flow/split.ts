@@ -9,7 +9,7 @@ import { readOptional, sessionArtifactsDir } from "../fork-task/replica-file.ts"
 
 export const SPLIT_TOOL = "flow_split";
 
-const CHANNEL = "omp-subagent-more/flow-split";
+const CHANNEL = "omp-subagent-ng/flow-split";
 const HEARD_TIMEOUT_MS = 5000;
 
 export type SplitAsk = {

@@ -221,10 +221,10 @@ describe("registerSubagentProgress compact handoff", () => {
 		} as unknown as ExtensionAPI;
 	}
 
-	test("registers omp-subagent-more in the shared compact coordinator and silently gates when no live subagents exist", () => {
+	test("registers omp-subagent-ng in the shared compact coordinator and silently gates when no live subagents exist", () => {
 		const coordinator = getSharedCompactCoordinator();
 		registerSubagentProgress(createMockPi(), () => {});
-		expect(coordinator.listPluginIds()).toContain("omp-subagent-more");
+		expect(coordinator.listPluginIds()).toContain("omp-subagent-ng");
 
 		const snapshot = coordinator.prepareSnapshot(
 			{
@@ -239,8 +239,8 @@ describe("registerSubagentProgress compact handoff", () => {
 			EMPTY_PRUNE_REPORT,
 		);
 
-		expect(snapshot.inactiveStatefulPluginIds).toContain("omp-subagent-more");
-		expect(snapshot.activeHandoffs.some((h) => h.pluginId === "omp-subagent-more")).toBe(false);
+		expect(snapshot.inactiveStatefulPluginIds).toContain("omp-subagent-ng");
+		expect(snapshot.activeHandoffs.some((h) => h.pluginId === "omp-subagent-ng")).toBe(false);
 	});
 
 	test("captures live subagents and emits a plugin-managed claim + injection spec", () => {
@@ -275,7 +275,7 @@ describe("registerSubagentProgress compact handoff", () => {
 			EMPTY_PRUNE_REPORT,
 		);
 
-		const handoff = snapshot.activeHandoffs.find((h) => h.pluginId === "omp-subagent-more");
+		const handoff = snapshot.activeHandoffs.find((h) => h.pluginId === "omp-subagent-ng");
 		expect(handoff).toBeDefined();
 		expect(handoff?.claim).toContain("Worker-1");
 		expect(handoff?.claim).toContain("<subagent-progress>");

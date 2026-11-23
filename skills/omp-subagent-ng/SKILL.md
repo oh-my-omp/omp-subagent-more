@@ -1,5 +1,5 @@
 ---
-name: omp-subagent-more
+name: omp-subagent-ng
 description: Use for eval JS orchestration of many small subagent sessions as a flow, whose deterministic hand-offs, checks and fan-out run without the main agent relaying between them.
 ---
 
@@ -12,7 +12,7 @@ A flow is a set of **boxes** wired to each other by name. An agent box starts on
 A JS cell that is only this line:
 
 ```js
-%load skill://omp-subagent-more/flow.js
+%load skill://omp-subagent-ng/flow.js
 ```
 
 It defines `flow` for the kernel's life. The flow's state lives with the session, not in the kernel: after a kernel reset, load the helper again and the flow is unchanged.

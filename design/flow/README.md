@@ -1,9 +1,9 @@
-# `omp-subagent-more` 编排原语（`flow`）设计总览
+# `omp-subagent-ng` 编排原语（`flow`）设计总览
 
-本目录存放从会话 `01a1db88-294f-7611-840e-4299ba2a5305` 中完整剥离出来的 **`omp-subagent-more` 子代理编排原语（`flow`）纯技术设计**，已彻底剔除作为试验品的业务 Issue（`#320/#321/#322`）交付内容。
+本目录存放从会话 `01a1db88-294f-7611-840e-4299ba2a5305` 中完整剥离出来的 **`omp-subagent-ng` 子代理编排原语（`flow`）纯技术设计**，已彻底剔除作为试验品的业务 Issue（`#320/#321/#322`）交付内容。
 
 - **目标**：增强 Oh My Pi 的 `eval`（REPL），提供一套可反悔、可持久化、支持跨模型工作区继承与结构化交接的子代理编排原语；它取代了此前的内存流水线脚本 `orchestrate.js`。
-- **实现**：[`extensions/flow/`](../../extensions/flow/)，随插件加载；eval 辅助 [`skills/omp-subagent-more/flow.js`](../../skills/omp-subagent-more/flow.js)，角色 [`agents/flow-*.md`](../../agents/)，单测 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)。
+- **实现**：[`extensions/flow/`](../../extensions/flow/)，随插件加载；eval 辅助 [`skills/omp-subagent-ng/flow.js`](../../skills/omp-subagent-ng/flow.js)，角色 [`agents/flow-*.md`](../../agents/)，单测 [`tests/flow-store.test.ts`](../../tests/flow-store.test.ts)。
 
 ## 目录导航
 

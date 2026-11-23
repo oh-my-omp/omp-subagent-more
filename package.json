@@ -1,11 +1,11 @@
 {
-	"name": "omp-subagent-more",
+	"name": "omp-subagent-ng",
 	"version": "0.3.1",
 	"description": "fork_task, the fork:self agent and the flow orchestration primitives for Oh My Pi",
 	"type": "module",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/oh-my-omp/omp-subagent-more.git"
+		"url": "git+https://github.com/oh-my-omp/omp-subagent-ng.git"
 	},
 	"files": [
 		"extensions",

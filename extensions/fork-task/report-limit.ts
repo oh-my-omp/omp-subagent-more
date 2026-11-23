@@ -3,9 +3,9 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { errorText } from "./errors.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 
-const ROLE = "omp-subagent-more";
+const ROLE = "omp-subagent-ng";
 
-export const VERDICTS_LOG = "omp-subagent-more report-limit verdicts";
+export const VERDICTS_LOG = "omp-subagent-ng report-limit verdicts";
 
 export const DEADLINE_MS = 25_000;
 
@@ -72,7 +72,7 @@ export function createReportLimit(log: { info: Log; warn: Log }) {
 		const answer = await ask(SYSTEM_PROMPT, renderPrompt(context, item.task), signal, deadlineAt);
 		const verdict: Verdict = answer.kind === "text" ? parseAnswer(answer.text) : { kind: "unknown", why: answer.why };
 		if (verdict.kind === "clear") cleared.add(key);
-		if (verdict.kind === "unknown") log.warn("omp-subagent-more report-limit check failed", { item: label, error: verdict.why });
+		if (verdict.kind === "unknown") log.warn("omp-subagent-ng report-limit check failed", { item: label, error: verdict.why });
 		return verdict;
 	};
 
@@ -108,7 +108,7 @@ export function registerReportLimit(pi: ExtensionAPI): void {
 				const reply = await completeRoles(ctx, [ROLE, "default"], systemPrompt, prompt, MEDIUM_EFFORT, deadlineAt, signal);
 				switch (reply.kind) {
 					case "text":
-						pi.logger.info("omp-subagent-more report-limit answered", { model: reply.model, failures: reply.failures });
+						pi.logger.info("omp-subagent-ng report-limit answered", { model: reply.model, failures: reply.failures });
 						return { kind: "text", text: reply.text };
 					case "no-model":
 						return { kind: "failed", why: `no model: assign @${ROLE} or the default role in /model` };
@@ -126,7 +126,7 @@ export function registerReportLimit(pi: ExtensionAPI): void {
 			});
 			return reason === null ? undefined : { block: true, reason };
 		} catch (error) {
-			pi.logger.warn("omp-subagent-more report-limit skipped a fork_task call", { error: errorText(error) });
+			pi.logger.warn("omp-subagent-ng report-limit skipped a fork_task call", { error: errorText(error) });
 			return undefined;
 		}
 	});

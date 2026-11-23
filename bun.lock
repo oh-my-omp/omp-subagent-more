@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "omp-subagent-more",
+      "name": "omp-subagent-ng",
       "devDependencies": {
         "@biomejs/biome": "latest",
         "@oh-my-pi/omptype": "latest",

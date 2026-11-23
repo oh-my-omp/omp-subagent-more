@@ -187,7 +187,7 @@ The call resolves to \`{text, details}\`: \`text\` is the verdict, \`details.acc
 The skill's helper wraps this. Load it once per kernel, in a cell of its own:
 
 \`\`\`
-%load skill://omp-subagent-more/flow.js
+%load skill://omp-subagent-ng/flow.js
 \`\`\`
 
 It defines \`flow\`, whose functions take JavaScript values, print the verdict when the call returns, and throw when the call is refused:
@@ -228,5 +228,5 @@ const FLOW_TOPICS: readonly ToolTopicDoc[] = [
 export const flowTopics: () => Readonly<Record<string, string>> = toDocTopics(FLOW_TOPICS);
 
 export function registerFlowTopics(): void {
-	registerToolTopics("omp-subagent-more/flow", FLOW_TOPICS);
+	registerToolTopics("omp-subagent-ng/flow", FLOW_TOPICS);
 }

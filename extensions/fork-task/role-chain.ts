@@ -12,7 +12,7 @@ type Effort = (typeof THINKING_EFFORTS)[number];
 export const MEDIUM_EFFORT: Effort =
 	THINKING_EFFORTS.find((effort) => effort === "medium") ??
 	(() => {
-		throw new Error("omp-subagent-more: host does not recognize medium reasoning effort");
+		throw new Error("omp-subagent-ng: host does not recognize medium reasoning effort");
 	})();
 type Level = "off" | Effort;
 type Candidate = { readonly model: Model; readonly level: Level | undefined };

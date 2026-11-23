@@ -359,8 +359,8 @@ export default function forkTask(pi: ExtensionAPI): void {
 		warn,
 		pending: [],
 		cloned: new WeakMap(),
-		deltas: createDeltaStream("omp-subagent-more/fork-task"),
-		diffs: createDeltaStream("omp-subagent-more/fork-diff"),
+		deltas: createDeltaStream("omp-subagent-ng/fork-task"),
+		diffs: createDeltaStream("omp-subagent-ng/fork-diff"),
 		started: new Set(),
 	};
 

@@ -27,5 +27,5 @@ export const FORK_TASK_TOPICS: readonly ToolTopicDoc[] = [
 export const docTopics: () => Readonly<Record<string, string>> = toDocTopics(FORK_TASK_TOPICS);
 
 export function registerForkTaskTopics(): void {
-	registerToolTopics("omp-subagent-more", FORK_TASK_TOPICS);
+	registerToolTopics("omp-subagent-ng", FORK_TASK_TOPICS);
 }

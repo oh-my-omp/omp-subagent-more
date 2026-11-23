@@ -1,6 +1,6 @@
 # `flow` 编排原语完整技术规范
 
-本文档定义 `omp-subagent-more` 中 `flow` 编排原语的数据模型、引用解析、Redux 状态机、会话交接协议与 REPL 接口规范（对应 [`extensions/flow/`](../../extensions/flow/) 的实现）。
+本文档定义 `omp-subagent-ng` 中 `flow` 编排原语的数据模型、引用解析、Redux 状态机、会话交接协议与 REPL 接口规范（对应 [`extensions/flow/`](../../extensions/flow/) 的实现）。
 
 ---
 
@@ -235,10 +235,10 @@ type State = {
 扩展注册名为 `flow` 的工具（`loadMode: "essential"`），附带三个按需读取的文档主题：
 - `help://flow/boxes`：盒子字段、引用语法、门禁检查与异常说明。
 - `help://flow/lifecycle`：12 个操作原语、判定输出格式、停止恢复、过期值处理与拆分请求的答复。
-- `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `skill://omp-subagent-more/flow.js` 的方法。
+- `help://flow/eval`：在 `eval` JS cell 中调用 `tool.flow` 与加载 `skill://omp-subagent-ng/flow.js` 的方法。
 
 ### 5.2 内核辅助层（`flow.js`）
-通过 `%load skill://omp-subagent-more/flow.js` 加载后定义 `globalThis.flow`，自身不保存任何状态：
+通过 `%load skill://omp-subagent-ng/flow.js` 加载后定义 `globalThis.flow`，自身不保存任何状态：
 
 ```js
 await flow.define(boxes);          // 登记、覆盖或删除(null)盒子；打印 Verdict

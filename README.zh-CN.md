@@ -1,4 +1,4 @@
-# omp-subagent-more
+# omp-subagent-ng
 
 [English](README.md)
 
@@ -16,7 +16,7 @@
   - 暂存进 artifact 存储 — 功能：在调用者会话的 artifacts 目录里暂存对话，再按宿主分配的 spawn key 移到执行器打开子代理的位置，让执行器打开的是分叉而不是空会话；目标已存在时拒绝覆盖。时机：宿主 `before_subagent_spawn` 钩子，仅 `task` 调用。实例：拦截原因 `fork_task: <path>.jsonl already exists; refusing to overwrite it.`
   - 请求复刻 — 功能：子代理的每次请求都使用源会话捕获的 system prompt、工具声明和消息前缀，不追加子代理自己的工具；源会话声明了、子代理却没有注册的工具不会让子代理启动失败；调用它不会执行，OMP 返回 `Tool <name> not found`。快照缺失时在任何模型调用前拦下子代理，而不是换一份契约运行。时机：子代理会话的 `before_agent_start`。实例：`the fork's request snapshot is no longer available; create a fresh fork from the parent`。
   - 自有 `yield` 差分 — 功能：告诉每个分叉子代理，无论复制来的工具声明里有没有 `yield`，结果都经它在本会话注册的 `yield` 交付，以单独的函数调用直接调用，并附上该工具的说明和 JSON Schema。时机：`before_agent_start` 时以上下文差分注入；压缩丢掉它后，在 `tool_result` 的一批工具之后再次注入。实例：``Emit it as a function call of its own, exactly like a call to `read` or `bash`: name `yield`, arguments `{"data": <your result>}` ``。
-  - 差异提醒 — 功能：告诉分叉子代理它的会话与所延续的请求有何不同：复制来的对话所在的工作目录与它自己的工作目录，以及相对路径一一对应的两个仓库根目录；声明了却没有注册的工具（以及调用它们不会执行）、先前报告不可用而现在已注册的工具、工作目录下相对源会话 system prompt 缺失、新增或内容变化的上下文文件（附当前内容），以及内容相同、路径换了的上下文文件。差异不变时不重发，没有差异时撤回提醒。时机：`before_agent_start` 时以上下文差分注入，`tool_result` 的一批工具之后再次计算。实例：`<system-reminder source="omp-subagent-more/fork-diff">` 列出 ``- `session_query` ``。
+  - 差异提醒 — 功能：告诉分叉子代理它的会话与所延续的请求有何不同：复制来的对话所在的工作目录与它自己的工作目录，以及相对路径一一对应的两个仓库根目录；声明了却没有注册的工具（以及调用它们不会执行）、先前报告不可用而现在已注册的工具、工作目录下相对源会话 system prompt 缺失、新增或内容变化的上下文文件（附当前内容），以及内容相同、路径换了的上下文文件。差异不变时不重发，没有差异时撤回提醒。时机：`before_agent_start` 时以上下文差分注入，`tool_result` 的一批工具之后再次计算。实例：`<system-reminder source="omp-subagent-ng/fork-diff">` 列出 ``- `session_query` ``。
   - 跨线程源通道 — 功能：响应本进程其他线程对某个源最新请求的查询。时机：扩展加载时启动。实例：`BroadcastChannel("omp-fork-task/source")`。
 - **工作区模式（`workspace`）**
   - 三态 `workspace` — 功能：选择 `"shared"`（共用调用方工作区）、`"isolated_from_caller"`（从调用方工作区建独立 worktree），或 `"isolated_from_source"`（从调用方建独立 worktree 并把 `from` agent 在其隔离工作区里的未提交改动叠加进来，完成后与子代理自己的改动一起交回）。未传 `agent` 时默认 `"shared"`，传了 `agent` 默认 `"isolated_from_caller"`；plan 模式下强制 `"shared"`。时机：派发前检查；`isolated_from_source` 改动叠加在子代理 `before_agent_start` 记录起点后、第一轮之前应用。实例：`{ from: "Impl_1a2b", workspace: "isolated_from_source", task: "…" }`。
@@ -24,15 +24,15 @@
   - 工作区起点记录 — 功能：记录每个隔离子代理的工作区起点，供之后读取继承的改动。时机：每份子代理对话第一次 `before_agent_start`。实例：`<会话 artifacts>/fork-task.start.json`。
   - 准备命令 — 功能：在子代理的工作区里运行 flow 盒子的 `prepare` 留给它的命令，时间在继承的改动应用之后、第一轮之前；命令失败或 240 秒超时，会话在任何模型调用前停下。时机：子代理对话第一次 `before_agent_start`。实例：``the `prepare` command exited with 1 in this workspace: …``。
 - **Topic**
-  - `help://fork_task/limits` — 功能：同时经原生 `docTopics: toDocTopics(FORK_TASK_TOPICS)` 与 `registerToolTopics("omp-subagent-more", ...)` 注册，列出前提、不支持的字段、源错误、`isolated_from_source` 约束以及在 eval 中调用 `await tool.fork_task(...)` 的行为。时机：模型读取时；精简工具说明直接指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
+  - `help://fork_task/limits` — 功能：同时经原生 `docTopics: toDocTopics(FORK_TASK_TOPICS)` 与 `registerToolTopics("omp-subagent-ng", ...)` 注册，列出前提、不支持的字段、源错误、`isolated_from_source` 约束以及在 eval 中调用 `await tool.fork_task(...)` 的行为。时机：模型读取时；精简工具说明直接指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
 - **报告长度检查**
   - 报告长度判定 — 功能：共享 `context` 或条目 `task`（`agent` 为 `task:*` 或省略的条目）限制了 worker 报告长度时拦下 `fork_task` 调用，每个条目问模型一个问题，总时限 25 秒。时机：每次 `fork_task` 的 `tool_call`，执行之前。实例：拦截原因 ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``。
-  - `@omp-subagent-more` 模型角色 — 功能：判定先问这个角色，再走 `default` 角色链；没有模型、请求失败或回答无法解析时放行。时机：每次判定。实例：在 `/model` → "+ New role" 绑定；模型须回答 `report-limit: true` 或 `report-limit: false`。
-  - 判定缓存与日志 — 功能：每个进程只记住 `clear` 判定（对去空白的 context 和 task 取 sha256），每次判定过的调用写一行日志。时机：每次判定之后。实例：日志行 `omp-subagent-more report-limit verdicts`。
+  - `@omp-subagent-ng` 模型角色 — 功能：判定先问这个角色，再走 `default` 角色链；没有模型、请求失败或回答无法解析时放行。时机：每次判定。实例：在 `/model` → "+ New role" 绑定；模型须回答 `report-limit: true` 或 `report-limit: false`。
+  - 判定缓存与日志 — 功能：每个进程只记住 `clear` 判定（对去空白的 context 和 task 取 sha256），每次判定过的调用写一行日志。时机：每次判定之后。实例：日志行 `omp-subagent-ng report-limit verdicts`。
 - **会话 artifacts 中的分叉记录**
   - 请求副本、改动叠加、准备命令、park 请求与工作区起点 — 功能：每条记录存在它所属会话的 artifacts 目录里，随该会话的对话保留或删除。时机：请求副本、改动叠加与准备命令在 spawn 时写入，park 请求在会话 park 时写入，工作区起点在子代理第一轮写入。实例：`<子代理 artifacts>/fork-task.replica.json`、`fork-task.overlay.patch`、`fork-task.prepare`，`<会话 artifacts>/fork-task.request.json`、`fork-task.start.json`。
   - 关闭清理 — 功能：删除会话未派发分叉的暂存对话。时机：`session_shutdown`。实例：失败时记录 `fork_task: cleaning up the staged conversation failed`。
-- **流程（`flow` 工具，skill `omp-subagent-more`）**
+- **流程（`flow` 工具，skill `omp-subagent-ng`）**
   - `flow` 工具 — 功能：每个会话一条由盒子组成的流程，状态存在会话旁只追加的日志（`<会话>/flow.jsonl`）里；由一个后台任务启动所有输入已就绪的单元，流程静止或停下时只唤醒主会话一次；每次调用都返回状态管理器的判定：首行、阻碍流程的原因、`next:` 列出的当前可用操作，以及每项变化一行。时机：模型以 `op` 为 `define`、`supply`、`run`、`stop`、`status`、`value`、`retract`、`keep`、`retry`、`answer`、`agree` 或 `disagree` 调用 `flow` 时（`loadMode: "essential"`）；`run` 需要 `async.enabled: true` 和已落盘的会话。实例：`{ op: "supply", name: "issue", value: "\"#12\"" }`。
   - 盒子与接线 — 功能：agent 盒子每个单元启动一个全新的子代理会话，`schemaMode: "strict"`；命令盒子每个单元运行一条 POSIX 命令，每个输入作为一个带引号的 shell 词。`input.<name>` 读取提供的值，`<box>` 或 `<box>.<field>` 读取结果，`<box>[]` 或 `<box>.<field>[]` 按元素展开成多个单元，`<box>!<type>` 接收并答复该类型的每次抛出。定义是纯 JSON，`define` 时整体检查，可以一次只替换一个盒子。时机：`define` 时；引用在流程运行时解析。实例：`work: { agent: "flow:worker", model: "task:low", brief: "…{{slice}}", in: { slice: "scout.slices[]" }, out: {…}, raises: ["question"], isolated: true }`。
   - 门禁 — 功能：带 `checks: "<box>"` 的命令盒子以 `rejects` 中的退出码（缺省为 `[1]`）结束时，把被检查的单元在新会话里重开，新会话拿到上一次的交接和命令输出，从被拒结果算出的一切都被清除；其他非零退出码是 `exit` 异常。重开次数计入被检查盒子的 `bound`。时机：门禁结束时。实例：`{ command: "tsc --noEmit", in: { work: "work[]" }, checks: "work", rejects: [1, 2] }`。
@@ -41,5 +41,5 @@
   - 会话与交接 — 功能：除部分的首个会话外，每次点火都是新会话；会话交回 `{status, value | raise, detail, handoff: {did, decided, unverified}}`；同一单元的后续会话拿到上一次的交接以及答复或门禁输出、该单元的笔记文件，`isolated: true` 时还有上一次会话留下的改动，无论换成哪个模型。会话已交回但 OMP 把改动留在 `omp/task/<id>` 而没有合入时，单元以 `workspace` 失败。时机：每次点火和会话结束时。实例：`<会话>/flow-boards/work%230.md`。
   - 异常、停止与过期值 — 功能：`spawn`、`workspace`、`session`、`schema`、`protocol`、`bound_exceeded`、`exit`、`timeout`、`host` 按盒子 `handle` 允许的次数重新点火，用完后停下整条流程；在每个失败单元被重新定义、撤回或重试之前，以及在用已改变的盒子、agent 提示词或模型设置产出的结果被保留或撤回之前，`run` 都被拒绝。时机：单元结算时；调用 `run` 时。实例：`next: retry or retract scout, or define scout again`。
   - 角色 agent — 功能：`flow:scout`、`flow:worker`、`flow:adjudicator`、`flow:guardian`、`flow:verifier` 带自己的 system prompt，不带模型；盒子的 `model` 指定它们使用哪一档的模型设置。时机：盒子在 `agent` 中点名它们时。实例：`agents/flow-worker.md`。
-  - `flow.js` 辅助 — 功能：定义 `flow.define`、`supply`、`run`、`stop`、`status`、`retract`、`keep`、`retry`、`answer`、`agree`、`disagree`，接受 JavaScript 值，打印判定，调用被拒时抛错；`flow.value(key)` 返回存储的值。时机：JS 单元执行 `%load skill://omp-subagent-more/flow.js` 之后。实例：`await flow.supply("issue", JSON.parse(await sh\`gh issue view 12 --json title,body\`));`。
+  - `flow.js` 辅助 — 功能：定义 `flow.define`、`supply`、`run`、`stop`、`status`、`retract`、`keep`、`retry`、`answer`、`agree`、`disagree`，接受 JavaScript 值，打印判定，调用被拒时抛错；`flow.value(key)` 返回存储的值。时机：JS 单元执行 `%load skill://omp-subagent-ng/flow.js` 之后。实例：`await flow.supply("issue", JSON.parse(await sh\`gh issue view 12 --json title,body\`));`。
   - `help://flow/boxes`、`help://flow/lifecycle`、`help://flow/eval` — 功能：分别说明盒子字段、引用、门禁、会话与异常；运行、停止、恢复、过期值、抛出与拆分请求；以及 eval 辅助。时机：模型读取时；工具说明列出它们。实例：`| \`rejects\` | command | With \`checks\`: the exit codes that reject the checked result, \`[1]\` when absent. … |`。
