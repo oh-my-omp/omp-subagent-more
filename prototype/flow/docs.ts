@@ -3,9 +3,9 @@ import * as path from "node:path";
 export const DESCRIPTION = `Runs a flow of boxes (fresh subagent sessions and shell commands, wired to each other by name) from one append-only store, and answers every call with the store's verdict. Use it to split work into many small sessions whose results feed later ones. Call it from \`eval\` cells to hand values computed in code (a \`gh\` result, a parsed file) to the flow without retyping them.
 
 Topics — read the one a call needs before making it:
-- \`tool://flow/boxes\` — before writing or changing box definitions
-- \`tool://flow/lifecycle\` — before \`run\`, or after a verdict that says STOPPED, stale, illegal, raised or refused
-- \`tool://flow/eval\` — before calling the tool from an eval cell`;
+- \`help://flow/boxes\` — before writing or changing box definitions
+- \`help://flow/lifecycle\` — before \`run\`, or after a verdict that says STOPPED, stale, illegal, raised or refused
+- \`help://flow/eval\` — before calling the tool from an eval cell`;
 
 const BOXES = `# Box definitions
 

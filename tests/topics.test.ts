@@ -1,24 +1,26 @@
 import { afterEach, expect, test } from "bun:test";
 import { DESCRIPTION, paramsSchema, resolveForkWorkspace } from "../extensions/fork-task/index.ts";
-import { FORK_TASK_TOPICS, registerForkTaskTopics } from "../extensions/fork-task/topics.ts";
+import { docTopics, FORK_TASK_TOPICS, registerForkTaskTopics } from "../extensions/fork-task/topics.ts";
 import { clearToolTopics, listToolTopics, resolveToolTopic } from "../omomp-shared/internal-url.ts";
 
 afterEach(() => {
 	clearToolTopics("omp-subagent-more");
 });
 
-test("fork_task registers only limits under tool://fork_task and keeps description <= 200 chars", () => {
+test("fork_task registers only limits under help://fork_task and docTopics, keeping description <= 200 chars", () => {
 	registerForkTaskTopics();
 	expect(DESCRIPTION.length).toBeLessThanOrEqual(200);
-	expect(DESCRIPTION).toContain("tool://fork_task/limits");
+	expect(DESCRIPTION).toContain("help://fork_task/limits");
 	expect(DESCRIPTION).not.toContain("xd://");
-	expect(DESCRIPTION).not.toContain("help://");
+	expect(DESCRIPTION).not.toContain("tool://");
 
 	const listed = listToolTopics("fork_task");
 	expect(listed.map((doc) => doc.topic)).toEqual(["limits"]);
-	expect(FORK_TASK_TOPICS[0]?.body).not.toContain("xd://");
-	expect(FORK_TASK_TOPICS[0]?.body).not.toContain("help://");
-	expect(FORK_TASK_TOPICS[0]?.body).not.toContain("tool://task/");
+	const body = FORK_TASK_TOPICS[0]?.body;
+	expect(typeof body).toBe("string");
+	expect(body).not.toContain("xd://");
+	expect(body).not.toContain("tool://");
+	expect(docTopics()).toEqual({ limits: String(body) });
 
 	const resolved = resolveToolTopic("fork_task", "limits");
 	expect(resolved?.content).toContain("await tool.fork_task");

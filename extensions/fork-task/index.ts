@@ -58,7 +58,7 @@ import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 import { askSource, serveSources } from "./source-channel.ts";
 import { finalizeStaging } from "./staging.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
-import { registerForkTaskTopics } from "./topics.ts";
+import { docTopics, registerForkTaskTopics } from "./topics.ts";
 import {
 	applyOverlay,
 	type Inheritance,
@@ -97,7 +97,7 @@ const itemSchema = z.object({
 		.enum(["shared", "isolated_from_caller", "isolated_from_source"])
 		.optional()
 		.describe(
-			"Where the child runs: `shared` shares your checkout, `isolated_from_caller` creates a new worktree from your checkout, and `isolated_from_source` creates an isolated worktree seeded with `from`'s uncommitted isolated changes (needs a stopped `from` agent; fails before dispatch if ineligible — see `tool://fork_task/limits`). Defaults to `shared` without `agent` and `isolated_from_caller` with `agent`; plan mode forces `shared`. Isolated children merge changes back on completion and cannot be resumed.",
+			"Where the child runs: `shared` shares your checkout, `isolated_from_caller` creates a new worktree from your checkout, and `isolated_from_source` creates an isolated worktree seeded with `from`'s uncommitted isolated changes (needs a stopped `from` agent; fails before dispatch if ineligible — see `help://fork_task/limits`). Defaults to `shared` without `agent` and `isolated_from_caller` with `agent`; plan mode forces `shared`. Isolated children merge changes back on completion and cannot be resumed.",
 		),
 	shake: z
 		.boolean()
@@ -142,7 +142,7 @@ export const paramsSchema = z.object({
 const progressSchema = z.object({ progress: z.array(z.object({ index: z.number(), id: z.string() }).passthrough()) }).passthrough();
 
 export const DESCRIPTION =
-	"Fork a live or parked session into native task children sharing its exact request and prompt cache. Read `tool://fork_task/limits` before using `from` or `workspace`.";
+	"Fork a session into native task children sharing its prompt cache, agent://<id>, wait, effort, outputSchema, and schemaMode. Read `help://fork_task/limits` before using `from` or `workspace`.";
 
 type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }
@@ -903,12 +903,13 @@ export default function forkTask(pi: ExtensionAPI): void {
 	});
 
 	registerForkTaskTopics();
-	const tool: ToolDefinition<typeof paramsSchema> = {
+	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "fork_task",
 		label: tr("Fork Task", "分叉任务"),
 		description: DESCRIPTION,
 		loadMode: "essential",
 		parameters: paramsSchema,
+		docTopics,
 		execute: executeForkTask.bind(null, rt),
 	};
 	pi.registerTool(tool);

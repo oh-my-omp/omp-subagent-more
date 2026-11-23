@@ -1,7 +1,8 @@
-import { registerToolTopics, type ToolTopicDoc } from "../../omomp-shared/internal-url.ts";
+import { registerToolTopics, type ToolTopicDoc, toDocTopics } from "../../omomp-shared/internal-url.ts";
 
 export const LIMITS_TOPIC_BODY = `# Prerequisites, unsupported fields, source errors and workspace inheritance
 
+- Companion to native \`task\`: children keep \`task\` result delivery (\`agent://<id>\`), \`wait\`, \`effort\`, \`outputSchema\`, and \`schemaMode\`, while replicating the source's exact system prompt, tools, and cached prefix.
 - Requires background jobs (\`async.enabled\`), the native \`task\` tool, batch mode and a persisted session; a missing prerequisite is named in the error.
 - At \`task.maxRecursionDepth\`: when the caller's \`taskDepth\` + 1 reaches the cap, \`fork_task\` returns a tool error before staging anything; the child would have no \`task\` tool to replicate.
 - No inherited-size or cost limit exists: no item checks the inherited token count or the source's cost.
@@ -22,6 +23,8 @@ export const FORK_TASK_TOPICS: readonly ToolTopicDoc[] = [
 		body: LIMITS_TOPIC_BODY,
 	},
 ];
+
+export const docTopics: () => Readonly<Record<string, string>> = toDocTopics(FORK_TASK_TOPICS);
 
 export function registerForkTaskTopics(): void {
 	registerToolTopics("omp-subagent-more", FORK_TASK_TOPICS);

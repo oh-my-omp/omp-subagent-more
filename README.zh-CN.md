@@ -23,7 +23,7 @@
   - 拒绝代码 — 功能：派发前以带代码的原因拒绝整次调用（`child-not-isolated`、`source-not-isolated`、`source-running`、`source-handed-back`、`nested-repo`、`overlay-conflict`）；迟到的 `overlay-conflict` 让子代理在第一次模型调用前停下。时机：暂存阶段；迟到冲突在子代理第一轮。实例：`workspace "isolated_from_source" rejected (source-running)`。
   - 工作区起点记录 — 功能：记录每个隔离子代理的工作区起点，供之后读取继承的改动。时机：每份子代理对话第一次 `before_agent_start`。实例：`<会话 artifacts>/fork-task.start.json`。
 - **Topic**
-  - `tool://fork_task/limits` — 功能：通过 `registerToolTopics("omp-subagent-more", ...)` 注册，列出前提、不支持的字段、源错误、`isolated_from_source` 约束以及在 eval 中调用 `await tool.fork_task(...)` 的行为。时机：模型读取时；精简工具说明直接指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
+  - `help://fork_task/limits` — 功能：同时经原生 `docTopics: toDocTopics(FORK_TASK_TOPICS)` 与 `registerToolTopics("omp-subagent-more", ...)` 注册，列出前提、不支持的字段、源错误、`isolated_from_source` 约束以及在 eval 中调用 `await tool.fork_task(...)` 的行为。时机：模型读取时；精简工具说明直接指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
 - **报告长度检查**
   - 报告长度判定 — 功能：共享 `context` 或条目 `task`（`agent` 为 `task:*` 或省略的条目）限制了 worker 报告长度时拦下 `fork_task` 调用，每个条目问模型一个问题，总时限 25 秒。时机：每次 `fork_task` 的 `tool_call`，执行之前。实例：拦截原因 ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``。
   - `@omp-subagent-more` 模型角色 — 功能：判定先问这个角色，再走 `default` 角色链；没有模型、请求失败或回答无法解析时放行。时机：每次判定。实例：在 `/model` → "+ New role" 绑定；模型须回答 `report-limit: true` 或 `report-limit: false`。
