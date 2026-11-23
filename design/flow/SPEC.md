@@ -294,7 +294,7 @@ const v = await flow.value(key);   // 静默读取 input.<name>、单元或盒�
 `flow.presets.swarm(options, ...workers)` 生成一份规格（不调用工具）：
 
 - 每个 worker 规格 `{ name, ...box }` 变成一个 `flow:worker` 盒子：默认 `model: options.model`、`out: { type: "object" }`、`isolated: true`，并把 `question` 加入 `raises`；规格里的其余字段（`brief`、`in` 等）照原样保留。
-- 每个 worker 另有一个 `<name>_ruling` 裁决盒：`agent: "flow:adjudicator"`，`in.raised: "<name>!question"`，`raises: ["ask_user"]`，模型取 `options.rulingModel ?? options.model`；`options.rulingBrief` 可覆盖任务书，`options.request`（一个引用，如 `"input.issue"`）作为裁决盒的 `request` 输入并出现在默认任务书里。
+- 每个 worker 另有一个 `<name>_ruling` 裁决盒：`agent: "flow:adjudicator"`，`in.raised: "<name>!question"`，`raises: ["ask_user"]`，`out: { type: "object" }`，`isolated: false`，模型取 `options.rulingModel ?? options.model`；`options.rulingBrief` 可覆盖任务书，`options.request`（一个引用，如 `"input.issue"`）作为裁决盒的 `request` 输入并出现在默认任务书里。
 - `options.gate` 生成一个门禁盒（默认名 `gate`）：worker 是扇出盒时取 `<name>[]`，否则取 `<name>`，`checks` 指向全部 worker。
 - `options.reduce` 生成一个汇总盒（默认名 `reduce`），取每个 worker 的整体结果。
 - `options.inputs` 与 `options.noEscape` 原样带进规格。
