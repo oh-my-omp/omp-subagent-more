@@ -1,5 +1,5 @@
 import { type Box, isArray, isObject, type Json, type Ref } from "./defs.ts";
-import { answerKey, type Continuation, type Earlier, type Item, isFanned, itemKey, markOf, type State } from "./state.ts";
+import { answerKey, type Continuation, childKey, type Earlier, type Item, isFanned, itemKey, markOf, type State } from "./state.ts";
 
 export type Firing = {
 	readonly key: string;
@@ -8,6 +8,7 @@ export type Firing = {
 	readonly inputs: Readonly<Record<string, Json>>;
 	readonly continuation: Continuation | null;
 	readonly earlier: Earlier | undefined;
+	readonly depth: number;
 };
 
 export type Raised = { readonly key: string; readonly type: string; readonly detail: string; readonly handler: string | undefined };
@@ -23,11 +24,25 @@ export type Survey = {
 	readonly waiting: readonly string[];
 };
 
-type Expected = { readonly key: string; readonly inputs: Readonly<Record<string, Json>> };
-type Expansion = { readonly kind: "blocked" } | { readonly kind: "items"; readonly fanned: boolean; readonly items: readonly Expected[] };
+type Start = { readonly continuation: Continuation; readonly earlier: Earlier | undefined; readonly depth: number };
+type Expected = {
+	readonly key: string;
+	readonly path: readonly number[];
+	readonly inputs: Readonly<Record<string, Json>>;
+	readonly start: Start | undefined;
+};
+type Expansion =
+	| { readonly kind: "blocked" }
+	| { readonly kind: "items"; readonly fanned: boolean; readonly input: string | undefined; readonly items: readonly Expected[] };
 type Resolved = { readonly kind: "value"; readonly value: Json } | { readonly kind: "missing" };
+type Leaf = { readonly path: readonly number[]; readonly value: Json };
+type Produced =
+	| { readonly kind: "one"; readonly value: Json }
+	| { readonly kind: "many"; readonly leaves: readonly Leaf[] }
+	| { readonly kind: "missing" };
 
 const MISSING: Resolved = { kind: "missing" };
+const UNPRODUCED: Produced = { kind: "missing" };
 
 function walk(value: Json, path: readonly string[]): Resolved {
 	let at = value;
@@ -70,6 +85,9 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 		for (const type of box.raises) {
 			const handlers = handlersOf(boxes, name, type);
 			if (handlers.length > 1) problems.push(`${name}!${type}: answered by more than one box (${handlers.join(", ")})`);
+		}
+		if (box.splits > 0 && !isFanned(box)) {
+			problems.push(`${name}: \`splits\` needs a \`[]\` input; the parts of a split item take the place of its element`);
 		}
 	}
 	const done = new Set<string>();
@@ -128,18 +146,47 @@ export function survey(state: State): Survey {
 		return made;
 	};
 
-	const resultOf = (name: string): Resolved => {
+	const leavesOf = (key: string, path: readonly number[], into: Leaf[]): boolean => {
+		const phase = state.items[key]?.phase;
+		if (phase?.kind === "done") {
+			into.push({ path, value: phase.value });
+			return true;
+		}
+		if (phase?.kind !== "split") return false;
+		return phase.parts.every((_part, index) => leavesOf(childKey(key, index), [...path, index], into));
+	};
+
+	const resultOf = (name: string): Produced => {
 		const expansion = expand(name);
-		if (expansion.kind === "blocked") return MISSING;
+		if (expansion.kind === "blocked") return UNPRODUCED;
+		if (expansion.fanned) {
+			const leaves: Leaf[] = [];
+			for (const expected of expansion.items) if (!leavesOf(expected.key, expected.path, leaves)) return UNPRODUCED;
+			return { kind: "many", leaves };
+		}
 		const values: Json[] = [];
 		for (const expected of expansion.items) {
 			const phase = state.items[expected.key]?.phase;
-			if (phase?.kind !== "done") return MISSING;
+			if (phase?.kind !== "done") return UNPRODUCED;
 			values.push(phase.value);
 		}
-		if (expansion.fanned) return { kind: "value", value: values };
 		const only = values[0];
-		return only === undefined ? MISSING : { kind: "value", value: only };
+		return only === undefined ? UNPRODUCED : { kind: "one", value: only };
+	};
+
+	const flatten = (produced: Produced): Resolved => {
+		switch (produced.kind) {
+			case "one":
+				return { kind: "value", value: produced.value };
+			case "many":
+				return { kind: "value", value: produced.leaves.map((leaf) => leaf.value) };
+			case "missing":
+				return MISSING;
+			default: {
+				const unreachable: never = produced;
+				return unreachable;
+			}
+		}
 	};
 
 	const resolve = (ref: Ref): Resolved => {
@@ -152,7 +199,7 @@ export function survey(state: State): Survey {
 				return walk(state.inputs[ref.source.name] ?? null, ref.path);
 			}
 			case "box": {
-				const result = resultOf(ref.source.box);
+				const result = flatten(resultOf(ref.source.box));
 				return result.kind === "value" ? walk(result.value, ref.path) : MISSING;
 			}
 			case "raise":
@@ -162,6 +209,16 @@ export function survey(state: State): Survey {
 				return unreachable;
 			}
 		}
+	};
+
+	const elementsOf = (ref: Ref): readonly Leaf[] | undefined => {
+		if (ref.source.kind === "box" && ref.path.length === 0) {
+			const produced = resultOf(ref.source.box);
+			if (produced.kind === "many") return produced.leaves;
+		}
+		const resolved = resolve(ref);
+		if (resolved.kind === "missing" || !isArray(resolved.value)) return undefined;
+		return resolved.value.map((value, index) => ({ path: [index], value }));
 	};
 
 	const expandBox = (name: string, box: Box): Expansion => {
@@ -176,7 +233,8 @@ export function survey(state: State): Survey {
 			if (resolved.kind === "missing") return { kind: "blocked" };
 			single[input] = resolved.value;
 		}
-		if (!multi) return { kind: "items", fanned: false, items: [{ key: name, inputs: single }] };
+		if (!multi)
+			return { kind: "items", fanned: false, input: undefined, items: [{ key: name, path: [], inputs: single, start: undefined }] };
 		const { input, ref } = multi;
 		if (ref.source.kind === "raise") {
 			const { box: sourceBox, type } = ref.source;
@@ -187,17 +245,40 @@ export function survey(state: State): Survey {
 					const phase = item.phase;
 					const raise: Json =
 						phase.kind === "raised" ? { item: item.key, type: phase.type, detail: phase.detail, handoff: phase.handoff } : null;
-					return { key: answerKey(name, item.key, item.attempt), inputs: { ...single, [input]: raise } };
+					return { key: answerKey(name, item.key, item.attempt), path: [], inputs: { ...single, [input]: raise }, start: undefined };
 				});
-			return { kind: "items", fanned: false, items };
+			return { kind: "items", fanned: false, input: undefined, items };
 		}
-		const resolved = resolve(ref);
-		if (resolved.kind === "missing" || !isArray(resolved.value)) return { kind: "blocked" };
+		const elements = elementsOf(ref);
+		if (elements === undefined) return { kind: "blocked" };
 		return {
 			kind: "items",
 			fanned: true,
-			items: resolved.value.map((element, index): Expected => ({ key: itemKey(name, index), inputs: { ...single, [input]: element } })),
+			input,
+			items: elements.map(
+				(element): Expected => ({
+					key: itemKey(name, element.path),
+					path: element.path,
+					inputs: { ...single, [input]: element.value },
+					start: undefined,
+				}),
+			),
 		};
+	};
+
+	const childrenOf = (item: Item, expected: Expected, input: string | undefined): Expected[] => {
+		if (item.phase.kind !== "split" || input === undefined) return [];
+		const { parts, handoff } = item.phase;
+		return parts.map((part, index) => ({
+			key: childKey(item.key, index),
+			path: [...expected.path, index],
+			inputs: { ...expected.inputs, [input]: part },
+			start: {
+				continuation: { kind: "part", part: index, of: parts.length, previous: handoff },
+				earlier: item.last,
+				depth: item.depth + 1,
+			},
+		}));
 	};
 
 	const ready: Firing[] = [];
@@ -212,15 +293,37 @@ export function survey(state: State): Survey {
 			continue;
 		}
 		let inFlight = Object.values(state.items).filter((item) => item.box === name && item.phase.kind === "running").length;
-		for (const expected of expansion.items) {
+		const queue = [...expansion.items];
+		for (let at = 0; at < queue.length; at += 1) {
+			const expected = queue[at];
+			if (!expected) continue;
 			const item = state.items[expected.key];
 			let next: Firing | undefined;
 			if (!item) {
-				next = { key: expected.key, box: name, attempt: 1, inputs: expected.inputs, continuation: null, earlier: undefined };
+				next = {
+					key: expected.key,
+					box: name,
+					attempt: 1,
+					inputs: expected.inputs,
+					continuation: expected.start?.continuation ?? null,
+					earlier: expected.start?.earlier,
+					depth: expected.start?.depth ?? 0,
+				};
 			} else {
+				const again = {
+					key: item.key,
+					box: name,
+					attempt: item.attempt + 1,
+					inputs: expected.inputs,
+					earlier: item.last,
+					depth: item.depth,
+				};
 				switch (item.phase.kind) {
 					case "running":
 					case "done":
+						break;
+					case "split":
+						queue.push(...childrenOf(item, expected, expansion.input));
 						break;
 					case "raised": {
 						const answer = answerOf(state, item);
@@ -232,32 +335,20 @@ export function survey(state: State): Survey {
 								handler: handlerOf(state.boxes, item.box, item.phase.type),
 							});
 						} else {
-							const continuation: Continuation = { kind: "answer", answer, previous: item.phase.handoff };
-							next = { key: item.key, box: name, attempt: item.attempt + 1, inputs: expected.inputs, continuation, earlier: item.last };
+							next = { ...again, continuation: { kind: "answer", answer, previous: item.phase.handoff } };
 						}
 						break;
 					}
 					case "reopened":
 						next = {
-							key: item.key,
-							box: name,
-							attempt: item.attempt + 1,
-							inputs: expected.inputs,
+							...again,
 							continuation: { kind: "check", check: item.phase.check, output: item.phase.output, previous: item.phase.handoff },
-							earlier: item.last,
 						};
 						break;
 					case "failed":
 					case "retry":
 					case "cancelled":
-						next = {
-							key: item.key,
-							box: name,
-							attempt: item.attempt + 1,
-							inputs: expected.inputs,
-							continuation: item.continuation,
-							earlier: item.last,
-						};
+						next = { ...again, continuation: item.continuation };
 						break;
 					default: {
 						const unreachable: never = item.phase;
@@ -278,7 +369,7 @@ export function survey(state: State): Survey {
 		const box = state.boxes[item.box];
 		if (item.phase.kind === "running") running.push(item.key);
 		if (!box) illegal.push(item.key);
-		else if (item.fingerprint !== markOf(state, box) && (item.phase.kind === "done" || item.phase.kind === "raised")) stale.push(item.key);
+		else if (item.fingerprint !== markOf(state, box) && ["done", "raised", "split"].includes(item.phase.kind)) stale.push(item.key);
 	}
 	return {
 		problems,
@@ -298,7 +389,7 @@ export function lookup(state: State, key: string): Json | undefined {
 	if (phase?.kind === "done") return phase.value;
 	if (!(key in state.boxes)) return undefined;
 	const values = Object.values(state.items)
-		.filter((item) => item.box === key)
+		.filter((item) => item.box === key && item.phase.kind !== "split")
 		.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }))
 		.map((item) => (item.phase.kind === "done" ? item.phase.value : null));
 	return values.length > 0 ? values : undefined;

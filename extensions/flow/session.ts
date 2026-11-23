@@ -1,4 +1,4 @@
-import { type AgentBox, type CommandBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
+import { type AgentBox, type CommandBox, fill, isArray, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
 import type { Firing } from "./plan.ts";
 import type { Continuation, Outcome } from "./state.ts";
 
@@ -13,16 +13,23 @@ const HANDOFF_SCHEMA: JsonObject = {
 	},
 };
 
-export function yieldSchema(box: AgentBox): JsonObject {
+export const splittable = (box: AgentBox, depth: number): boolean => depth < box.splits;
+
+const fannedInput = (box: AgentBox): string | undefined =>
+	Object.entries(box.inputs).find(([, ref]) => ref.multi && ref.source.kind !== "raise")?.[0];
+
+export function yieldSchema(box: AgentBox, depth: number): JsonObject {
 	const raising = box.raises.length > 0;
+	const splitting = splittable(box, depth);
 	return {
 		type: "object",
 		additionalProperties: false,
 		required: ["status", "handoff"],
 		properties: {
-			status: { enum: raising ? ["done", "raise"] : ["done"] },
+			status: { enum: ["done", ...(raising ? ["raise"] : []), ...(splitting ? ["split"] : [])] },
 			value: box.out,
 			...(raising ? { raise: { enum: box.raises }, detail: { type: "string" } } : {}),
+			...(splitting ? { parts: { type: "array", minItems: 2 } } : {}),
 			handoff: HANDOFF_SCHEMA,
 		},
 	};
@@ -54,6 +61,14 @@ function continuationText(continuation: Continuation): string {
 				continuation.output,
 				"Find what in the work makes the check fail and correct it. The check itself is not yours to change.",
 			].join("\n");
+		case "part":
+			return [
+				"## Continuation",
+				`An earlier session was given the larger assignment this one is part of and split it into ${continuation.of} parts; this assignment is part ${continuation.part + 1}. What that session changed is in your workspace. You start fresh: nothing of that session reaches you except its handoff.`,
+				"Handoff of the earlier session:",
+				textOf(continuation.previous),
+				"Do this part only: every other part is the assignment of another session.",
+			].join("\n");
 		default: {
 			const unreachable: never = continuation;
 			return unreachable;
@@ -63,7 +78,7 @@ function continuationText(continuation: Continuation): string {
 
 export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
 	const parts = [fill(box.brief, firing.inputs).trim()];
-	if (around.inherited) {
+	if (around.inherited && firing.continuation?.kind !== "part") {
 		parts.push(
 			[
 				"## Earlier work",
@@ -86,6 +101,12 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 	if (box.raises.length > 0) {
 		finish.push(
 			`- You cannot complete it and guessing would be wrong: \`{"status": "raise", "raise": "<type>", "detail": "…", "handoff": {…}}\`, where \`<type>\` is one of ${box.raises.map((type) => `\`${type}\``).join(", ")} and \`detail\` says concretely what is needed. A raise is an ordinary result sent as \`data\`; it is answered, and a later session continues. No person reads this session: never use the \`ask\` tool.`,
+		);
+	}
+	const input = fannedInput(box);
+	if (splittable(box, firing.depth) && input !== undefined) {
+		finish.push(
+			`- The assignment is too large for one session and falls into pieces that can each be done and checked on their own: \`{"status": "split", "parts": [<piece>, …], "handoff": {…}}\`, with at least two pieces. Each piece takes the place of the \`${input}\` input of this assignment, in the same form, and becomes an assignment of its own for a new session that starts from your changes. Together the pieces cover everything of this assignment you leave undone; nothing of it comes back to you. Do not do the pieces yourself.`,
 		);
 	}
 	finish.push(
@@ -115,7 +136,7 @@ export function commandOutcome(box: CommandBox, run: CommandRun): Outcome {
 	return rejected ? { kind: "rejected", output: said } : { kind: "failed", name: "exit", reason: said };
 }
 
-export function interpret(box: AgentBox, data: Json | undefined): Outcome {
+export function interpret(box: AgentBox, depth: number, data: Json | undefined): Outcome {
 	const protocol = (reason: string): Outcome => ({ kind: "failed", name: "protocol", reason });
 	if (data === undefined || !isObject(data)) return protocol("the session ended without yielding an object");
 	const handoff = data.handoff;
@@ -129,6 +150,13 @@ export function interpret(box: AgentBox, data: Json | undefined): Outcome {
 		if (typeof type !== "string" || !box.raises.includes(type))
 			return protocol(`raised \`${String(type)}\`, which the box does not declare`);
 		return { kind: "raise", type, detail: typeof data.detail === "string" ? data.detail : "", handoff };
+	}
+	if (data.status === "split") {
+		if (!splittable(box, depth)) return protocol("split, which this session may not do: its box allows no further split");
+		const parts = data.parts;
+		if (parts === undefined || !isArray(parts) || parts.length < 2)
+			return protocol("`status` is `split` but `parts` is not an array of at least two");
+		return { kind: "split", parts, handoff };
 	}
 	return protocol(`unknown status \`${String(data.status)}\``);
 }

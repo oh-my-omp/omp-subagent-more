@@ -29,6 +29,8 @@ function itemLabel(state: State, survey: Survey, item: Item): string {
 				raise === undefined ? "answered" : raise.handler === undefined ? "nothing answers it" : `waits for \`${raise.handler}\``;
 			return `raised \`${phase.type}\` (${answer}): ${oneLine(phase.detail)}${suffix}`;
 		}
+		case "split":
+			return `split in session ${item.attempt} into ${phase.parts.length} parts, ${phase.parts.map((_part, index) => `${item.key}.${index}`).join(", ")}${suffix}`;
 		case "reopened":
 			return `reopened after session ${item.attempt} by check \`${phase.check}\`: ${oneLine(phase.output)}${suffix}`;
 		case "failed":
@@ -65,9 +67,10 @@ export function wiring(state: State): string[] {
 					? box.raises.map((type) => `raises ${type} → ${handlerOf(state.boxes, name, type) ?? "an answer from outside"}`)
 					: [];
 			const handled = Object.entries(box.handle).map(([exception, times]) => `fires again on ${exception} ×${times}`);
+			const splits = box.kind === "agent" && box.splits > 0 ? [`splits ${box.splits} deep`] : [];
 			const checks =
 				box.kind === "command" && box.checks !== undefined ? [`exit ${box.checks.rejects.join(" or ")} reopens ${box.checks.box}`] : [];
-			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...handled, ...checks];
+			const parts = [inputs.length > 0 ? `← ${inputs.join(", ")}` : "← nothing", ...raises, ...splits, ...handled, ...checks];
 			return `wire ${name} ${parts.join(" · ")}`;
 		});
 }
@@ -89,8 +92,10 @@ export function delta(before: Marks, after: Marks): string[] {
 
 export function headline(state: State, survey: Survey): string[] {
 	const count = (kind: Item["phase"]["kind"]): number => Object.values(state.items).filter((item) => item.phase.kind === kind).length;
+	const split = count("split");
 	const counts = [
 		`${count("done")} done`,
+		...(split > 0 ? [`${split} split`] : []),
 		`${count("running")} running`,
 		`${count("raised")} raised`,
 		`${count("failed")} failed`,
@@ -106,7 +111,7 @@ export function headline(state: State, survey: Survey): string[] {
 				Object.keys(state.boxes).length > 0 &&
 				survey.waiting.length === 0 &&
 				survey.ready.length === 0 &&
-				Object.values(state.items).every((item) => item.phase.kind === "done");
+				Object.values(state.items).every((item) => item.phase.kind === "done" || item.phase.kind === "split");
 			lines.push(`flow ${complete ? "complete" : "not running"} · ${counts}`);
 			break;
 		}

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fill, type Json, shellWord } from "../extensions/flow/defs.ts";
 import { appendLog, readLog } from "../extensions/flow/journal.ts";
-import type { Firing } from "../extensions/flow/plan.ts";
+import { type Firing, lookup } from "../extensions/flow/plan.ts";
 import { briefOf, commandOutcome, interpret, yieldSchema } from "../extensions/flow/session.ts";
 import { type Action, definitionKey, modelKey, type Outcome, replay } from "../extensions/flow/state.ts";
 import { moves, Store } from "../extensions/flow/store.ts";
@@ -754,6 +754,7 @@ describe("what a session is told and hands back", () => {
 				inputs: { slice: "a" },
 				continuation: { kind: "answer", answer: "the second", previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
+				depth: 0,
 			},
 			{ board: "/notes/work.md", inherited: false },
 		);
@@ -773,6 +774,7 @@ describe("what a session is told and hands back", () => {
 				inputs: { slice: "a" },
 				continuation: { kind: "check", check: "gate", output: "expected 3, got 2", previous: HANDOFF },
 				earlier: { session: "S1", yielded: true },
+				depth: 0,
 			},
 			{ board: "/notes/work.md", inherited: false },
 		);
@@ -782,23 +784,159 @@ describe("what a session is told and hands back", () => {
 	});
 
 	test("the result schema requires a handoff and offers only the declared raise types", () => {
-		const schema = yieldSchema(box);
+		const schema = yieldSchema(box, 0);
 		expect(schema.required).toEqual(["status", "handoff"]);
 		expect(schema.properties).toMatchObject({ raise: { enum: ["question"] } });
 	});
 
 	test("yielded data outside the protocol is the runtime exception `protocol`", () => {
-		expect(interpret(box, { status: "done", value: 1 })).toMatchObject({ kind: "failed", name: "protocol" });
-		expect(interpret(box, { status: "raise", raise: "other", detail: "", handoff: HANDOFF })).toMatchObject({
+		expect(interpret(box, 0, { status: "done", value: 1 })).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, 0, { status: "raise", raise: "other", detail: "", handoff: HANDOFF })).toMatchObject({
 			kind: "failed",
 			name: "protocol",
 		});
-		expect(interpret(box, { status: "raise", raise: "question", detail: "which?", handoff: HANDOFF })).toEqual({
+		expect(interpret(box, 0, { status: "raise", raise: "question", detail: "which?", handoff: HANDOFF })).toEqual({
 			kind: "raise",
 			type: "question",
 			detail: "which?",
 			handoff: HANDOFF,
 		});
-		expect(interpret(box, { status: "done", value: { n: 1 }, handoff: HANDOFF })).toEqual(done({ n: 1 }));
+		expect(interpret(box, 0, { status: "done", value: { n: 1 }, handoff: HANDOFF })).toEqual(done({ n: 1 }));
+	});
+});
+
+describe("splitting", () => {
+	const SPLITTING: Json = {
+		agent: "task:low",
+		brief: "Do {{slice}} for {{issue}}",
+		in: { slice: "scout.slices[]", issue: "input.issue" },
+		out: OUT,
+		splits: 2,
+	};
+	const CHECK: Json = { command: "check {{w}}", in: { w: "work[]" }, checks: "work" };
+	const REDUCE: Json = { command: "all {{all}}", in: { all: "work" } };
+	const split = (...parts: Json[]): Outcome => ({ kind: "split", parts, handoff: HANDOFF });
+	const inputsOf = (firings: readonly Firing[]) => firings.map((firing) => [firing.key, firing.inputs]);
+
+	function splitting() {
+		const flow = open();
+		flow.store.submit({ kind: "define", boxes: { scout: SCOUT, work: SPLITTING, check: CHECK, reduce: REDUCE } });
+		flow.store.submit({ kind: "supply", name: "issue", value: "#1" });
+		flow.store.submit({ kind: "run" });
+		flow.fire();
+		flow.store.settle("scout", 1, done({ slices: ["a", "b"] }));
+		flow.fire();
+		return flow;
+	}
+
+	test("a split item is replaced by its parts: each fires as an item of the same box, with the part in place of its element", () => {
+		const flow = splitting();
+		flow.store.settle("work#0", 1, split("a1", "a2"));
+		const firings = flow.store.advance();
+		expect(inputsOf(firings)).toEqual([
+			["work#0.0", { slice: "a1", issue: "#1" }],
+			["work#0.1", { slice: "a2", issue: "#1" }],
+		]);
+		expect(firings.map((firing) => [firing.depth, firing.continuation])).toEqual([
+			[1, { kind: "part", part: 0, of: 2, previous: HANDOFF }],
+			[1, { kind: "part", part: 1, of: 2, previous: HANDOFF }],
+		]);
+		expect(flow.store.changes()).toContain("+ work#0: split in session 1 into 2 parts, work#0.0, work#0.1");
+	});
+
+	test("what reads the box reads the leaves: one mirrored item per leaf, keyed by its path, and the whole box as the leaves' values in order", () => {
+		const flow = splitting();
+		flow.store.settle("work#0", 1, split("a1", "a2"));
+		flow.fire();
+		flow.store.settle("work#1", 1, done("B"));
+		flow.store.settle("work#0.1", 1, done("A2"));
+		expect(flow.fire()).toEqual([]);
+		flow.store.settle("work#0.0", 1, done("A1"));
+		expect(inputsOf(flow.store.advance())).toEqual([
+			["check#0.0", { w: "A1" }],
+			["check#0.1", { w: "A2" }],
+			["check#1", { w: "B" }],
+			["reduce", { all: ["A1", "A2", "B"] }],
+		]);
+		expect(lookup(flow.store.state, "work")).toEqual(["A1", "A2", "B"]);
+	});
+
+	test("a check that rejects one leaf reopens that leaf alone", () => {
+		const flow = splitting();
+		flow.store.settle("work#0", 1, split("a1", "a2"));
+		flow.fire();
+		for (const [key, value] of [
+			["work#0.0", "A1"],
+			["work#0.1", "A2"],
+			["work#1", "B"],
+		] as const)
+			flow.store.settle(key, 1, done(value));
+		flow.fire();
+		flow.store.settle("check#0.0", 1, done("ok"));
+		flow.store.settle("check#0.1", 1, { kind: "rejected", output: "a2 is wrong" });
+		expect(flow.store.state.items["work#0.1"]?.phase.kind).toBe("reopened");
+		expect(Object.keys(flow.store.state.items).sort()).toEqual([
+			"check#0.0",
+			"check#1",
+			"scout",
+			"work#0",
+			"work#0.0",
+			"work#0.1",
+			"work#1",
+		]);
+		expect(flow.fire()).toEqual(["work#0.1@2"]);
+	});
+
+	test("retracting a split item removes its parts and all computed from them; the item fires again whole", () => {
+		const flow = splitting();
+		flow.store.settle("work#0", 1, split("a1", "a2"));
+		flow.fire();
+		flow.store.settle("work#0.1", 1, split("a2x", "a2y"));
+		flow.fire();
+		for (const key of ["work#0.0", "work#0.1.0", "work#0.1.1", "work#1"]) flow.store.settle(key, 1, done(key));
+		expect(flow.fire()).toEqual(["check#0.0@1", "check#0.1.0@1", "check#0.1.1@1", "check#1@1", "reduce@1"]);
+		flow.store.submit({ kind: "retract", keys: ["work#0"] });
+		expect(Object.keys(flow.store.state.items).sort()).toEqual(["check#1", "scout", "work#1"]);
+		expect(flow.fire()).toEqual(["work#0@1"]);
+	});
+
+	test("`splits` bounds how deep one element is split, and needs a `[]` input", () => {
+		const flow = splitting();
+		const box = flow.store.state.boxes.work;
+		if (box?.kind !== "agent") throw new Error("work is an agent box");
+		expect(yieldSchema(box, 1).properties).toMatchObject({ status: { enum: ["done", "split"] } });
+		expect(yieldSchema(box, 2).properties).toMatchObject({ status: { enum: ["done"] } });
+		expect(interpret(box, 2, { status: "split", parts: ["x", "y"], handoff: HANDOFF })).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, 0, { status: "split", parts: ["x"], handoff: HANDOFF })).toMatchObject({ kind: "failed", name: "protocol" });
+		expect(interpret(box, 0, { status: "split", parts: ["x", "y"], handoff: HANDOFF })).toEqual(split("x", "y"));
+		flow.store.submit({ kind: "define", boxes: { lone: { ...(SCOUT as object), splits: 1 } } });
+		expect(flow.store.survey().problems).toEqual([
+			"lone: `splits` needs a `[]` input; the parts of a split item take the place of its element",
+		]);
+	});
+
+	test("a part is told which part of the split it is and given the splitting session's handoff, not told to resume unfinished work", () => {
+		const flow = splitting();
+		const box = flow.store.state.boxes.work;
+		if (box?.kind !== "agent") throw new Error("work is an agent box");
+		flow.store.settle("work#0", 1, split("a1", "a2"));
+		const [part] = flow.store.advance();
+		if (!part) throw new Error("a part fires");
+		const brief = briefOf(box, part, { board: "/notes/work#0.0.md", inherited: true });
+		expect(brief).toStartWith("Do a1 for #1");
+		expect(brief).toContain("split it into 2 parts; this assignment is part 1");
+		expect(brief).toContain(JSON.stringify(HANDOFF, null, 1));
+		expect(brief).not.toContain("## Earlier work");
+		expect(brief).toContain('"status": "split"');
+	});
+
+	test("a split and its parts survive the log on disk", () => {
+		const flow = splitting();
+		flow.store.settle("work#0", 1, split("a1", { nested: ["a2"] }));
+		flow.fire();
+		const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-split-")), "flow.jsonl");
+		for (const action of flow.log) appendLog(file, action);
+		expect(readLog(file)).toEqual(flow.log);
+		expect(new Store(readLog(file), () => {}).state).toEqual(flow.store.state);
 	});
 });

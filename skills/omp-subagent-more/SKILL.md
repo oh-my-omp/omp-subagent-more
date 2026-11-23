@@ -40,6 +40,7 @@ Every call prints the store's verdict: the headline, what holds the flow back, t
 - `scout.slices[]` fans out: one `work` item per slice.
 - `work!question` wires a raise: `answer` rules on it, and the raising item continues in a new session given the answer and its own handoff.
 - `gate` checks `work`: an exit code in its `rejects` (`[1]` by default) reopens the checked item in a new session with the output; any other failure stops the flow.
+- `splits: 1` on `work` lets a session that finds its slice too large yield parts instead of a result: each part becomes a `work` item of its own (`work#0.0`, `work#0.1`), `gate` checks each leaf, and a box taking `work` gets every leaf's result. Nothing joins the parts.
 - Boxes are plain data: `define` one box again to change it, `null` drops it. Results produced under an earlier definition, agent prompt or model setting are reported stale until kept or retracted.
 
 The fields, references, checks, sessions and exceptions are in `help://flow/boxes`; stopping, resuming, stale values and raises in `help://flow/lifecycle`; the eval helper in `help://flow/eval`.

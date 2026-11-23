@@ -57,6 +57,7 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | \`handle\` | both | Runtime exception name → how many times the item fires again before that exception stops the flow. |
 | \`limit\` | both | Most items of the box in flight at once. Unlimited when absent. |
 | \`bound\` | agent | Most sessions one item may take through answered raises and rejections by a check: the first, and one per answer or rejection. 3 when absent. |
+| \`splits\` | agent | How many levels deep one element may be split (see Splitting): \`1\` lets an item split, its parts not. Needs a \`[]\` input. Absent: no session may split. |
 | \`checks\` | command | Name of an agent box whose result this command checks (see Checks). |
 | \`rejects\` | command | With \`checks\`: the exit codes that reject the checked result, \`[1]\` when absent. Name every code the check uses for a rejection, for example \`[1, 2]\` for \`tsc\`. |
 | \`isolated\` | agent | \`true\`: each session runs in its own worktree, and a later session of the same item starts from the changes an earlier one left without handing them back. \`false\`: the sessions share your workspace on purpose, for boxes that only read or compute. Absent: the host's default for the agent. |
@@ -67,9 +68,9 @@ A command box runs one shell command per item, in POSIX syntax. Its result is th
 | Reference | Value |
 |---|---|
 | \`input.issue\` | A value given with \`supply\`. |
-| \`scout\` | The result of box \`scout\`: one value, or the array of its items' results when \`scout\` has many items. |
+| \`scout\` | The result of box \`scout\`: one value, or the array of its items' results when \`scout\` has many items (of its leaves' results when items split). |
 | \`scout.files\` | A field of that result; more names go deeper. |
-| \`scout.files[]\` | One item of this box per element of that array. Items are named \`box#0\`, \`box#1\`, … |
+| \`scout.files[]\` | One item of this box per element of that array. Items are named \`box#0\`, \`box#1\`, …; the parts of a split item add their index, \`box#0.1\`. |
 | \`work!question\` | One item of this box per item of \`work\` that raised \`question\`. The input is \`{item, type, detail, handoff, board}\`; \`board\` is the path of the raising item's notes file. This box's result is the answer, and the raising item continues in a new session that is given the answer. |
 
 A box takes at most one reference of the last two kinds. References are resolved by name when the flow runs, so boxes may be defined in any order and redefined one at a time.
@@ -92,11 +93,17 @@ The command's exit code is its verdict:
 
 Each reopening is one of the checked box's \`bound\` sessions. A rejection of the result of an item's last allowed session raises \`bound_exceeded\`.
 
-The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`.
+The command box must take an input from the box it checks. When that box has many items, take \`work[]\`: item \`check#2\` then checks \`work#2\`, and \`check#0.1\` checks the part \`work#0.1\`.
+
+## Splitting
+
+A session of a box with \`splits\` that finds its element too large for one session yields \`{"status": "split", "parts": […]}\` instead of a result. The item then has no result of its own. Each part takes the place of the element as an item of the same box, named by appending its index (\`work#0\` splits into \`work#0.0\`, \`work#0.1\`). A part runs in a new session that starts from the splitting session's changes and is given its handoff, and it may split again while \`splits\` allows (\`work#0.1.0\`).
+
+Nothing joins the parts. Whatever reads \`work\` reads its leaves, the items that ended with a result, in key order: \`work[]\` makes one item per leaf with the same path, and \`work\` is the array of the leaves' results, so a box that reduces them is an ordinary box taking \`work\`. Each leaf is checked, reopened and retracted on its own; retracting the split item removes its parts and what was computed from them, and the item fires again whole.
 
 ## Sessions
 
-Every session is new: none continues an earlier one. A session ends by yielding its result or one of its box's \`raises\` types, and a handoff with it. What a later session of the same item has of an earlier one:
+Every session is new: none continues an earlier one. A session ends by yielding its result, one of its box's \`raises\` types or, where \`splits\` allows, a split, and a handoff with it. What a later session of the same item has of an earlier one:
 
 - the handoff the earlier session yielded, when it raised and the raise was answered, or when a check reopened the item;
 - the item's notes file, which every session of the item is told to read and append to and no other item is told about; it is removed when the item is retracted;
@@ -112,7 +119,7 @@ A worktree holds no ignored files of your checkout (installed dependencies, buil
 | \`workspace\` | The changes an earlier session of the item left cannot be carried into the new session, or a session yielded and OMP reported that its changes did not reach your checkout (the reason quotes OMP). |
 | \`session\` | The session failed, aborted itself, or ended without yielding; or its \`prepare\` command failed. |
 | \`schema\` | The yielded result does not match \`out\`. |
-| \`protocol\` | The yielded object is not a result or a declared raise. |
+| \`protocol\` | The yielded object is not a result, a declared raise or an allowed split. |
 | \`bound_exceeded\` | An item raised in its last allowed session, or a check rejected the result of an item's last allowed session. |
 | \`exit\` | A command exited non-zero; for a check, with a code not in its \`rejects\`. |
 | \`timeout\` | A command timed out. |
@@ -131,8 +138,8 @@ One flow belongs to one session. Its state is an append-only log of actions kept
 | \`run\` | Starts the flow, or resumes a stopped one. Returns at once; the flow goes on in the background as one job, and its verdict is delivered to you when the flow stops or comes to rest. With nothing else to do, end your turn: the \`wait\` tool returns for every single session of the flow, not for the flow. |
 | \`stop\` | Stops a running flow and cancels its sessions. |
 | \`status\` | The whole state: every box, input and item. |
-| \`value\` | The stored value of each key: \`input.<name>\`, an item, or a box (the array of its items' results). |
-| \`retract\` | Removes items or inputs and everything computed from them; they are produced again. |
+| \`value\` | The stored value of each key: \`input.<name>\`, an item, or a box (the array of its items' results; for a box whose items split, of its leaves'). |
+| \`retract\` | Removes items or inputs and everything computed from them, the parts of a split item included; they are produced again. |
 | \`keep\` | Declares a stale item's value still good under the current definition. |
 | \`retry\` | Lets a failed item fire again unchanged. |
 | \`answer\` | Answers an item's raise from outside the flow; the item continues in a new session. |

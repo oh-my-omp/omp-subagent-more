@@ -3,6 +3,7 @@ import { type Box, type Json, parseBox } from "./defs.ts";
 export type Outcome =
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raise"; readonly type: string; readonly detail: string; readonly handoff: Json }
+	| { readonly kind: "split"; readonly parts: readonly Json[]; readonly handoff: Json }
 	| { readonly kind: "rejected"; readonly output: string }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "cancelled" };
@@ -11,7 +12,8 @@ export type Earlier = { readonly session: string; readonly yielded: boolean };
 
 export type Continuation =
 	| { readonly kind: "answer"; readonly answer: Json; readonly previous: Json }
-	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json };
+	| { readonly kind: "check"; readonly check: string; readonly output: string; readonly previous: Json }
+	| { readonly kind: "part"; readonly part: number; readonly of: number; readonly previous: Json };
 
 export type Action =
 	| { readonly kind: "defined"; readonly boxes: Readonly<Record<string, Json>> }
@@ -39,6 +41,7 @@ export type Phase =
 	| { readonly kind: "running" }
 	| { readonly kind: "done"; readonly value: Json; readonly handoff: Json }
 	| { readonly kind: "raised"; readonly type: string; readonly detail: string; readonly handoff: Json }
+	| { readonly kind: "split"; readonly parts: readonly Json[]; readonly handoff: Json }
 	| { readonly kind: "reopened"; readonly check: string; readonly output: string; readonly handoff: Json }
 	| { readonly kind: "failed"; readonly name: string; readonly reason: string }
 	| { readonly kind: "retry"; readonly name: string; readonly reason: string }
@@ -48,6 +51,7 @@ export type Item = {
 	readonly key: string;
 	readonly box: string;
 	readonly attempt: number;
+	readonly depth: number;
 	readonly fingerprint: string;
 	readonly phase: Phase;
 	readonly chain: number;
@@ -85,11 +89,12 @@ export const markOf = (state: State, box: Box): string =>
 
 export type KeyParts = {
 	readonly box: string;
-	readonly index: number | undefined;
+	readonly path: readonly number[] | undefined;
 	readonly source: { readonly key: string; readonly attempt: number } | undefined;
 };
 
-export const itemKey = (box: string, index: number): string => `${box}#${index}`;
+export const itemKey = (box: string, path: readonly number[]): string => `${box}#${path.join(".")}`;
+export const childKey = (key: string, part: number): string => `${key}.${part}`;
 export const answerKey = (box: string, sourceKey: string, attempt: number): string => `${box}<${sourceKey}@${attempt}>`;
 
 export function partsOf(key: string): KeyParts {
@@ -97,11 +102,24 @@ export function partsOf(key: string): KeyParts {
 	if (open >= 0 && key.endsWith(">")) {
 		const inner = key.slice(open + 1, -1);
 		const at = inner.lastIndexOf("@");
-		return { box: key.slice(0, open), index: undefined, source: { key: inner.slice(0, at), attempt: Number(inner.slice(at + 1)) } };
+		return { box: key.slice(0, open), path: undefined, source: { key: inner.slice(0, at), attempt: Number(inner.slice(at + 1)) } };
 	}
 	const hash = key.indexOf("#");
-	if (hash >= 0) return { box: key.slice(0, hash), index: Number(key.slice(hash + 1)), source: undefined };
-	return { box: key, index: undefined, source: undefined };
+	if (hash >= 0)
+		return {
+			box: key.slice(0, hash),
+			path: key
+				.slice(hash + 1)
+				.split(".")
+				.map(Number),
+			source: undefined,
+		};
+	return { box: key, path: undefined, source: undefined };
+}
+
+export function parentKey(key: string): string | undefined {
+	const parts = partsOf(key);
+	return parts.path === undefined || parts.path.length < 2 ? undefined : itemKey(parts.box, parts.path.slice(0, -1));
 }
 
 export const isFanned = (box: Box | undefined): boolean =>
@@ -112,7 +130,7 @@ export function checkedKey(boxes: Readonly<Record<string, Box>>, key: string): s
 	const box = boxes[parts.box];
 	if (box?.kind !== "command" || box.checks === undefined) return undefined;
 	if (!isFanned(boxes[box.checks.box])) return box.checks.box;
-	return parts.index === undefined ? undefined : itemKey(box.checks.box, parts.index);
+	return parts.path === undefined ? undefined : itemKey(box.checks.box, parts.path);
 }
 
 function dependents(state: State, changedInputs: ReadonlySet<string>, changedItems: ReadonlySet<string>): Set<string> {
@@ -126,22 +144,26 @@ function dependents(state: State, changedInputs: ReadonlySet<string>, changedIte
 			const box = state.boxes[item.box];
 			if (!box) continue;
 			const parts = partsOf(item.key);
-			const hit = Object.values(box.inputs).some((ref) => {
-				switch (ref.source.kind) {
-					case "input":
-						return changedInputs.has(ref.source.name);
-					case "raise":
-						return parts.source !== undefined && gone.has(parts.source.key);
-					case "box": {
-						const mirrored = ref.multi && ref.path.length === 0 && parts.index !== undefined && isFanned(state.boxes[ref.source.box]);
-						return mirrored ? gone.has(itemKey(ref.source.box, parts.index ?? 0)) : goneBoxes.has(ref.source.box);
+			const parent = parentKey(item.key);
+			const orphaned = parent !== undefined && gone.has(parent);
+			const hit =
+				orphaned ||
+				Object.values(box.inputs).some((ref) => {
+					switch (ref.source.kind) {
+						case "input":
+							return changedInputs.has(ref.source.name);
+						case "raise":
+							return parts.source !== undefined && gone.has(parts.source.key);
+						case "box": {
+							const mirrored = ref.multi && ref.path.length === 0 && isFanned(state.boxes[ref.source.box]);
+							return mirrored && parts.path !== undefined ? gone.has(itemKey(ref.source.box, parts.path)) : goneBoxes.has(ref.source.box);
+						}
+						default: {
+							const unreachable: never = ref.source;
+							return unreachable;
+						}
 					}
-					default: {
-						const unreachable: never = ref.source;
-						return unreachable;
-					}
-				}
-			});
+				});
 			if (!hit) continue;
 			gone.add(item.key);
 			goneBoxes.add(item.box);
@@ -159,7 +181,7 @@ const without = <T>(record: Readonly<Record<string, T>>, keys: Iterable<string>)
 };
 
 function settle(state: State, ended: Item, outcome: Outcome): State {
-	const yielded = outcome.kind === "done" || outcome.kind === "raise";
+	const yielded = outcome.kind === "done" || outcome.kind === "raise" || outcome.kind === "split";
 	const item: Item = ended.session === undefined ? ended : { ...ended, last: { session: ended.session, yielded } };
 	const put = (phase: Phase, extra: Partial<Item> = {}): State => ({
 		...state,
@@ -202,6 +224,8 @@ function settle(state: State, ended: Item, outcome: Outcome): State {
 			}
 			return put({ kind: "raised", type: outcome.type, detail: outcome.detail, handoff: outcome.handoff });
 		}
+		case "split":
+			return put({ kind: "split", parts: outcome.parts, handoff: outcome.handoff });
 		case "rejected":
 			return reject(outcome.output);
 		case "failed":
@@ -285,10 +309,13 @@ export function reduce(state: State, action: Action): State {
 			const box = state.boxes[action.box];
 			if (!box) return state;
 			const earlier = state.items[action.key];
+			const parentAt = parentKey(action.key);
+			const parent = parentAt === undefined ? undefined : state.items[parentAt];
 			const item: Item = {
 				key: action.key,
 				box: action.box,
 				attempt: action.attempt,
+				depth: earlier?.depth ?? (parent?.phase.kind === "split" ? parent.depth + 1 : 0),
 				chain:
 					earlier === undefined
 						? 1

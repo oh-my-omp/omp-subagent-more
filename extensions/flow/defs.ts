@@ -34,6 +34,7 @@ export type AgentBox = Common & {
 	readonly isolated: boolean | undefined;
 	readonly prepare: string | undefined;
 	readonly bound: number;
+	readonly splits: number;
 };
 
 export type Check = { readonly box: string; readonly rejects: readonly number[] };
@@ -112,6 +113,7 @@ const AGENT_KEYS: Record<string, true> = {
 	prepare: true,
 	limit: true,
 	bound: true,
+	splits: true,
 };
 const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true, rejects: true };
 const DEFAULT_REJECTS: readonly number[] = [1];
@@ -223,6 +225,7 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	const isolatedRaw = raw.isolated;
 	if (isolatedRaw !== undefined && typeof isolatedRaw !== "boolean") say("`isolated` is a boolean");
 	const bound = count("bound", 3) ?? 3;
+	const splits = count("splits", 0) ?? 0;
 	if (problems.length > 0 || out === undefined || !isObject(out)) return { ok: false, problems };
 	return {
 		ok: true,
@@ -236,6 +239,7 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 			isolated: typeof isolatedRaw === "boolean" ? isolatedRaw : undefined,
 			prepare,
 			bound,
+			splits,
 			inputs,
 			handle,
 			limit,

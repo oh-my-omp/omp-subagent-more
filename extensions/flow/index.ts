@@ -255,7 +255,7 @@ async function inheritFrom(parent: AgentSession, flow: Flow, earlier: Earlier): 
 const failed = (name: string, reason: string): Outcome => ({ kind: "failed", name, reason });
 const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 600)}…` : text);
 
-function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
+function outcomeOfJob(box: AgentBox, depth: number, job: AsyncJob, session: string): Outcome {
 	const where = `history://${session}`;
 	const structured = job.structured;
 	switch (job.status) {
@@ -268,7 +268,7 @@ function outcomeOfJob(box: AgentBox, job: AsyncJob, session: string): Outcome {
 				return failed("protocol", `the session ended without yielding an object (${where})`);
 			}
 			const data = parseJson(JSON.stringify(structured.data ?? null));
-			return data.ok ? interpret(box, data.value) : failed("protocol", `${data.problems.join("; ")} (${where})`);
+			return data.ok ? interpret(box, depth, data.value) : failed("protocol", `${data.problems.join("; ")} (${where})`);
 		}
 		case "failed":
 			if (structured?.status === "invalid")
@@ -323,7 +323,7 @@ async function runAgent(
 		agent: box.agent,
 		task: briefOf(box, firing, { board, inherited: overlay !== undefined }),
 		solutionSpace: "as the assignment states",
-		outputSchema: yieldSchema(box),
+		outputSchema: yieldSchema(box, firing.depth),
 		schemaMode: "strict",
 		...(box.isolated === undefined ? {} : { isolated: box.isolated }),
 	};
@@ -372,8 +372,8 @@ async function spawnAndWait(
 	else signal.addEventListener("abort", cancel, { once: true });
 	await job.promise;
 	signal.removeEventListener("abort", cancel);
-	const outcome = outcomeOfJob(box, job, session);
-	if (outcome.kind !== "done" && outcome.kind !== "raise") return outcome;
+	const outcome = outcomeOfJob(box, firing.depth, job, session);
+	if (outcome.kind !== "done" && outcome.kind !== "raise" && outcome.kind !== "split") return outcome;
 	if (box.isolated !== false && cfgTaskIsolationApply.get(parent.settings)) {
 		const kept = await keptTaskBranch(session, parent.sessionManager.getCwd());
 		if (kept !== undefined) {

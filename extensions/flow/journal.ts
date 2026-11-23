@@ -44,6 +44,12 @@ function outcomeOf(data: JsonObject): Outcome | undefined {
 		case "raise":
 			outcome = { kind: "raise", type: fields.text("type"), detail: fields.text("detail"), handoff: fields.json("handoff") };
 			break;
+		case "split": {
+			const parts = fields.json("parts");
+			if (!isArray(parts)) return undefined;
+			outcome = { kind: "split", parts, handoff: fields.json("handoff") };
+			break;
+		}
 		case "rejected":
 			outcome = { kind: "rejected", output: fields.text("output") };
 			break;
@@ -68,6 +74,9 @@ function continuationOf(data: JsonObject): Continuation | undefined {
 			break;
 		case "check":
 			continuation = { kind: "check", check: fields.text("check"), output: fields.text("output"), previous: fields.json("previous") };
+			break;
+		case "part":
+			continuation = { kind: "part", part: fields.count("part"), of: fields.count("of"), previous: fields.json("previous") };
 			break;
 		default:
 			return undefined;

@@ -34,7 +34,8 @@
   "isolated": true,
   "prepare": "bun install",
   "limit": 2,
-  "bound": 3
+  "bound": 3,
+  "splits": 1
 }
 ```
 
@@ -70,6 +71,7 @@
 | `rejects` | Command | `number[]?` | 仅与 `checks` 同用：表示“拒绝被检查结果”的退出码，取值 1–125，非空；省略时为 `[1]`。 |
 | `limit` | 两者 | `number?` | 该盒子同时处于 `running` 状态的最大单元数。省略表示不限并发。 |
 | `bound` | Agent | `number?` | 单个单元通过“抛出问题被答复”和“门禁拒绝重开”串联起来的最大会话总数（含首次会话）。默认值为 `3`。 |
+| `splits` | Agent | `number?` | 一个元素最多可以被逐层拆分几层（见 4.1 节）：`1` 表示单元可以拆分、拆出的部分不能再拆。只用于扇出盒子。省略表示会话不能拆分。 |
 
 ### 1.3 四种输入引用语法（`Ref`）
 
@@ -77,7 +79,7 @@
 |---|---|---|---|
 | `"input.issue"` / `"input.issue.body"` | `{ kind: "input", name: "issue" }` | `false` | 读取外部通过 `supply("issue", val)` 注入的值（或其子字段）。 |
 | `"scout"` / `"scout.slices"` | `{ kind: "box", box: "scout" }` | `false` | 读取盒子 `scout` 的整体结果（若 `scout` 是扇出盒子，则为其所有单元结果的数组）或其子字段。需等上游全部单元 `done` 后才就绪。 |
-| `"scout.slices[]"` / `"work[]"` | `{ kind: "box", box: "scout" }` | `true` | **数组扇出（Fan-out）**：上游数组每个元素生成当前盒子的一个独立单元，键名为 `<box>#0`, `<box>#1`, … |
+| `"scout.slices[]"` / `"work[]"` | `{ kind: "box", box: "scout" }` | `true` | **数组扇出（Fan-out）**：上游数组每个元素生成当前盒子的一个独立单元，键名为 `<box>#0`, `<box>#1`, …；上游单元拆分过时，按上游的叶子逐个生成，键名沿用叶子的编号路径（`work#0.1` 对应 `check#0.1`）。 |
 | `"work!question"` | `{ kind: "raise", box: "work", type: "question" }` | `true` | **业务异常端口**：每当 `work` 的某个单元（如 `work#1` 在第 2 次尝试时）抛出 `question`，自动为当前盒子生成一个答复单元，键名为 `<box><work#1@2>`。输入值为 `{ item, type, detail, handoff, board }`。 |
 
 ### 1.4 静态合法性检查（`lint`）
@@ -88,6 +90,7 @@
 4. **异常处理器唯一性**：同一个 `<box>!<type>` 最多只能被 **1 个** 下游盒子引用。
 5. **无依赖环（DAG）**：沿 `box` 引用边遍历不得存在环（`cycle: a → b → a`）。
 6. **`checks` 对齐约束**：声明 `checks: "work"` 的命令盒子：① `work` 必须是已定义的 Agent 盒子；② `work` 本身不能是接 `!type` 的答复盒子；③ 命令盒子必须至少有一个输入引用自 `work`；④ 若 `work` 是扇出盒子（`isFanned`），命令盒子必须以 `work[]` 作为输入，从而保证 `check#i` 与 `work#i` 一一对应。
+7. **拆分需要扇出**：声明 `splits` 的 Agent 盒子必须有一个非答复端口的 `[]` 输入，拆出的部分替换的就是这个输入的元素。
 
 ---
 
@@ -111,6 +114,7 @@ type State = {
 每个工作单元（`Item`）的键名规则：
 - 单例盒子：`scout`
 - 扇出盒子：`<box>#<index>`（如 `work#0`、`work#1`）
+- 拆分出的部分：在被拆单元的键名后追加序号，形成编号路径（如 `work#0` 拆成 `work#0.0`、`work#0.1`，`work#0.1` 再拆成 `work#0.1.0`）
 - 答复盒子：`<handlerBox><<sourceKey>@<attempt>>`（如 `answer<work#1@1>`）
 
 ### 2.2 三层定义指纹与过期（Stale / Illegal）机制
@@ -120,12 +124,12 @@ type State = {
 - **Agent 盒子**：`${box.fingerprint}+${agentPromptToolsHash}+${modelBindingHash}`。每次调用 `flow` 工具时，宿主先执行 `lookUpAgents` 采集当前会话中所有引用到的 Agent 的 `[systemPrompt, tools, thinkingLevel]` 哈希与 `model` 绑定哈希，若有变化则记入 `observed` Action。
 
 由此自动推导出两种阻断 `run` 的状态：
-- **`stale`（已过期）**：单元处于 `done` 或 `raised`，但其 `item.fingerprint !== markOf(state, box)`。调用方必须对该单元执行 `keep`（更新其指纹，认可旧值在当前定义下依然有效）或 `retract`（作废重算）。
+- **`stale`（已过期）**：单元处于 `done`、`raised` 或 `split`，但其 `item.fingerprint !== markOf(state, box)`。调用方必须对该单元执行 `keep`（更新其指纹，认可旧值在当前定义下依然有效）或 `retract`（作废重算）。
 - **`illegal`（非法）**：单元所属的 `box` 已被删除（`define({ box: null })`）。调用方必须 `retract` 该单元或重新定义该盒子。
 
 ### 2.3 级联失效（`dependents`）
 
-当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts`](../../extensions/flow/state.ts) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。按 `<box>[]` 逐项对应的扇出单元只随同序号的上游单元失效，多级扇出逐级如此；引用整个扇出盒子结果的单元随任一上游单元失效。
+当调用 `supply(name, newValue)` 覆盖外部输入、调用 `retract(keys)` 撤回单元/输入、或者 `checks` 门禁拒绝某个单元的结果时，[`state.ts`](../../extensions/flow/state.ts) 的 `dependents()` 会传递性地找出所有直接或间接依赖它的下游单元并从 `state.items` 中一并清除，确保状态图中永远不存在基于旧输入算出的孤儿结果。按 `<box>[]` 逐项对应的扇出单元只随同编号路径的上游单元失效，多级扇出逐级如此；引用整个扇出盒子结果的单元随任一上游单元失效；被拆单元失效时，它拆出的各部分（以及它们再拆出的部分）随之失效。
 
 ### 2.4 14 种日志动作（`Action`）
 
@@ -141,7 +145,7 @@ type State = {
 | `started` / `resumed` | `flow.run()` 通过全部合法性检查 | `mode` 设为 `{ kind: "running" }` |
 | `halted` | `flow.stop(reason)` 或进程崩溃重启后 `recover()` | `mode` 设为 `{ kind: "stopped", cause: { kind: "halt", reason } }` |
 | `idled` | 调度器发现 `ready` 与 `running` 均为空 | `mode` 从 `running` 设为 `{ kind: "idle" }` |
-| `fired` | 调度器启动一个就绪单元 | 创建/更新 `item`，`phase: "running"`，若前态为 `raised` 或 `reopened` 则 `chain + 1` |
+| `fired` | 调度器启动一个就绪单元 | 创建/更新 `item`，`phase: "running"`，若前态为 `raised` 或 `reopened` 则 `chain + 1`；新的拆分部分记 `depth = 被拆单元的 depth + 1` |
 | `spawned` | `task` 工具分配了子代理会话 ID | 记录 `item.session = sessionId` |
 | `settled` | 子代理会话或命令执行结束 | 调用 `settle()` 将 `Outcome` 折叠为最终 `Phase`（见第 4 节） |
 
@@ -158,10 +162,11 @@ type State = {
   "additionalProperties": false,
   "required": ["status", "handoff"],
   "properties": {
-    "status": { "enum": ["done", "raise"] },
+    "status": { "enum": ["done", "raise", "split"] },
     "value": { "...": "盒子的 out Schema" },
     "raise": { "enum": ["盒子的 raises 列表"] },
     "detail": { "type": "string" },
+    "parts": { "type": "array", "minItems": 2 },
     "handoff": {
       "type": "object",
       "additionalProperties": false,
@@ -176,7 +181,8 @@ type State = {
 }
 ```
 - 任务书末尾自动追加 `## How to finish` 说明：严禁调用子代理的 `ask` 工具，严禁使用 `yield` 的 `error` 参数，必须通过 `yield({ data: ... })` 提交。
-- 若交回对象缺少 `handoff`、`status: "done"` 缺少 `value`、或 `status: "raise"` 抛出了未在 `box.raises` 声明的类型，均由 `interpret()` 判定为 `protocol` 运行时异常。
+- `raise` 只在盒子声明了 `raises` 时出现；`split` 与 `parts` 只在该单元的 `depth < box.splits` 时出现。
+- 若交回对象缺少 `handoff`、`status: "done"` 缺少 `value`、`status: "raise"` 抛出了未在 `box.raises` 声明的类型、或在不允许拆分的会话里交回 `split`、或 `parts` 少于两份，均由 `interpret()` 判定为 `protocol` 运行时异常。
 
 ### 3.2 单元专属白板文件（Notes file）
 - 路径：`<sessionDir>/flow-boards/<encodeURIComponent(item.key)>.md`。
@@ -209,6 +215,15 @@ type State = {
 | **后续如何接回** | `<box>!<type>` 盒子产出结果或外部调用 `flow.answer()` 后，原单元带着 `{ kind: "answer", answer, previous: handoff }` 开新会话 | 原单元立即变为 `reopened`，下一轮调度带着 `{ kind: "check", check, output, previous: handoff }` 开新会话 | 调用方必须 `define`（修改该盒子定义）、`retract`（撤回）或 `retry`（显式重试）后才允许再次 `flow.run()` |
 | **次数限制** | 计入 `item.chain`，若 `chain >= box.bound` 则升级为 `bound_exceeded` 异常停流 | 计入被检查单元的 `item.chain`，若 `chain >= checkedBox.bound` 则升级为 `bound_exceeded` 异常停流 | 按异常名独立计入 `item.refires[name]`，不消耗 `item.chain` |
 
+### 4.1 拆分（flatMap）
+
+拆分是第三种业务回路，语义是 flatMap：声明了 `splits` 的扇出盒子，其会话判断自己的元素太大、不适合一个会话完成时，交回 `{ status: "split", parts: [...], handoff }` 而不是结果。
+
+- **原地替换**：被拆单元进入 `split` 阶段，自身不再产出值。每一份 `part` 取代该单元的扇出元素，成为同一盒子的新单元，键名为被拆单元键名加序号（`work#0.0`、`work#0.1`），其余输入原样保留。
+- **新会话起点**：每个部分开新会话，`continuation` 为 `{ kind: "part", part, of, previous: handoff }`；工作区从拆分会话交回的改动开始（`earlier` 取被拆单元最后一个会话）。部分在 `depth < box.splits` 时可以继续拆分。
+- **没有汇合会话**：盒子的结果就是它的叶子（以结果结束的单元）按编号路径排序的结果。`work[]` 对每个叶子生成一个同编号路径的下游单元，`work` 是叶子结果的数组；归约（reduce）由一个以 `work` 为输入的普通盒子完成。
+- **逐叶处理**：门禁按叶子检查，拒绝时只重开该叶子；撤回被拆单元会撤回它的全部部分及其下游，然后被拆单元作为一个整体重新点火。
+
 ---
 
 ## 5. `eval` REPL 表面与操作接口
@@ -237,8 +252,8 @@ const v = await flow.value(key);   // 静默读取 input.<name>、单元或盒�
 
 ### 5.3 判定输出格式（Verdict）
 每次除 `value` 外的调用均返回并由 `flow.js` 隐式 `print` 以下结构的文本（[`report.ts`](../../extensions/flow/report.ts)）：
-1. **状态头行**：`flow running | complete | not running | STOPPED · X done · Y running · Z raised · W failed · V cancelled`
+1. **状态头行**：`flow running | complete | not running | STOPPED · X done · Y running · Z raised · W failed · V cancelled`；有被拆单元时在 `done` 之后多出 `N split`
 2. **停止原因与阻断项**（按需出现）：`cause: ...`、`problem: ...`、`needs: ...`、`waiting for inputs: ...`、`stale: ...`、`illegal: ...`、`raised and unanswered: ...`
 3. **合法下一步提示**：`next: supply issue | keep or retract work#0 | run | stop`（由 [`store.ts`](../../extensions/flow/store.ts) 的 `moves(state)` 直接调用与 `judge` 相同的判定逻辑生成，保证列出的操作 100% 会被接受）。
-4. **接线图**（仅 `status` 输出）：`wire work ← input.slices[] · raises question → answer · fires again on session ×1`；门禁盒子写作 `wire check ← work[] · exit 1 reopens work`
+4. **接线图**（仅 `status` 输出）：`wire work ← input.slices[] · raises question → answer · splits 1 deep · fires again on session ×1`；门禁盒子写作 `wire check ← work[] · exit 1 reopens work`
 5. **状态增量（Delta）**：自上次 Verdict 以来新增（`+`）、变更（`~`）或移除（`-`）的盒子、输入与单元行。
