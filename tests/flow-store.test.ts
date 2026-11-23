@@ -917,6 +917,13 @@ describe("checks of several boxes", () => {
 		expect(problems({ a: A, mid, g: { command: "t {{m}}", in: { m: "mid" }, checks: "a" } })).toEqual([
 			"g: `a` has many items; take `a[]` as an input so that each item is checked on its own",
 		]);
+		const splitting: Json = { ...(mid as object), splits: 1, isolated: true };
+		expect(problems({ a: A, mid: splitting, g: { command: "t {{m}}", in: { m: "mid[]" }, checks: "a" } })).toEqual([
+			"g: `a` has many items; take `a[]` as an input so that each item is checked on its own",
+		]);
+		expect(problems({ a: A, g: { ...(splitting as object), checks: "a" } })).toEqual([
+			"g: checks `a`, which has many items, so it may not split: its parts' paths name no item of `a`",
+		]);
 	});
 
 	test("a rejection reopens every checked item at its path at once, each given the values the check was given", () => {
@@ -964,9 +971,7 @@ describe("noEscape", () => {
 		flow.store.submit({ kind: "define", boxes: { work: WORK } });
 		expect(flow.store.state.noEscape).toBe(false);
 		const verdict = flow.store.submit({ kind: "define", boxes: { work: WORK }, noEscape: true });
-		expect(verdict.lines).toContain(
-			"noEscape: on · no raise without a box to answer it, no split request and no missing input leaves the flow",
-		);
+		expect(verdict.lines).toContain("noEscape: on");
 		expect(flow.log.filter((action) => action.kind === "defined").map((action) => action.noEscape)).toEqual([undefined, true]);
 		flow.store.submit({ kind: "define", boxes: {} });
 		expect(flow.store.state.noEscape).toBe(true);

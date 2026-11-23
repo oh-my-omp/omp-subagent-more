@@ -132,8 +132,7 @@ export function headline(state: State, survey: Survey): string[] {
 			return unreachable;
 		}
 	}
-	if (state.noEscape)
-		lines.push("noEscape: on · no raise without a box to answer it, no split request and no missing input leaves the flow");
+	if (state.noEscape) lines.push("noEscape: on");
 	for (const problem of survey.problems) lines.push(`problem: ${problem}`);
 	if (survey.needs.length > 0) lines.push(`needs: ${survey.needs.map((name) => `input.${name}`).join(", ")}`);
 	if (survey.waiting.length > 0) lines.push(`waiting for inputs: ${survey.waiting.join(", ")}`);

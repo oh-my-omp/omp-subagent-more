@@ -108,7 +108,7 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 		if (box.splits > 0 && !isFanned(box)) {
 			problems.push(`${name}: \`splits\` needs a \`[]\` input; the parts of a split item take the place of its element`);
 		}
-		if (box.splits > 0 && fannedInputs(box).length > 1) {
+		if (box.splits > 0 && Object.values(box.inputs).filter((ref) => ref.multi && ref.source.kind !== "raise").length > 1) {
 			problems.push(`${name}: \`splits\` needs exactly one \`[]\` input; a part takes the place of one element, not of a pair`);
 		}
 		if (box.splits > 0 && box.isolated !== true) {
@@ -131,17 +131,15 @@ export function lint(boxes: Readonly<Record<string, Box>>): string[] {
 	return problems;
 }
 
-const fannedInputs = (box: Box): readonly (readonly [string, Ref])[] =>
-	Object.entries(box.inputs).filter(([, ref]) => ref.multi && ref.source.kind !== "raise");
-
 const mirrored = (boxes: Readonly<Record<string, Box>>, ref: Ref): string | undefined =>
 	ref.source.kind === "box" && ref.multi && ref.path.length === 0 && isFanned(boxes[ref.source.box]) ? ref.source.box : undefined;
 
 function mirrors(boxes: Readonly<Record<string, Box>>, name: string, target: string, seen: Set<string>): boolean {
 	if (name === target) return true;
-	if (seen.has(name)) return false;
+	const box = boxes[name];
+	if (seen.has(name) || (box?.kind === "agent" && box.splits > 0)) return false;
 	seen.add(name);
-	return Object.values(boxes[name]?.inputs ?? {}).some((ref) => {
+	return Object.values(box?.inputs ?? {}).some((ref) => {
 		const source = mirrored(boxes, ref);
 		return source !== undefined && mirrors(boxes, source, target, seen);
 	});
@@ -167,6 +165,8 @@ function checkProblems(boxes: Readonly<Record<string, Box>>, name: string, check
 		return [`${name}: checks \`${checked}\` but takes no input from it`];
 	}
 	if (isFanned(target)) {
+		if (gate.kind === "agent" && gate.splits > 0)
+			return [`${name}: checks \`${checked}\`, which has many items, so it may not split: its parts' paths name no item of \`${checked}\``];
 		const paired = Object.values(gate.inputs).some((ref) => {
 			const source = mirrored(boxes, ref);
 			return source !== undefined && mirrors(boxes, source, checked, new Set());
