@@ -72,6 +72,7 @@
 
 ### 宿主事实
 - 扩展工厂按会话绑定（`extensibility/extensions/loader.ts` 的 `bindExtension`），每个会话有自己的 `pi`；`pi.sendMessage(..., { deliverAs: "aside", triggerTurn: true })` 只投递到这个会话：空闲时开启新一轮，忙时在下一个步骤边界注入，不打断进行中的工具调用。
+- 会话正在压缩（替换上下文）时，`aside` 等压缩结束再投递并开启新一轮（`session/agent-session.ts` 的 `#dispatchCustomMessage`；真机：编写者 `/compact` 期间到达的拆分请求排在压缩记录之后送达，编写者随即回复）。以下情况只记入对话、不开启新一轮：等待期间这一轮被中止、处于计划模式、用户的 Esc 中断仍然有效；会话切换（`/new`、切换会话）则丢弃该消息。这些情况下 worker 保持阻塞，`flow` 的 `status` 仍列出 `split asked`。
 - 同一进程的线程之间可以用 `BroadcastChannel` 通信，同一线程里的两个实例之间也互相投递（Bun 实测）；`fork_task` 的 [`source-channel.ts`](../../extensions/fork-task/source-channel.ts) 已用它跨线程取请求副本。
 - `defaultInactive: true` 的扩展工具不进会话的初始启用集；agent 定义里的 `tools` 列表不阻止扩展随后经 `setActiveTools` 启用它（真机：`flow:worker` 的 `tools` 不含 `flow_split`，会话请求里仍有该工具）。
 - `fork_task` 的 `isolated_from_source` 拒绝已交回改动的源（`source-handed-back`）。源会话结束时，fork-task 把它最后一次模型请求存为 parked 请求，之后仍可用 `from` fork 它。
