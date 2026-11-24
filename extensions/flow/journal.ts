@@ -32,6 +32,14 @@ class Fields {
 		const value = this.data[key];
 		return value !== undefined && isObject(value) ? value : this.#miss({});
 	}
+	objectOr(key: string, fallback: JsonObject): JsonObject {
+		return this.data[key] === undefined ? fallback : this.object(key);
+	}
+	flag(key: string): boolean | undefined {
+		const value = this.data[key];
+		if (value === undefined || typeof value === "boolean") return value;
+		return this.#miss(undefined);
+	}
 }
 
 function outcomeOf(data: JsonObject): Outcome | undefined {
@@ -73,7 +81,13 @@ function continuationOf(data: JsonObject): Continuation | undefined {
 			continuation = { kind: "answer", answer: fields.json("answer"), previous: fields.json("previous") };
 			break;
 		case "check":
-			continuation = { kind: "check", check: fields.text("check"), output: fields.text("output"), previous: fields.json("previous") };
+			continuation = {
+				kind: "check",
+				check: fields.text("check"),
+				output: fields.text("output"),
+				snapshot: fields.objectOr("snapshot", {}),
+				previous: fields.json("previous"),
+			};
 			break;
 		case "part":
 			continuation = { kind: "part", part: fields.count("part"), of: fields.count("of") };
@@ -90,7 +104,7 @@ export function actionOf(data: Json): Action | undefined {
 	let action: Action;
 	switch (data.kind) {
 		case "defined":
-			action = { kind: "defined", boxes: fields.object("boxes") };
+			action = { kind: "defined", boxes: fields.object("boxes"), noEscape: fields.flag("noEscape") };
 			break;
 		case "supplied":
 			action = { kind: "supplied", name: fields.text("name"), value: fields.json("value") };
@@ -132,7 +146,14 @@ export function actionOf(data: Json): Action | undefined {
 			const raw = fields.json("continuation");
 			const continuation = raw === null ? null : isObject(raw) ? continuationOf(raw) : undefined;
 			if (continuation === undefined) return undefined;
-			action = { kind: "fired", key: fields.text("key"), box: fields.text("box"), attempt: fields.count("attempt"), continuation };
+			action = {
+				kind: "fired",
+				key: fields.text("key"),
+				box: fields.text("box"),
+				attempt: fields.count("attempt"),
+				continuation,
+				inputs: fields.objectOr("inputs", {}),
+			};
 			break;
 		}
 		case "spawned":

@@ -24,6 +24,10 @@ type Common = {
 	readonly fingerprint: string;
 };
 
+export type Check = { readonly boxes: readonly string[] };
+
+export type CommandCheck = Check & { readonly rejects: readonly number[] };
+
 export type AgentBox = Common & {
 	readonly kind: "agent";
 	readonly agent: string;
@@ -35,14 +39,13 @@ export type AgentBox = Common & {
 	readonly prepare: string | undefined;
 	readonly bound: number;
 	readonly splits: number;
+	readonly checks: Check | undefined;
 };
-
-export type Check = { readonly box: string; readonly rejects: readonly number[] };
 
 export type CommandBox = Common & {
 	readonly kind: "command";
 	readonly command: string;
-	readonly checks: Check | undefined;
+	readonly checks: CommandCheck | undefined;
 };
 
 export type Box = AgentBox | CommandBox;
@@ -114,6 +117,7 @@ const AGENT_KEYS: Record<string, true> = {
 	limit: true,
 	bound: true,
 	splits: true,
+	checks: true,
 };
 const COMMAND_KEYS: Record<string, true> = { command: true, in: true, handle: true, limit: true, checks: true, rejects: true };
 const DEFAULT_REJECTS: readonly number[] = [1];
@@ -130,7 +134,9 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 	const isCommand = "command" in raw;
 	if (isAgent === isCommand) return { ok: false, problems: [`${name}: a box has exactly one of \`agent\` and \`command\``] };
 	for (const key of Object.keys(raw)) {
-		if ((isAgent ? AGENT_KEYS : COMMAND_KEYS)[key] !== true) say(`unknown field \`${key}\``);
+		if (isAgent && key === "rejects")
+			say("`rejects` belongs to a command box that `checks` another; an agent box rejects through its yield");
+		else if ((isAgent ? AGENT_KEYS : COMMAND_KEYS)[key] !== true) say(`unknown field \`${key}\``);
 	}
 
 	const text = (key: string): string => {
@@ -175,7 +181,10 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 		for (const problem of ref.problems) say(problem);
 		return undefined;
 	});
-	if (Object.values(inputs).filter((ref) => ref.multi).length > 1) say("at most one input may be `[]` or a raise port");
+	const ports = Object.values(inputs).filter((ref) => ref.source.kind === "raise").length;
+	if (ports > 1) say("at most one input may be a raise port");
+	if (ports > 0 && Object.values(inputs).some((ref) => ref.multi && ref.source.kind !== "raise"))
+		say("a raise port takes no `[]` input beside it");
 	const handle = record<number>("handle", (entry, field) => {
 		if (typeof entry === "number" && Number.isInteger(entry) && entry > 0) return entry;
 		say(`\`handle.${field}\` is a positive integer`);
@@ -189,10 +198,12 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 		if (!(used in inputs)) say(`\`{{${used}}}\` names no input of this box`);
 	}
 	const fingerprint = fingerprintOf(raw);
+	const checksRaw = raw.checks;
+	const checked = checksRaw === undefined ? undefined : checkedBoxes(checksRaw);
+	if (checked?.ok === false) for (const problem of checked.problems) say(problem);
+	const check: Check | undefined = checked?.ok === true ? { boxes: checked.value } : undefined;
 
 	if (!isAgent) {
-		const checksRaw = raw.checks;
-		if (checksRaw !== undefined && (typeof checksRaw !== "string" || !NAME.test(checksRaw))) say("`checks` names a box");
 		const rejectsRaw = raw.rejects;
 		if (rejectsRaw !== undefined) {
 			if (checksRaw === undefined) say("`rejects` belongs to a box that `checks` another");
@@ -200,10 +211,10 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 				say("`rejects` is a non-empty array of exit codes from 1 to 125");
 		}
 		if (problems.length > 0) return { ok: false, problems };
-		const checks: Check | undefined =
-			typeof checksRaw === "string"
-				? { box: checksRaw, rejects: rejectsRaw !== undefined && isArray(rejectsRaw) ? rejectsRaw.filter(isRejectCode) : DEFAULT_REJECTS }
-				: undefined;
+		const checks: CommandCheck | undefined =
+			check === undefined
+				? undefined
+				: { ...check, rejects: rejectsRaw !== undefined && isArray(rejectsRaw) ? rejectsRaw.filter(isRejectCode) : DEFAULT_REJECTS };
 		return { ok: true, value: { kind: "command", command: template, checks, inputs, handle, limit, fingerprint } };
 	}
 
@@ -240,12 +251,20 @@ export function parseBox(name: string, raw: Json): Result<Box> {
 			prepare,
 			bound,
 			splits,
+			checks: check,
 			inputs,
 			handle,
 			limit,
 			fingerprint,
 		},
 	};
+}
+
+function checkedBoxes(raw: Json): Result<readonly string[]> {
+	const names = typeof raw === "string" ? [raw] : isArray(raw) ? raw : [];
+	if (names.length === 0 || !names.every((name): name is string => typeof name === "string" && NAME.test(name)))
+		return { ok: false, problems: ["`checks` names a box or is a non-empty array of box names"] };
+	return { ok: true, value: [...new Set(names)] };
 }
 
 export const textOf = (value: Json): string => (typeof value === "string" ? value : JSON.stringify(value, null, 1));

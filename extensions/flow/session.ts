@@ -1,7 +1,7 @@
 import { type AgentBox, type CommandBox, fill, isObject, type Json, type JsonObject, textOf } from "./defs.ts";
-import type { Firing } from "./plan.ts";
+import { type Firing, handlerOf } from "./plan.ts";
 import { SPLIT_TOOL } from "./split.ts";
-import type { Continuation, Outcome } from "./state.ts";
+import type { Continuation, Outcome, State } from "./state.ts";
 
 const HANDOFF_SCHEMA: JsonObject = {
 	type: "object",
@@ -16,20 +16,34 @@ const HANDOFF_SCHEMA: JsonObject = {
 
 export const splittable = (box: AgentBox, depth: number): boolean => depth < box.splits;
 
+export type Allowed = {
+	readonly raises: readonly string[];
+	readonly reject: boolean;
+	readonly split: boolean;
+};
+
+export function allowedOf(state: State, box: AgentBox, firing: Firing): Allowed {
+	const last = firing.chain >= box.bound;
+	const raises = last ? [] : box.raises.filter((type) => !state.noEscape || handlerOf(state.boxes, firing.box, type) !== undefined);
+	return { raises, reject: box.checks !== undefined, split: splittable(box, firing.depth) };
+}
+
 const fannedInput = (box: AgentBox): string | undefined =>
 	Object.entries(box.inputs).find(([, ref]) => ref.multi && ref.source.kind !== "raise")?.[0];
 
-export function yieldSchema(box: AgentBox, depth: number): JsonObject {
-	const raising = box.raises.length > 0;
-	const splitting = splittable(box, depth);
+export function yieldSchema(box: AgentBox, allowed: Allowed): JsonObject {
+	const raising = allowed.raises.length > 0;
 	return {
 		type: "object",
 		additionalProperties: false,
 		required: ["status", "handoff"],
 		properties: {
-			status: { enum: ["done", ...(raising ? ["raise"] : []), ...(splitting ? ["split"] : [])] },
+			status: {
+				enum: ["done", ...(allowed.reject ? ["reject"] : []), ...(raising ? ["raise"] : []), ...(allowed.split ? ["split"] : [])],
+			},
 			value: box.out,
-			...(raising ? { raise: { enum: box.raises }, detail: { type: "string" } } : {}),
+			...(allowed.reject ? { feedback: { type: "string" } } : {}),
+			...(raising ? { raise: { enum: allowed.raises }, detail: { type: "string" } } : {}),
 			handoff: HANDOFF_SCHEMA,
 		},
 	};
@@ -51,16 +65,24 @@ function continuationText(continuation: Exclude<Continuation, { kind: "part" }>)
 				"Answer to what it raised:",
 				textOf(continuation.answer),
 			].join("\n");
-		case "check":
+		case "check": {
+			const given = Object.entries(continuation.snapshot);
 			return [
 				"## Continuation",
-				`An earlier session finished this same assignment and handed its work back: its changes are in your workspace. Then the program ran the check \`${continuation.check}\` on that work, and the check failed. You start fresh: nothing of that session reaches you except its handoff.`,
+				`An earlier session finished this same assignment and handed its work back: its changes are in your workspace. Then the check \`${continuation.check}\` judged that work and rejected it. You start fresh: nothing of that session reaches you except its handoff.`,
 				"Handoff of the earlier session:",
 				textOf(continuation.previous),
-				"Output of the failed check:",
+				"What the check said:",
 				continuation.output,
-				"Find what in the work makes the check fail and correct it. The check itself is not yours to change.",
+				...(given.length > 0
+					? [
+							`What the check \`${continuation.check}\` was given in that round, by input name; it judged these results together, the earlier result of this assignment among them:`,
+							...given.map(([name, value]) => `### ${name}\n${textOf(value)}`),
+						]
+					: []),
+				"Find what in the work makes the check reject it and correct it. The check itself is not yours to change.",
 			].join("\n");
+		}
 		default: {
 			const unreachable: never = continuation;
 			return unreachable;
@@ -68,7 +90,7 @@ function continuationText(continuation: Exclude<Continuation, { kind: "part" }>)
 	}
 }
 
-export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): string {
+export function briefOf(box: AgentBox, firing: Firing, allowed: Allowed, around: Surroundings): string {
 	const brief = fill(box.brief, firing.inputs).trim();
 	const continuation = firing.continuation;
 	const parts =
@@ -102,13 +124,18 @@ export function briefOf(box: AgentBox, firing: Firing, around: Surroundings): st
 		"Finish by calling `yield` with its `data` argument set to exactly one object. Never use `yield`'s `error` argument: it aborts the session and nothing of your work reaches anyone.",
 		'- The assignment is complete: `{"status": "done", "value": <result>, "handoff": {…}}`, where `<result>` matches the result schema.',
 	];
-	if (box.raises.length > 0) {
+	if (box.checks !== undefined && allowed.reject) {
 		finish.push(
-			`- You cannot complete it and guessing would be wrong: \`{"status": "raise", "raise": "<type>", "detail": "…", "handoff": {…}}\`, where \`<type>\` is one of ${box.raises.map((type) => `\`${type}\``).join(", ")} and \`detail\` says concretely what is needed. A raise is an ordinary result sent as \`data\`; it is answered, and a later session continues. No person reads this session: never use the \`ask\` tool.`,
+			`- The work you check does not hold: \`{"status": "reject", "feedback": "…", "handoff": {…}}\`, where \`feedback\` says concretely what is wrong and what must change. The work of ${box.checks.boxes.map((name) => `\`${name}\``).join(", ")} is then redone in new sessions given your feedback and what you were given, and the new work is checked again. When it holds, finish with \`done\` as above.`,
+		);
+	}
+	if (allowed.raises.length > 0) {
+		finish.push(
+			`- You cannot complete it and guessing would be wrong: \`{"status": "raise", "raise": "<type>", "detail": "…", "handoff": {…}}\`, where \`<type>\` is one of ${allowed.raises.map((type) => `\`${type}\``).join(", ")} and \`detail\` says concretely what is needed. A raise is an ordinary result sent as \`data\`; it is answered, and a later session continues. No person reads this session: never use the \`ask\` tool.`,
 		);
 	}
 	const input = fannedInput(box);
-	if (splittable(box, firing.depth) && input !== undefined) {
+	if (allowed.split && input !== undefined) {
 		finish.push(
 			`- The assignment is too large for one session and falls into pieces that can each be done and checked on their own: ask the author of this flow for a split with the \`${SPLIT_TOOL}\` tool, giving the pieces and the details the author needs to judge them. Each piece takes the place of the \`${input}\` input of this assignment, in the same form; together the pieces cover everything of this assignment you leave undone, and nothing of it comes back to you. The call blocks until the author answers. If the author disagrees, the tool result gives the reason and you continue this session. If the author agrees, yield \`{"status": "split", "handoff": {…}}\` at once and do not do the pieces yourself: each piece goes to a fork of this session, which keeps this conversation and starts in an isolated workspace from your changes.`,
 		);
@@ -140,7 +167,7 @@ export function commandOutcome(box: CommandBox, run: CommandRun): Outcome {
 	return rejected ? { kind: "rejected", output: said } : { kind: "failed", name: "exit", reason: said };
 }
 
-export function interpret(box: AgentBox, depth: number, data: Json | undefined, approved: readonly Json[] | undefined): Outcome {
+export function interpret(box: AgentBox, allowed: Allowed, data: Json | undefined, approved: readonly Json[] | undefined): Outcome {
 	const protocol = (reason: string): Outcome => ({ kind: "failed", name: "protocol", reason });
 	if (data === undefined || !isObject(data)) return protocol("the session ended without yielding an object");
 	const handoff = data.handoff;
@@ -149,14 +176,25 @@ export function interpret(box: AgentBox, depth: number, data: Json | undefined, 
 		if (!("value" in data)) return protocol("`status` is `done` but there is no `value`");
 		return { kind: "done", value: data.value ?? null, handoff };
 	}
+	if (data.status === "reject") {
+		if (!allowed.reject) return protocol("yielded `reject`, which only a box that `checks` another may do");
+		const feedback = data.feedback;
+		if (typeof feedback !== "string" || feedback.trim().length === 0)
+			return protocol("`status` is `reject` but there is no `feedback` saying what is wrong");
+		return { kind: "rejected", output: feedback };
+	}
 	if (data.status === "raise") {
 		const type = data.raise;
 		if (typeof type !== "string" || !box.raises.includes(type))
 			return protocol(`raised \`${String(type)}\`, which the box does not declare`);
+		if (!allowed.raises.includes(type))
+			return protocol(
+				`raised \`${type}\`, which this session was not offered: it is the item's last allowed session, or no box of the flow answers it while noEscape is on`,
+			);
 		return { kind: "raise", type, detail: typeof data.detail === "string" ? data.detail : "", handoff };
 	}
 	if (data.status === "split") {
-		if (!splittable(box, depth)) return protocol("split, which this session may not do: its box allows no further split");
+		if (!allowed.split) return protocol("split, which this session may not do: its box allows no further split");
 		if (approved === undefined)
 			return protocol(`yielded \`split\` without a split the author of the flow approved through \`${SPLIT_TOOL}\``);
 		return { kind: "split", parts: approved, handoff };
