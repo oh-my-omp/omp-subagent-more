@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- A box may take several `[]` inputs, which pair by leaf path: item `review#2` takes the element at path `2` of every `[]` input; a path only some of them reach gets no item, is reported `unpaired` in the verdict and keeps the flow from becoming `complete` ([#36](https://github.com/oh-my-omp/omp-subagent-ng/issues/36))
+- `checks` names one agent box or a non-empty array of them, and the checking box may be an agent box as well as a command box: an agent check rejects by yielding `{"status": "reject", "feedback": "…"}`, and a rejection reopens every checked item at the check's path at once ([#36](https://github.com/oh-my-omp/omp-subagent-ng/issues/36), [#37](https://github.com/oh-my-omp/omp-subagent-ng/issues/37))
+- A session reopened by a check is given, beside its earlier handoff and the check's output or `feedback`, the values the check was given in that round ([#37](https://github.com/oh-my-omp/omp-subagent-ng/issues/37))
+- `flow` op `define` takes an optional boolean `noEscape` for flows that run unattended: while it is on, `run` is refused until every input a box takes is supplied, sessions are offered only the raise types some box answers, a split request that passes its checks is approved without a message to the author, `session`, `timeout`, `protocol` and `schema` failures that the box's `handle` does not name fire the item once more, and the verdict carries a `noEscape: on` line ([#36](https://github.com/oh-my-omp/omp-subagent-ng/issues/36), [#37](https://github.com/oh-my-omp/omp-subagent-ng/issues/37))
+- `flow.js` adds `flow.use(spec, opts)`, which defines a `{ boxes, inputs?, noEscape? }` spec or a plain boxes map and supplies its inputs, and the presets `flow.presets.swarm(options, ...workers)` and `flow.presets.loop(options, ...agents)`, which return such specs; `flow.define(boxes, opts)` passes `opts.noEscape` ([#38](https://github.com/oh-my-omp/omp-subagent-ng/issues/38))
+
+### Changed
+
+- `flow:adjudicator` rules in two levels: inside the flow its ruling resumes the worker without waking anyone, and it may send the worker back to probe while the item has sessions left under `bound`; only a product, scope or trade-off question that neither the code facts nor the request decide leaves the flow, as an outward raise such as `ask_user` that its box declares, and under `noEscape` that raise is not offered ([#37](https://github.com/oh-my-omp/omp-subagent-ng/issues/37))
+- An item's last allowed session is offered no raise type, so a raise from it fails with `protocol` instead of `bound_exceeded`; `bound_exceeded` is left for a check that rejects the result of an item's last allowed session, in which case no checked item is reopened ([#37](https://github.com/oh-my-omp/omp-subagent-ng/issues/37))
+- A box with `splits` takes exactly one `[]` input, and a check of a box with many items reaches it only through `[]` inputs along boxes that do not split and may not split itself; `run` is refused for any other wiring ([#36](https://github.com/oh-my-omp/omp-subagent-ng/issues/36))
+
 ## [0.4.0] - 2026-11-23
 
 ### Breaking Changes
