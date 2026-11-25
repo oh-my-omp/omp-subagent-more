@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
 ### Added
 
 - A box may take several `[]` inputs, which pair by leaf path: item `review#2` takes the element at path `2` of every `[]` input; a path only some of them reach gets no item, is reported `unpaired` in the verdict and keeps the flow from becoming `complete` ([#36](https://github.com/oh-my-omp/omp-subagent-ng/issues/36))
