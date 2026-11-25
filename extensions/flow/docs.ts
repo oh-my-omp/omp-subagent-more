@@ -244,11 +244,11 @@ const { slices } = await flow.value("scout");
 
 | Function | Returns |
 |---|---|
-| \`flow.define(boxes)\`, \`flow.supply(name, value)\`, \`flow.run()\`, \`flow.stop(reason)\`, \`flow.status()\` | nothing; the verdict is printed |
+| \`flow.define(boxes, opts)\`, \`flow.supply(name, value)\`, \`flow.run()\`, \`flow.stop(reason)\`, \`flow.status()\` | nothing; the verdict is printed |
 | \`flow.retract(...keys)\`, \`flow.keep(...keys)\`, \`flow.retry(...keys)\`, \`flow.answer(key, value)\`, \`flow.agree(key)\`, \`flow.disagree(key, reason)\` | nothing; the verdict is printed |
 | \`flow.value(key)\` | the stored value of that key; prints nothing |
 
-The helper's \`flow.define\` takes the boxes only; call \`tool.flow\` directly to change \`noEscape\`. The helper holds no state. After a kernel restart the flow is unchanged: load the helper again, or call \`tool.flow\` directly.`;
+\`flow.define\` passes \`opts.noEscape\` as \`noEscape\`: \`await flow.define(boxes, { noEscape: true })\`. The helper holds no state. After a kernel restart the flow is unchanged: load the helper again, or call \`tool.flow\` directly.`;
 
 const FLOW_TOPICS: readonly ToolTopicDoc[] = [
 	{ tool: "flow", topic: "boxes", title: "Box definitions", when: "before writing or changing box definitions", body: BOXES },
