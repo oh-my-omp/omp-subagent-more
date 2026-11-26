@@ -22,8 +22,8 @@ type Layout = { readonly kind: "row"; readonly lines: number } | { readonly kind
 function layoutOf(columns: number, rows: number): Layout {
 	const room = rows - STATUS_ROWS;
 	return columns >= ROW_MIN_COLUMNS
-		? { kind: "row", lines: Math.max(3, room - CARD_CHROME_ROWS) }
-		: { kind: "stack", lines: Math.max(3, Math.floor((room - 3 * CARD_CHROME_ROWS - STACK_GAP_ROWS) / 3)) };
+		? { kind: "row", lines: Math.max(0, room - CARD_CHROME_ROWS) }
+		: { kind: "stack", lines: Math.max(0, Math.floor((room - 3 * CARD_CHROME_ROWS - STACK_GAP_ROWS) / 3)) };
 }
 
 type EditorMode =
