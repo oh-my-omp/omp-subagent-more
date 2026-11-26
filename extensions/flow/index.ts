@@ -34,11 +34,15 @@ import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, t
 import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
 import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
+import { type MonitorFlow, viewFeed } from "./monitor.ts";
 import { type Firing, lookup } from "./plan.ts";
+import { viewOf } from "./project.ts";
 import { type Allowed, allowedOf, briefOf, commandOutcome, interpret, yieldSchema } from "./session.ts";
 import { markSplittable, registerSplitTool, type SplitAnswer, type SplitAsk, serveSplits } from "./split.ts";
 import { definitionKey, type Earlier, modelKey, type Outcome, partsOf } from "./state.ts";
 import { type Command, Store } from "./store.ts";
+import { registerMonitor } from "./surface.ts";
+import type { MonitorOutcome, MonitorRequest } from "./view.ts";
 
 const OPS = ["define", "supply", "run", "stop", "status", "value", "retract", "keep", "retry", "answer", "agree", "disagree"] as const;
 type Op = (typeof OPS)[number];
@@ -209,6 +213,7 @@ type Flow = {
 	readonly dir: string;
 	readonly running: Map<string, Running>;
 	readonly live: Map<string, Live>;
+	readonly monitor: MonitorFlow;
 	kick: () => void;
 	driving: boolean;
 };
@@ -224,6 +229,7 @@ type Runtime = {
 	readonly pi: ExtensionAPI;
 	readonly flows: Map<string, Flow>;
 	readonly spawns: Map<string, Prepared>;
+	readonly attached: Set<(flow: MonitorFlow) => void>;
 };
 
 const spawnId = (dir: string, name: string): string => `${dir}\n${name}`;
@@ -240,9 +246,77 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 	const log = readLog(file);
 	const store = new Store(log, (action) => appendLog(file, action));
 	if (log.length > 0) store.recover();
-	const flow: Flow = { store, dir, running: new Map(), live: new Map(), kick: () => {}, driving: false };
+	const live = new Map<string, Live>();
+	const feed = viewFeed(() =>
+		viewOf(
+			store.state,
+			store.survey(),
+			[...live.entries()].flatMap(([session, entry]) =>
+				entry.split.kind === "asked" ? [{ key: entry.key, session, parts: entry.split.parts }] : [],
+			),
+		),
+	);
+	const flow: Flow = {
+		store,
+		dir,
+		running: new Map(),
+		live,
+		monitor: { sessionFile, feed, port: { send: (request) => Promise.resolve(control(rt, flow, request)) } },
+		kick: () => {},
+		driving: false,
+	};
+	store.subscribe(feed.changed);
 	rt.flows.set(sessionFile, flow);
+	for (const attach of rt.attached) attach(flow.monitor);
 	return flow;
+}
+
+async function monitorOf(rt: Runtime, parent: AgentSession): Promise<MonitorFlow | undefined> {
+	const sessionFile = parent.sessionManager.getSessionFile();
+	if (!sessionFile) return undefined;
+	const known = rt.flows.get(sessionFile);
+	if (known) return known.monitor;
+	if (!fs.existsSync(path.join(sessionFile.slice(0, -".jsonl".length), "flow.jsonl"))) return undefined;
+	return (await flowOf(rt, parent)).monitor;
+}
+
+function control(rt: Runtime, flow: Flow, request: MonitorRequest): MonitorOutcome {
+	switch (request.kind) {
+		case "answer":
+		case "stop": {
+			const verdict = flow.store.submit(
+				request.kind === "answer" ? { kind: "answer", key: request.key, value: request.text } : { kind: "stop", reason: request.reason },
+			);
+			if (!verdict.accepted) return { kind: "refused", reasons: verdict.refusals };
+			pruneBoards(flow);
+			flow.kick();
+			const summary =
+				request.kind === "answer" ? `answered the raise of \`${request.key}\`: ${request.text}` : `stopped the flow: ${request.reason}`;
+			rt.pi.sendMessage(
+				{ customType: "flow-monitor", content: `The operator ${summary} (from the flow monitor).`, display: true },
+				{ triggerTurn: false },
+			);
+			return { kind: "accepted", summary };
+		}
+		case "agree":
+		case "disagree": {
+			const decided = decide(
+				flow,
+				request.key,
+				request.kind === "agree" ? { kind: "agree" } : { kind: "disagree", reason: request.reason },
+			);
+			if (!decided.ok) return { kind: "refused", reasons: decided.problems };
+			rt.pi.sendMessage(
+				{ customType: "flow-monitor", content: `The operator ${decided.value} (from the flow monitor).`, display: true },
+				{ triggerTurn: false },
+			);
+			return { kind: "accepted", summary: decided.value };
+		}
+		default: {
+			const unreachable: never = request;
+			return unreachable;
+		}
+	}
 }
 
 const markOfData = (data: unknown): string => createHash("sha256").update(JSON.stringify(data)).digest("hex").slice(0, 12);
@@ -448,6 +522,7 @@ async function spawnAndWait(
 	flow.store.spawned(firing.key, firing.attempt, session);
 	const live: Live = { key: firing.key, attempt: firing.attempt, box, allowed, split: { kind: "none" } };
 	flow.live.set(session, live);
+	flow.monitor.feed.changed();
 	const cancel = (): void => {
 		manager.cancel(id);
 	};
@@ -456,6 +531,7 @@ async function spawnAndWait(
 	await job.promise;
 	signal.removeEventListener("abort", cancel);
 	flow.live.delete(session);
+	flow.monitor.feed.changed();
 	const outcome = outcomeOfJob(box, allowed, job, session, live.split.kind === "approved" ? live.split.parts : undefined);
 	if (outcome.kind !== "done" && outcome.kind !== "raise" && outcome.kind !== "split") return outcome;
 	if (box.isolated !== false && cfgTaskIsolationApply.get(parent.settings)) {
@@ -591,6 +667,7 @@ function claimSplit(rt: Runtime, flow: Flow, ask: SplitAsk, answer: (answer: Spl
 		return true;
 	}
 	live.split = { kind: "asked", parts, answer };
+	flow.monitor.feed.changed();
 	answer({ kind: "waiting" });
 	rt.pi.sendMessage(
 		{ customType: "flow-split", content: splitNotice(live, ask.session, parts, ask.details), display: true },
@@ -628,6 +705,7 @@ function decide(flow: Flow, key: string, verdict: Verdict): Result<string> {
 	switch (verdict.kind) {
 		case "agree":
 			live.split = { kind: "approved", parts };
+			flow.monitor.feed.changed();
 			answer({ kind: "agreed" });
 			return {
 				ok: true,
@@ -635,6 +713,7 @@ function decide(flow: Flow, key: string, verdict: Verdict): Result<string> {
 			};
 		case "disagree":
 			live.split = { kind: "none" };
+			flow.monitor.feed.changed();
 			answer({ kind: "disagreed", reason: verdict.reason });
 			return { ok: true, value: `disagreed: ${key} continues its session with your reason` };
 		default: {
@@ -759,8 +838,20 @@ async function executeFlow(
 }
 
 export default function flow(pi: ExtensionAPI): void {
-	const rt: Runtime = { pi, flows: new Map(), spawns: new Map() };
+	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), attached: new Set() };
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
+	registerMonitor(pi, {
+		load: async (ctx) => {
+			const parent = callerSession(ctx);
+			return parent ? await monitorOf(rt, parent) : undefined;
+		},
+		attach: (listener) => {
+			rt.attached.add(listener);
+			return () => {
+				rt.attached.delete(listener);
+			};
+		},
+	});
 	registerSplitTool(pi);
 	registerFlowTopics();
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {

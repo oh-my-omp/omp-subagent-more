@@ -143,6 +143,7 @@ export class Store {
 	#state: State = EMPTY;
 	#seen: Marks = {};
 	readonly #append: (action: Action) => void;
+	readonly #listeners = new Set<() => void>();
 
 	constructor(log: Iterable<Action>, append: (action: Action) => void) {
 		for (const action of log) this.#state = reduce(this.#state, action);
@@ -157,9 +158,17 @@ export class Store {
 		return survey(this.#state);
 	}
 
+	subscribe(listener: () => void): () => void {
+		this.#listeners.add(listener);
+		return () => {
+			this.#listeners.delete(listener);
+		};
+	}
+
 	#dispatch(action: Action): void {
 		this.#append(action);
 		this.#state = reduce(this.#state, action);
+		for (const listener of this.#listeners) listener();
 	}
 
 	agentNames(): string[] {

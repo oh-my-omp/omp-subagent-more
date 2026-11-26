@@ -2,7 +2,8 @@ import type { Json } from "./defs.ts";
 
 export type Handoff =
 	| { readonly kind: "parsed"; readonly did: string; readonly decided: readonly string[]; readonly unverified: readonly string[] }
-	| { readonly kind: "raw"; readonly text: string };
+	| { readonly kind: "raw"; readonly text: string }
+	| { readonly kind: "none" };
 
 export type UnitPhase =
 	| { readonly kind: "running" }
