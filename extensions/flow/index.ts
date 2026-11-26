@@ -112,6 +112,8 @@ const FIELDS: Record<Op, Partial<Record<Field, "required" | "optional">>> = {
 	disagree: { keys: "required", reason: "required" },
 };
 
+const BLANK_DISAGREE = "`disagree` needs a non-empty `reason`";
+
 function parseRequest(params: Params): Result<Request> {
 	const problems: string[] = [];
 	const allowed = FIELDS[params.op];
@@ -177,7 +179,7 @@ function parseRequest(params: Params): Result<Request> {
 		case "disagree": {
 			if (keys.length !== 1) problems.push("`disagree` takes exactly one key");
 			const reason = params.reason?.trim() ?? "";
-			if (params.reason !== undefined && reason === "") problems.push("`disagree` needs a non-empty `reason`");
+			if (params.reason !== undefined && reason === "") problems.push(BLANK_DISAGREE);
 			request = { kind: "decide", key: keys[0] ?? "", verdict: { kind: "disagree", reason } };
 			break;
 		}
@@ -261,7 +263,7 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 		dir,
 		running: new Map(),
 		live,
-		monitor: { sessionFile, feed, port: { send: (request) => Promise.resolve(control(rt, flow, request)) } },
+		monitor: { sessionFile, feed, port: { send: async (request) => control(rt, flow, request) } },
 		kick: () => {},
 		driving: false,
 	};
@@ -278,6 +280,16 @@ async function monitorOf(rt: Runtime, parent: AgentSession): Promise<MonitorFlow
 	if (known) return known.monitor;
 	if (!fs.existsSync(path.join(sessionFile.slice(0, -".jsonl".length), "flow.jsonl"))) return undefined;
 	return (await flowOf(rt, parent)).monitor;
+}
+
+function decision(rt: Runtime, flow: Flow, key: string, verdict: Verdict): MonitorOutcome {
+	const decided = decide(flow, key, verdict);
+	if (!decided.ok) return { kind: "refused", reasons: decided.problems };
+	rt.pi.sendMessage(
+		{ customType: "flow-monitor", content: `The operator ${decided.value} (from the flow monitor).`, display: true },
+		{ triggerTurn: false },
+	);
+	return { kind: "accepted", summary: decided.value };
 }
 
 function control(rt: Runtime, flow: Flow, request: MonitorRequest): MonitorOutcome {
@@ -308,18 +320,10 @@ function control(rt: Runtime, flow: Flow, request: MonitorRequest): MonitorOutco
 			return { kind: "accepted", summary };
 		}
 		case "agree":
+			return decision(rt, flow, request.key, { kind: "agree" });
 		case "disagree": {
-			const decided = decide(
-				flow,
-				request.key,
-				request.kind === "agree" ? { kind: "agree" } : { kind: "disagree", reason: request.reason },
-			);
-			if (!decided.ok) return { kind: "refused", reasons: decided.problems };
-			rt.pi.sendMessage(
-				{ customType: "flow-monitor", content: `The operator ${decided.value} (from the flow monitor).`, display: true },
-				{ triggerTurn: false },
-			);
-			return { kind: "accepted", summary: decided.value };
+			const reason = request.reason.trim();
+			return reason === "" ? { kind: "refused", reasons: [BLANK_DISAGREE] } : decision(rt, flow, request.key, { kind: "disagree", reason });
 		}
 		default: {
 			const unreachable: never = request;

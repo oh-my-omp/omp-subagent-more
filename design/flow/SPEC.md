@@ -335,7 +335,7 @@ await flow.use({ ...loop, boxes: { ...loop.boxes, ...review().boxes } });
 
 | 宿主 | 常驻部分 | 展开部分 |
 |---|---|---|
-| 进程环境没有 `TERN_PANE` 的 omp TUI（纯终端） | 输入框上方 2 行状态条：头行计数与需要处理的第一项 | `alt+w` 或 `/flow-monitor` 打开全屏三栏看板：单元、接线（逐盒「已结束/条目数」与接线图）、选中项详情；`Esc` 关闭 |
+| 进程环境没有 `TERN_PANE` 的 omp TUI（纯终端） | flow 定义了至少一个盒子后，输入框上方 2 行状态条：头行计数与需要处理的第一项 | `alt+w` 或 `/flow-monitor` 打开全屏三栏看板：单元、接线（逐盒「已结束/条目数」与接线图）、选中项详情；`Esc` 关闭 |
 | 进程环境有 `TERN_PANE` 的 omp TUI（Tern 窗格，含其中经 tmux 继承该变量的） | 不显示状态条 | 右侧常驻面板（[#51](https://github.com/oh-my-omp/omp-subagent-ng/issues/51)） |
 | rpc、json、print 模式 | 无 | 无 |
 
