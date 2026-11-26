@@ -1,5 +1,5 @@
 import type { ExtensionUiHost } from "@oh-my-pi/pi-coding-agent";
-import { type Accessor, type JSXNode, type KeyEvent, signal, type TextEdit } from "@oh-my-pi/pi-tui";
+import { type Accessor, type JSXNode, type KeyEvent, nativeRendering, signal, type TextEdit } from "@oh-my-pi/pi-tui";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { errorText } from "../fork-task/errors.ts";
 import { node } from "./node.ts";
@@ -19,9 +19,9 @@ const STACK_GAP_ROWS = 2;
 
 type Layout = { readonly kind: "row"; readonly lines: number } | { readonly kind: "stack"; readonly lines: number };
 
-function layoutOf(columns: number, rows: number): Layout {
+function layoutOf(columns: number, rows: number, native: boolean): Layout {
 	const room = rows - STATUS_ROWS;
-	return columns >= ROW_MIN_COLUMNS
+	return !native && columns >= ROW_MIN_COLUMNS
 		? { kind: "row", lines: Math.max(0, room - CARD_CHROME_ROWS) }
 		: { kind: "stack", lines: Math.max(0, Math.floor((room - 3 * CARD_CHROME_ROWS - STACK_GAP_ROWS) / 3)) };
 }
@@ -639,7 +639,7 @@ export function boardNode(props: BoardProps): JSXNode {
 		const ordered = GROUP_ORDER.flatMap((group) => groups[group]);
 		const current = selectedUnit(ordered, selectedKey());
 		const size = props.size();
-		const layout = layoutOf(size.columns, size.rows);
+		const layout = layoutOf(size.columns, size.rows, nativeRendering());
 		const cards = [
 			unitsColumn(groups, current?.key ?? null, layout.lines),
 			wiringColumn(flow, layout.lines),
