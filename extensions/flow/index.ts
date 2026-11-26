@@ -26,10 +26,10 @@ import {
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
 import { tr } from "../../omomp-shared/i18n.ts";
-import { callerSession } from "../fork-task/caller-session.ts";
-import { errorText } from "../fork-task/errors.ts";
-import type { ForkItem } from "../fork-task/schema.ts";
-import { headerCwd, type Inheritance, inheritSourceWorkspace, writeOverlay, writePrepare } from "../fork-task/workspace.ts";
+import { callerSession } from "../_shared/caller-session.ts";
+import { errorText } from "../_shared/errors.ts";
+import type { ForkItem } from "../_shared/fork-item.ts";
+import { headerCwd, type Inheritance, inheritSourceWorkspace, writeOverlay, writePrepare } from "../_shared/workspace.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
 import { registerEvalGuard } from "./eval-guard.ts";

@@ -12,8 +12,9 @@ import {
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
 import { Shell } from "@oh-my-pi/pi-natives";
 import { errorText } from "./errors.ts";
-import type { WorkingDirectory } from "./fork-diff.ts";
-import { readOptional, sessionArtifactsDir } from "./replica-file.ts";
+import { readOptional, sessionArtifactsDir } from "./session-files.ts";
+
+export type WorkingDirectory = { readonly path: string; readonly repoRoot: string | undefined };
 
 export type RejectionCode =
 	| "child-not-isolated"

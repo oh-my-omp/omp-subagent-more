@@ -8,8 +8,8 @@ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry
 import { resolveReadPathAsync } from "@oh-my-pi/pi-coding-agent/tools/path-utils";
 import { parseCommandArgs } from "@oh-my-pi/pi-coding-agent/utils/command-args";
 import { astMatch } from "@oh-my-pi/pi-natives";
-import { callerSession } from "../fork-task/caller-session.ts";
-import { errorText } from "../fork-task/errors.ts";
+import { callerSession } from "../_shared/caller-session.ts";
+import { errorText } from "../_shared/errors.ts";
 
 export type Spawner = "agent" | "workpool";
 

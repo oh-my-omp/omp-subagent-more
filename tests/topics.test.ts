@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import { resolveForkWorkspace } from "../extensions/_shared/workspace.ts";
 import { paramsSchema } from "../extensions/fork-task/schema.ts";
-import { resolveForkWorkspace } from "../extensions/fork-task/workspace.ts";
 
 test("fork_task paramsSchema accepts object outputSchema and 3-state workspace enum", () => {
 	const parsed = paramsSchema.parse({

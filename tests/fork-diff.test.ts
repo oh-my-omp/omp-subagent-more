@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type ForkBaseline, forkDiff, unavailableTools, type WorkingDirectory } from "../extensions/fork-task/fork-diff.ts";
+import type { WorkingDirectory } from "../extensions/_shared/workspace.ts";
+import { type ForkBaseline, forkDiff, unavailableTools } from "../extensions/fork-task/fork-diff.ts";
 import type { Delta } from "../omomp-shared/context-delta.ts";
 
 const HERE: WorkingDirectory = { path: "/w", repoRoot: "/w" };

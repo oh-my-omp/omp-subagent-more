@@ -1,7 +1,7 @@
 import { getRepoRoot } from "@oh-my-pi/pi-coding-agent/task/worktree";
-import { errorText } from "../fork-task/errors.ts";
-import { readOptional } from "../fork-task/replica-file.ts";
-import { gitApply, type Inheritance } from "../fork-task/workspace.ts";
+import { errorText } from "../_shared/errors.ts";
+import { readOptional } from "../_shared/session-files.ts";
+import { gitApply, type Inheritance } from "../_shared/workspace.ts";
 
 export async function inheritReleasedPatch(patchFile: string, callerCwd: string): Promise<Inheritance | undefined> {
 	const patch = await readOptional(patchFile);
