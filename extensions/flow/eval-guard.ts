@@ -11,13 +11,29 @@ import { astMatch } from "@oh-my-pi/pi-natives";
 import { callerSession } from "../fork-task/caller-session.ts";
 import { errorText } from "../fork-task/errors.ts";
 
-export type Spawner = "agent" | "workpool";
-
-const SPAWNERS: readonly Spawner[] = ["agent", "workpool"];
+export type Refused = "agent" | "workpool" | "judge" | "judge_batch" | "completion" | "tool.flow";
 
 const cellSchema = z.object({ language: z.enum(["py", "js"]), code: z.string() }).passthrough();
 
 type Language = z.infer<typeof cellSchema>["language"];
+
+const REFUSED: Readonly<Record<Language, readonly Refused[]>> = {
+	js: ["agent", "workpool"],
+	py: ["agent", "workpool", "judge", "judge_batch", "completion", "tool.flow"],
+};
+
+type Topic = "help://flow/eval" | "help://eval/judge";
+
+const TOPICS: readonly Topic[] = ["help://flow/eval", "help://eval/judge"];
+
+const TOPIC: Readonly<Record<Refused, Topic>> = {
+	agent: "help://flow/eval",
+	workpool: "help://flow/eval",
+	"tool.flow": "help://flow/eval",
+	judge: "help://eval/judge",
+	judge_batch: "help://eval/judge",
+	completion: "help://eval/judge",
+};
 
 export type Script = { readonly path: string; readonly code: string };
 
@@ -110,12 +126,12 @@ export function normalizePython(source: string): PythonCell {
 	return { code: kept.join("\n"), loads };
 }
 
-const patterns = (language: Language, name: Spawner): string[] =>
+const patterns = (language: Language, name: Refused): string[] =>
 	language === "js" ? [`${name}($$$ARGS)`, `globalThis.${name}($$$ARGS)`] : [`${name}($$$ARGS)`];
 
-async function calledIn(language: Language, code: string): Promise<Spawner[]> {
+async function calledIn(language: Language, code: string): Promise<Refused[]> {
 	const found = await Promise.all(
-		SPAWNERS.map(async (name) => {
+		REFUSED[language].map(async (name) => {
 			const result = await astMatch({ source: code, lang: GRAMMAR[language], patterns: patterns(language, name), limit: 1 });
 			return result.totalMatches > 0 ? [name] : [];
 		}),
@@ -132,7 +148,7 @@ const singleArg = (raw: string): string | null => {
 	}
 };
 
-async function scan(language: Language, code: string, load: Load, seen: Set<string>): Promise<Set<Spawner>> {
+async function scan(language: Language, code: string, load: Load, seen: Set<string>): Promise<Set<Refused>> {
 	const standalone = STANDALONE_LOAD.exec(code.trim());
 	if (standalone) {
 		const file = singleArg(standalone[1] ?? "");
@@ -150,30 +166,48 @@ async function scan(language: Language, code: string, load: Load, seen: Set<stri
 	return found;
 }
 
-async function included(language: Language, script: Script, load: Load, seen: Set<string>): Promise<Set<Spawner>> {
+async function included(language: Language, script: Script, load: Load, seen: Set<string>): Promise<Set<Refused>> {
 	if (seen.has(script.path)) return new Set();
 	seen.add(script.path);
 	if (language === "js") return new Set(await calledIn("js", script.code));
 	return scan("py", script.code, load, seen);
 }
 
-export async function spawnersCalled(language: Language, code: string, load: Load): Promise<Spawner[]> {
+export async function refusedCalls(language: Language, code: string, load: Load): Promise<Refused[]> {
 	const found = await scan(language, code, load, new Set());
-	return SPAWNERS.filter((name) => found.has(name));
+	return REFUSED[language].filter((name) => found.has(name));
 }
 
-export const refusal = (names: readonly Spawner[]): string =>
-	[
-		`This eval cell was not run: it calls ${names.map((name) => `\`${name}()\``).join(" and ")} from the eval prelude. Subagents started from an eval cell are cancelled when the cell is interrupted; start them through the flow tool instead:`,
-		"help://flow/eval",
-	].join("\n");
+const listed = (names: readonly Refused[]): string => {
+	const shown = names.map((name) => `\`${name}()\``);
+	return shown.length < 3 ? shown.join(" and ") : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+};
+
+export function refusal(language: Language, names: readonly Refused[]): string {
+	switch (language) {
+		case "js":
+			return [
+				`This eval cell was not run: it calls ${listed(names)} from the eval prelude. Subagents started from an eval cell are cancelled when the cell is interrupted; start them through the flow tool instead:`,
+				"help://flow/eval",
+			].join("\n");
+		case "py":
+			return [
+				`This Python eval cell was not run: it calls ${listed(names)}. Python eval cells only compute and do not call models or the flow; make these calls from a JavaScript eval cell instead:`,
+				...TOPICS.filter((topic) => names.some((name) => TOPIC[name] === topic)),
+			].join("\n");
+		default: {
+			const unreachable: never = language;
+			return unreachable;
+		}
+	}
+}
 
 export async function inspectEval(toolName: string, input: unknown, load: Load): Promise<string | null> {
 	if (toolName !== "eval") return null;
 	const cell = cellSchema.safeParse(input);
 	if (!cell.success) return null;
-	const names = await spawnersCalled(cell.data.language, cell.data.code, load);
-	return names.length === 0 ? null : refusal(names);
+	const names = await refusedCalls(cell.data.language, cell.data.code, load);
+	return names.length === 0 ? null : refusal(cell.data.language, names);
 }
 
 function resolveContext(ctx: ExtensionContext): ResolveContext {

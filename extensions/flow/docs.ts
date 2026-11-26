@@ -210,7 +210,7 @@ A running session of a box with \`splits\` may ask to split its element. The req
 
 const EVAL = `# Calling the flow from an eval cell
 
-Subagents started from an eval cell go through the flow. A cell that calls the eval prelude's \`agent()\` or \`workpool()\`, itself or in a script it runs with \`%load\`, is refused before it runs: the prelude's \`wait()\` cancels the subagents it waits on when the cell is interrupted, while \`run\` returns at once and the flow goes on in a background job of its own.
+Subagents started from an eval cell go through the flow. A cell that calls the eval prelude's \`agent()\` or \`workpool()\`, itself or in a script it runs with \`%load\`, is refused before it runs: the prelude's \`wait()\` cancels the subagents it waits on when the cell is interrupted, while \`run\` returns at once and the flow goes on in a background job of its own. Python cells only compute: a Python cell that calls \`tool.flow(...)\`, \`judge\`, \`judge_batch\` or \`completion\` is refused as well, so call the flow from a JavaScript cell.
 
 In a JavaScript cell the tool is \`tool.flow\`. Definitions and values travel as JSON text:
 

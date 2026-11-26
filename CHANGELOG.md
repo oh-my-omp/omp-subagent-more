@@ -5,6 +5,7 @@
 ### Changed
 
 - An `eval` cell whose source, including a script it runs with `%load`, calls the eval prelude's `agent()` or `workpool()` is refused before it runs, in the main session and in subagent sessions, with a reason naming the function and pointing to `help://flow/eval`: subagents started from eval go through the `flow` tool, whose background job is not cancelled when the cell is interrupted ([#57](https://github.com/oh-my-omp/omp-subagent-ng/issues/57))
+- A Python `eval` cell that calls `judge()`, `judge_batch()`, `completion()` or `tool.flow()` is refused before it runs as well, since Python cells only compute; the reason for any refused Python cell names the calls, asks for a JavaScript eval cell and points to `help://flow/eval` for `agent`, `workpool` and `tool.flow` and to `help://eval/judge` for `judge`, `judge_batch` and `completion` ([#58](https://github.com/oh-my-omp/omp-subagent-ng/issues/58))
 
 ## [0.5.1] - 2026-11-26
 

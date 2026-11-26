@@ -62,13 +62,35 @@ describe("eval guard: calls in the cell", () => {
 		).toBeNull();
 	});
 
-	test("flow, task, fork_task, wait, judge, judgeBatch and completion cells run", async () => {
+	test("JS flow, task, fork_task, wait, judge, judgeBatch and completion cells run", async () => {
 		expect(await js('const r = await tool.flow({ op: "status" });')).toBeNull();
 		expect(await js("await flow.run();\nconst v = await flow.value('scout');")).toBeNull();
 		expect(
 			await js("await judge(s, q);\nconst b = await judgeBatch(a, q);\nconst h = await completion('x');\nawait wait([h]);"),
 		).toBeNull();
-		expect(await py("print(judge_batch(states, q))\nh = completion('x')\nwait([h])")).toBeNull();
+	});
+
+	test("Python calls to judge, judge_batch, completion and tool.flow are refused, sent to JavaScript eval and the matching topic", async () => {
+		const flow = await py('r = await tool.flow({"op": "status"})\nprint(r)');
+		expect(flow).toContain("`tool.flow()`");
+		expect(flow).toContain("JavaScript eval cell");
+		expect(flow?.split("\n").slice(1)).toEqual(["help://flow/eval"]);
+		const models = await py("h = completion('x')\nb = judge_batch(states, q)\nprint(await judge(s, q))");
+		expect(models).toContain("`judge()`, `judge_batch()` and `completion()`");
+		expect(models?.split("\n").slice(1)).toEqual(["help://eval/judge"]);
+		const both = await py('h = agent("x")\nprint(await judge(s, q))');
+		expect(both).toContain("`agent()` and `judge()`");
+		expect(both).toContain("JavaScript eval cell");
+		expect(both?.split("\n").slice(1)).toEqual(["help://flow/eval", "help://eval/judge"]);
+	});
+
+	test("Python cells without those calls run: @tool, tool bridges other than tool.flow, wait, members and strings", async () => {
+		expect(
+			await py(
+				'@tool\ndef double(n: int) -> int:\n    return n * 2\nr = await tool.task({"tasks": [{"agent": "task:low", "task": "t", "tools": ["double"]}]})\nf = await tool.fork_task({"tasks": [{"task": "t"}]})\nx = await tool.read({"path": "a"})\nwait([h])',
+			),
+		).toBeNull();
+		expect(await py('obj.completion(1)\ns = "judge(x)"\n# tool.flow({})\nself.tool.flow({})\nmytool.flow({})')).toBeNull();
 	});
 
 	test("other tools and malformed eval input are not inspected", async () => {
@@ -87,9 +109,11 @@ describe("eval guard: scripts included with %load", () => {
 		expect(await py('%load "dispatch.py"', f.load)).toContain("`agent()`");
 		expect(await js("%load pool.js", f.load)).toContain("`workpool()`");
 		expect(await js("%load flow.js", f.load)).toBeNull();
+		expect(await py("%load flow.js", f.load)).toContain("`tool.flow()`");
 		expect(f.asked).toEqual([
 			{ kind: "cell", file: "dispatch.py" },
 			{ kind: "cell", file: "pool.js" },
+			{ kind: "cell", file: "flow.js" },
 			{ kind: "cell", file: "flow.js" },
 		]);
 	});
