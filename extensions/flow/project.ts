@@ -3,18 +3,32 @@ import type { Survey } from "./plan.ts";
 import type { Item, Phase, State, StopCause } from "./state.ts";
 import type {
 	Attention,
+	BoardRef,
 	BoxEdge,
 	BoxView,
 	Counts,
+	DecisionEvent,
 	FlowView,
 	Freshness,
 	Handoff,
+	LastRequest,
 	ModeView,
+	SessionFacts,
 	StopView,
 	UnitPhase,
 	UnitView,
 	WaitingSplit,
 } from "./view.ts";
+
+export type ProjectionInput = {
+	readonly state: State;
+	readonly survey: Survey;
+	readonly splits: readonly WaitingSplit[];
+	readonly sessions: ReadonlyMap<string, SessionFacts>;
+	readonly boards: ReadonlyMap<string, BoardRef>;
+	readonly decisions: readonly DecisionEvent[];
+	readonly last: LastRequest | null;
+};
 
 const stringsOf = (value: Json): readonly string[] | undefined => {
 	if (!isArray(value)) return undefined;
