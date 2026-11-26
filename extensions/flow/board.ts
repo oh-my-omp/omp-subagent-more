@@ -1,3 +1,4 @@
+import type { ExtensionUiHost } from "@oh-my-pi/pi-coding-agent";
 import { type Accessor, type JSXNode, type KeyEvent, signal, type TextEdit } from "@oh-my-pi/pi-tui";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { errorText } from "../fork-task/errors.ts";
@@ -7,8 +8,16 @@ import type { BoxEdge, FlowView, Freshness, Handoff, MonitorOutcome, MonitorPort
 export type BoardProps = {
 	readonly view: Accessor<FlowView>;
 	readonly port: MonitorPort;
+	readonly size: ExtensionUiHost["size"];
 	readonly close?: () => void;
 };
+
+const STATUS_ROWS = 8;
+const CARD_CHROME_ROWS = 2;
+
+function columnLines(rows: number): number {
+	return Math.max(3, rows - STATUS_ROWS - CARD_CHROME_ROWS);
+}
 
 type EditorMode =
 	| { readonly kind: "browse" }
@@ -326,7 +335,7 @@ function unitItem(unit: UnitView): JSXNode {
 	);
 }
 
-function unitsColumn(groups: Record<UnitGroup, readonly UnitView[]>, selected: string | null): JSXNode {
+function unitsColumn(groups: Record<UnitGroup, readonly UnitView[]>, selected: string | null, lines: number): JSXNode {
 	const sections = GROUP_ORDER.map((group) => {
 		const units = groups[group];
 		if (units.length === 0) return undefined;
@@ -344,6 +353,8 @@ function unitsColumn(groups: Record<UnitGroup, readonly UnitView[]>, selected: s
 	return node("card", {
 		variant: "bare",
 		head: tr("units", "单元"),
+		collapsed: true,
+		preview: { lines },
 		grow: 1,
 		basis: 0,
 		min: { w: "24ch" },
@@ -356,10 +367,12 @@ function boxStates(view: FlowView): JSXNode {
 	return node("kv", { items: view.boxes.map((box) => ({ k: box.name, v: boxState(unitsByBox.get(box.name) ?? []) })) });
 }
 
-function wiringColumn(view: FlowView): JSXNode {
+function wiringColumn(view: FlowView, lines: number): JSXNode {
 	return node("card", {
 		variant: "bare",
 		head: tr("wiring", "接线"),
+		collapsed: true,
+		preview: { lines },
 		grow: 1,
 		basis: 0,
 		min: { w: "24ch" },
@@ -370,10 +383,12 @@ function wiringColumn(view: FlowView): JSXNode {
 	});
 }
 
-function detailColumn(unit: UnitView | undefined): JSXNode {
+function detailColumn(unit: UnitView | undefined, lines: number): JSXNode {
 	return node("card", {
 		variant: "bare",
 		head: tr("detail", "详情"),
+		collapsed: true,
+		preview: { lines },
 		grow: 1,
 		basis: 0,
 		min: { w: "28ch" },
@@ -616,15 +631,16 @@ export function boardNode(props: BoardProps): JSXNode {
 		const groups = groupUnits(flow);
 		const ordered = GROUP_ORDER.flatMap((group) => groups[group]);
 		const current = selectedUnit(ordered, selectedKey());
+		const lines = columnLines(props.size().rows);
 		return node("row", {
 			gap: "md",
 			wrap: true,
 			align: "stretch",
-			children: [unitsColumn(groups, current?.key ?? null), wiringColumn(flow), detailColumn(current)],
+			children: [unitsColumn(groups, current?.key ?? null, lines), wiringColumn(flow, lines), detailColumn(current, lines)],
 		});
 	};
 
-	const status = node("col", {
+	const footer = node("col", {
 		gap: "xs",
 		children: [
 			node("text", { text: () => requestLine(request()), tone: () => requestTone(request()), wrap: "word" }),
@@ -644,6 +660,6 @@ export function boardNode(props: BoardProps): JSXNode {
 		role: "omp.flow.board",
 		gap: "sm",
 		onKey,
-		children: [status, columns],
+		children: [columns, footer],
 	});
 }

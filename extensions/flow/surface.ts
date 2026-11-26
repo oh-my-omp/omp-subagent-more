@@ -93,10 +93,13 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 		boardOpen = true;
 		try {
 			const view = (): FlowView => target.view() ?? flow.feed.current();
-			await ctx.ui.custom<void>((_ui, _theme, _keys, done) => boardNode({ view, port: flow.port, close: () => done() }), {
-				overlay: true,
-				fullscreen: true,
-			});
+			await ctx.ui.custom<void>(
+				(ui, _theme, _keys, done) => boardNode({ view, port: flow.port, size: () => ui.size(), close: () => done() }),
+				{
+					overlay: true,
+					fullscreen: true,
+				},
+			);
 		} finally {
 			boardOpen = false;
 		}
