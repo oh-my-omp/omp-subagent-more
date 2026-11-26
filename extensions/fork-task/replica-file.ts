@@ -62,7 +62,7 @@ export async function readReplicaFile(file: string): Promise<Replica | undefined
 	const { request, replay, ...rest } = portableSchema.parse(JSON.parse(text));
 	return {
 		...rest,
-		// SAFETY: writeReplicaFile serialized this request from a Replica["request"]; requestSchema checks its model/context/options shape and passthrough keeps every host field.
+		// SAFETY: writeReplicaFile wrote this from a Replica["request"], whose keys requestSchema matches one for one; model keeps its extra fields via passthrough, and the message, tool and option values are the extension's own output, read back unchecked.
 		request: request as unknown as Replica["request"],
 		replay: replay.kind === "prefix" ? { kind: "prefix", response: replay.response, notice: replay.notice } : replay,
 	};
@@ -77,7 +77,7 @@ export function parsePortableSource(value: unknown): PortableSource {
 	if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) throw new Error(`unknown thinking level \`${thinkingLevel}\``);
 	return {
 		...rest,
-		// SAFETY: the source channel and parked file carry a PortableSource["request"] serialized by this extension; requestSchema checks its model/context/options shape and passthrough keeps every host field.
+		// SAFETY: the source channel and the parked file carry a PortableSource["request"] this extension serialized, whose keys requestSchema matches one for one; model keeps its extra fields via passthrough, and the message, tool and option values are read back unchecked.
 		request: request as unknown as PortableSource["request"],
 		response,
 		thinkingLevel,
