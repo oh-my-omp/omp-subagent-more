@@ -328,3 +328,15 @@ await flow.use({ ...loop, boxes: { ...loop.boxes, ...review().boxes } });
 3. **合法下一步提示**：`next: supply issue | keep or retract work#0 | run | stop`（由 [`store.ts`](../../extensions/flow/store.ts) 的 `moves(state)` 直接调用与 `judge` 相同的判定逻辑生成，保证列出的操作 100% 会被接受）。
 4. **接线图**（仅 `status` 输出）：`wire work ← input.slices[] · raises question → answer · splits 1 deep · fires again on session ×1`；Command 门禁写作 `wire check ← work[] · exit 1 reopens work`，Agent 门禁写作 `wire review ← work[] · reject reopens work`；没有盒子接住的抛出写作 `raises ask_user → an answer from outside`。
 5. **状态增量（Delta）**：自上次 Verdict 以来新增（`+`）、变更（`~`）或移除（`-`）的盒子、输入与单元行。
+
+## 6. 监控面（Flow monitor）
+
+监控面只读 store 与等待中的拆分请求，不持有 flow 状态的副本：每次 store 派发动作或拆分请求出现、被裁决时，[`project.ts`](../../extensions/flow/project.ts) 的 `viewOf(state, survey, splits)` 重新投影出 `FlowView`（[`view.ts`](../../extensions/flow/view.ts)），同一微任务内的多次变化合并为一次。
+
+| 宿主 | 常驻部分 | 展开部分 |
+|---|---|---|
+| 进程环境没有 `TERN_PANE` 的 omp TUI（纯终端） | flow 定义了至少一个盒子后，输入框上方 2 行状态条：头行计数与需要处理的第一项 | `alt+w` 或 `/flow-monitor` 打开全屏三栏看板：单元、接线（逐盒「已结束/条目数」与接线图）、选中项详情；`Esc` 关闭 |
+| 进程环境有 `TERN_PANE` 的 omp TUI（Tern 窗格，含其中经 tmux 继承该变量的） | 不显示状态条 | 右侧常驻面板（[#51](https://github.com/oh-my-omp/omp-subagent-ng/issues/51)） |
+| rpc、json、print 模式 | 无 | 无 |
+
+看板只发 4 种请求（`MonitorRequest`）：回答抛出（`answer`）、同意或拒绝拆分（`agree`、`disagree`）、停止 flow（`stop`）。每种请求与 `flow` 工具的同名操作走同一判定，被拒时看板显示拒绝原因；被接受的请求在主会话里留下一条 `flow-monitor` 消息，不触发新回合。

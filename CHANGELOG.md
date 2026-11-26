@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Flow monitor in the omp TUI unless the process environment has `TERN_PANE`: a 2-line tray above the editor shows the session's flow headline and the first item that needs you (appears only when the flow defines at least one box), and `alt+w` or `/flow-monitor` opens a full-screen board of units, wiring and detail that switches to a vertical stack when the terminal is narrower than 80 columns (otherwise a horizontal row), each card cut to the available height (minimum 0 lines) so the request line at the bottom stays visible, that answers raises, agrees to or refuses splits (a refusal needs a non-empty reason) and stops the flow, each request judged like the `flow` op of the same name ([#50](https://github.com/oh-my-omp/omp-subagent-ng/issues/50))
+
 ## [0.5.1] - 2026-11-26
 
 ### Fixed
