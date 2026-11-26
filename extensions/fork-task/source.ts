@@ -2,9 +2,9 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { ensurePersistedRoster } from "@oh-my-pi/pi-coding-agent/registry/persisted-agents";
 import { isLocalAgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session-handle";
+import { type ForkWorkspace, type Inheritance, inheritSourceWorkspace, type Rejected, type WorkspacePlan } from "../_shared/workspace.ts";
 import { liveRequest, observedHere, type ParkedRequest, parkedRequest, type SourceRequest } from "./replica.ts";
 import { askSource } from "./source-channel.ts";
-import { type ForkWorkspace, type Inheritance, inheritSourceWorkspace, type Rejected, type WorkspacePlan } from "./workspace.ts";
 
 export type ForkSource =
 	| { readonly kind: "caller"; readonly request: SourceRequest; readonly file: string; readonly cwd: string }

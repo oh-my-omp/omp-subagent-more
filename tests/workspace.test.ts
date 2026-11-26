@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { applyOverlay, inheritSourceWorkspace, overlayFilePath, rejection, writeOverlay } from "../extensions/_shared/workspace.ts";
 import { inheritKeptBranch, keptTaskBranch } from "../extensions/flow/inherit.ts";
-import { applyOverlay, inheritSourceWorkspace, overlayFilePath, rejection, writeOverlay } from "../extensions/fork-task/workspace.ts";
 
 let dir: string;
 beforeEach(async () => {

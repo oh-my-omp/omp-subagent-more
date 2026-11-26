@@ -1,5 +1,5 @@
+import type { ForkWorkspace } from "../_shared/workspace.ts";
 import type { ForkSource } from "./source.ts";
-import type { ForkWorkspace } from "./workspace.ts";
 
 function workspaceNotice(source: ForkSource, parentCwd: string, workspace: ForkWorkspace): string[] {
 	const shared = workspace.kind === "shared";

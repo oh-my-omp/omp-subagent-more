@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "@oh-my-pi/omptype/zod";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import { hasErrorCode } from "./errors.ts";
+import { readOptional, sessionArtifactsDir } from "../_shared/session-files.ts";
 import type { PortableSource, Replica } from "./replica.ts";
 
 const requestSchema = z.object({
@@ -47,11 +47,6 @@ const portableSourceSchema = z.object({
 	cwd: z.string(),
 });
 
-export function sessionArtifactsDir(sessionFile: string): string {
-	if (!sessionFile.endsWith(".jsonl")) throw new Error(`fork_task: ${sessionFile} is not a session transcript`);
-	return sessionFile.slice(0, -".jsonl".length);
-}
-
 export function replicaFilePath(childFile: string): string {
 	return path.join(sessionArtifactsDir(childFile), "fork-task.replica.json");
 }
@@ -67,6 +62,7 @@ export async function readReplicaFile(file: string): Promise<Replica | undefined
 	const { request, replay, ...rest } = portableSchema.parse(JSON.parse(text));
 	return {
 		...rest,
+		// SAFETY: writeReplicaFile serialized this request from a Replica["request"]; requestSchema checks its model/context/options shape and passthrough keeps every host field.
 		request: request as unknown as Replica["request"],
 		replay: replay.kind === "prefix" ? { kind: "prefix", response: replay.response, notice: replay.notice } : replay,
 	};
@@ -81,17 +77,9 @@ export function parsePortableSource(value: unknown): PortableSource {
 	if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) throw new Error(`unknown thinking level \`${thinkingLevel}\``);
 	return {
 		...rest,
+		// SAFETY: the source channel and parked file carry a PortableSource["request"] serialized by this extension; requestSchema checks its model/context/options shape and passthrough keeps every host field.
 		request: request as unknown as PortableSource["request"],
 		response,
 		thinkingLevel,
 	};
-}
-
-export async function readOptional(file: string): Promise<string | undefined> {
-	try {
-		return await fs.readFile(file, "utf8");
-	} catch (error) {
-		if (hasErrorCode(error, "ENOENT")) return undefined;
-		throw error;
-	}
 }

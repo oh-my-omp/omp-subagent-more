@@ -5,6 +5,7 @@
 ### Changed
 
 - An `eval` cell whose source, including a script it runs with `%load`, calls the eval prelude's `agent()` or `workpool()` is refused before it runs, in the main session and in subagent sessions, with a reason naming the function and pointing to `help://flow/eval`: subagents started from eval go through the `flow` tool, whose background job is not cancelled when the cell is interrupted ([#57](https://github.com/oh-my-omp/omp-subagent-ng/issues/57))
+- The daily `omomp-check` run, and a manual run with `report_issue` set, keeps one tracking issue in this repository open while the check fails, naming the first failing stage, its error and the `@oh-my-pi/*` versions, and closes it once the check passes; the check now also runs the `oh-my-omp/shared` gate on both extensions ([#43](https://github.com/oh-my-omp/omp-subagent-ng/issues/43))
 
 ## [0.5.1] - 2026-11-26
 

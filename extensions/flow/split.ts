@@ -5,7 +5,7 @@ import { z } from "@oh-my-pi/omptype/zod";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { applyActiveTools } from "../../omomp-shared/active-tools.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
-import { readOptional, sessionArtifactsDir } from "../fork-task/replica-file.ts";
+import { readOptional, sessionArtifactsDir } from "../_shared/session-files.ts";
 
 export const SPLIT_TOOL = "flow_split";
 

@@ -3,9 +3,10 @@ import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import { contextFileCapability, type ContextFile as HostContextFile } from "@oh-my-pi/pi-coding-agent/capability/context-file";
 import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 import type { Delta } from "../../omomp-shared/context-delta.ts";
-import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools, type WorkingDirectory } from "./fork-diff.ts";
+import { readOptional } from "../_shared/session-files.ts";
+import type { WorkingDirectory } from "../_shared/workspace.ts";
+import { type ContextFile, type ForkBaseline, type ForkCurrent, forkDiff, unavailableTools } from "./fork-diff.ts";
 import type { OwnYield } from "./replica.ts";
-import { readOptional } from "./replica-file.ts";
 
 export type Clone = {
 	readonly ownYield: OwnYield | undefined;
