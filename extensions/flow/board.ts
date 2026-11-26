@@ -2,18 +2,7 @@ import { type Accessor, type JSXNode, type KeyEvent, signal, type TextEdit } fro
 import { tr } from "../../omomp-shared/i18n.ts";
 import { errorText } from "../fork-task/errors.ts";
 import { node } from "./node.ts";
-import type {
-	BoxEdge,
-	BoxView,
-	FlowView,
-	Freshness,
-	Handoff,
-	MonitorOutcome,
-	MonitorPort,
-	MonitorRequest,
-	UnitPhase,
-	UnitView,
-} from "./view.ts";
+import type { BoxEdge, FlowView, Freshness, Handoff, MonitorOutcome, MonitorPort, MonitorRequest, UnitPhase, UnitView } from "./view.ts";
 
 export type BoardProps = {
 	readonly view: Accessor<FlowView>;
@@ -207,18 +196,23 @@ function edgeText(edge: BoxEdge): string {
 	return `${edge.field}${suffix}`.replaceAll("|", "/").replaceAll("\n", " ");
 }
 
-function boxLabel(box: BoxView, units: readonly UnitView[]): string {
+function boxState(units: readonly UnitView[]): string {
 	const raised = raisedCount(units);
-	return `${box.name} ${settledCount(units)}/${units.length}${raised > 0 ? ` !${raised}` : ""}`;
+	return `${settledCount(units)}/${units.length}${raised > 0 ? ` !${raised}` : ""}`;
 }
 
-function wiring(view: FlowView): string {
+function unitsOfBoxes(view: FlowView): ReadonlyMap<string, readonly UnitView[]> {
 	const unitsByBox = new Map<string, UnitView[]>();
 	for (const unit of view.units) {
 		const own = unitsByBox.get(unit.box);
 		if (own === undefined) unitsByBox.set(unit.box, [unit]);
 		else own.push(unit);
 	}
+	return unitsByBox;
+}
+
+function wiring(view: FlowView): string {
+	const unitsByBox = unitsOfBoxes(view);
 	const inputs: string[] = [];
 	for (const box of view.boxes) {
 		for (const edge of box.edges) if (edge.source.kind === "input" && !inputs.includes(edge.source.name)) inputs.push(edge.source.name);
@@ -236,7 +230,7 @@ function wiring(view: FlowView): string {
 	for (const name of inputs) lines.push(`\t${inputIds.get(name)}([${mermaidLabel(`input: ${name}`)}])`);
 	for (const box of view.boxes) {
 		const units = unitsByBox.get(box.name) ?? [];
-		lines.push(`\t${boxIds.get(box.name)}[${mermaidLabel(boxLabel(box, units))}]`);
+		lines.push(`\t${boxIds.get(box.name)}[${mermaidLabel(`${box.name} ${boxState(units)}`)}]`);
 	}
 	for (const name of missing) lines.push(`\t${boxIds.get(name)}[${mermaidLabel(name)}]`);
 	for (const box of view.boxes) {
@@ -357,6 +351,11 @@ function unitsColumn(groups: Record<UnitGroup, readonly UnitView[]>, selected: s
 	});
 }
 
+function boxStates(view: FlowView): JSXNode {
+	const unitsByBox = unitsOfBoxes(view);
+	return node("kv", { items: view.boxes.map((box) => ({ k: box.name, v: boxState(unitsByBox.get(box.name) ?? []) })) });
+}
+
 function wiringColumn(view: FlowView): JSXNode {
 	return node("card", {
 		variant: "bare",
@@ -367,7 +366,7 @@ function wiringColumn(view: FlowView): JSXNode {
 		children:
 			view.boxes.length === 0
 				? [node("text", { text: tr("No boxes defined", "尚未定义盒子"), tone: "muted" })]
-				: [node("md", { text: `\`\`\`mermaid\n${wiring(view)}\n\`\`\`` })],
+				: [boxStates(view), node("md", { text: `\`\`\`mermaid\n${wiring(view)}\n\`\`\`` })],
 	});
 }
 

@@ -335,8 +335,8 @@ await flow.use({ ...loop, boxes: { ...loop.boxes, ...review().boxes } });
 
 | 宿主 | 常驻部分 | 展开部分 |
 |---|---|---|
-| 纯终端里的 omp TUI，包括 Tern 窗格里经 tmux 等多路复用器运行的 omp | 输入框上方 2 行状态条：头行计数与需要处理的第一项 | `alt+w` 或 `/flow-monitor` 打开全屏三栏看板：单元、接线、选中项详情；`Esc` 关闭 |
-| 直接运行在 Tern 窗格里的 omp TUI | 不显示状态条 | 右侧常驻面板（[#51](https://github.com/oh-my-omp/omp-subagent-ng/issues/51)） |
+| 进程环境没有 `TERN_PANE` 的 omp TUI（纯终端） | 输入框上方 2 行状态条：头行计数与需要处理的第一项 | `alt+w` 或 `/flow-monitor` 打开全屏三栏看板：单元、接线（逐盒「已结束/条目数」与接线图）、选中项详情；`Esc` 关闭 |
+| 进程环境有 `TERN_PANE` 的 omp TUI（Tern 窗格，含其中经 tmux 继承该变量的） | 不显示状态条 | 右侧常驻面板（[#51](https://github.com/oh-my-omp/omp-subagent-ng/issues/51)） |
 | rpc、json、print 模式 | 无 | 无 |
 
 看板只发 4 种请求（`MonitorRequest`）：回答抛出（`answer`）、同意或拒绝拆分（`agree`、`disagree`）、停止 flow（`stop`）。每种请求与 `flow` 工具的同名操作走同一判定，被拒时看板显示拒绝原因；被接受的请求在主会话里留下一条 `flow-monitor` 消息，不触发新回合。

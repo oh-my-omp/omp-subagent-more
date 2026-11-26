@@ -1,7 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type Signal, signal } from "@oh-my-pi/pi-tui";
-import { isTernPane } from "@oh-my-pi/pi-tui/driver/caps/identity";
-import { insideMultiplexer } from "@oh-my-pi/pi-tui/driver/mux/detect";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { errorText } from "../fork-task/errors.ts";
 import { boardNode } from "./board.ts";
@@ -20,7 +18,7 @@ const TRAY_KEY = "flow.tray";
 
 export function placementOf(ctx: ExtensionContext): Placement {
 	if (!ctx.hasUI || ctx.mode !== "tui") return { kind: "none" };
-	return process.env.TERN_PANE && isTernPane(Bun.env) && !insideMultiplexer(Bun.env) ? { kind: "tern" } : { kind: "terminal" };
+	return process.env.TERN_PANE ? { kind: "tern" } : { kind: "terminal" };
 }
 
 type Watched = {
