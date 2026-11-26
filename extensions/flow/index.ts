@@ -32,6 +32,7 @@ import type { ForkItem } from "../fork-task/schema.ts";
 import { headerCwd, type Inheritance, inheritSourceWorkspace, writeOverlay, writePrepare } from "../fork-task/workspace.ts";
 import { type AgentBox, type CommandBox, fill, isObject, type Json, parseJson, type Result, shellWord } from "./defs.ts";
 import { DESCRIPTION, flowTopics, registerFlowTopics } from "./docs.ts";
+import { registerEvalGuard } from "./eval-guard.ts";
 import { inheritKeptBranch, inheritReleasedPatch, keptTaskBranch } from "./inherit.ts";
 import { appendLog, readLog } from "./journal.ts";
 import { type Firing, lookup } from "./plan.ts";
@@ -763,6 +764,7 @@ export default function flow(pi: ExtensionAPI): void {
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	registerSplitTool(pi);
 	registerFlowTopics();
+	registerEvalGuard(pi);
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
 		name: "flow",
 		label: tr("Flow", "流程"),

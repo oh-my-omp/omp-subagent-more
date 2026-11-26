@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- An `eval` cell whose source calls the eval prelude's `agent()` or `workpool()` is refused before it runs, in the main session and in subagent sessions, with a reason naming the function and pointing to `help://flow/eval`: subagents started from eval go through the `flow` tool, whose background job is not cancelled when the cell is interrupted ([#57](https://github.com/oh-my-omp/omp-subagent-ng/issues/57))
+
 ## [0.5.1] - 2026-11-26
 
 ### Fixed
