@@ -8,6 +8,7 @@ export type ViewFeed = {
 
 export type MonitorFlow = {
 	readonly sessionFile: string;
+	readonly dir: string;
 	readonly feed: ViewFeed;
 	readonly port: MonitorPort;
 };

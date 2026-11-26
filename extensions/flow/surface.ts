@@ -3,23 +3,36 @@ import { type Signal, signal } from "@oh-my-pi/pi-tui";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { errorText } from "../fork-task/errors.ts";
 import { boardNode } from "./board.ts";
+import type { Result } from "./defs.ts";
 import type { MonitorFlow } from "./monitor.ts";
+import { type TernPanel, ternPanel } from "./tern.ts";
 import { trayNode } from "./tray.ts";
 import type { FlowView } from "./view.ts";
 
 export type MonitorAccess = {
 	readonly load: (ctx: ExtensionContext) => Promise<MonitorFlow | undefined>;
 	readonly attach: (listener: (flow: MonitorFlow) => void) => () => void;
+	readonly started: (listener: (flow: MonitorFlow) => void) => () => void;
 };
 
-export type Placement = { readonly kind: "none" } | { readonly kind: "tern" } | { readonly kind: "terminal" };
+export type Placement = { readonly kind: "none" } | { readonly kind: "tern"; readonly pane: string } | { readonly kind: "terminal" };
 
 const TRAY_KEY = "flow.tray";
 
 export function placementOf(ctx: ExtensionContext): Placement {
 	if (!ctx.hasUI || ctx.mode !== "tui") return { kind: "none" };
-	return process.env.TERN_PANE ? { kind: "tern" } : { kind: "terminal" };
+	const pane = process.env.TERN_PANE;
+	return pane ? { kind: "tern", pane } : { kind: "terminal" };
 }
+
+type TernHome = {
+	readonly sessionFile: string;
+	readonly pane: string;
+	readonly ctx: ExtensionContext;
+	panel: TernPanel | undefined;
+};
+
+const NO_FLOW = (): string => tr("This session has no flow yet.", "本会话还没有 flow。");
 
 type Watched = {
 	readonly sessionFile: string;
@@ -31,10 +44,40 @@ type Watched = {
 export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 	let watched: Watched | undefined;
 	let boardOpen = false;
+	let home: TernHome | undefined;
 
 	const unwatch = (): void => {
 		watched?.off();
 		watched = undefined;
+	};
+
+	const leaveTern = (): void => {
+		home?.panel?.close();
+		home = undefined;
+	};
+
+	const settleTern = (pane: string, sessionFile: string | undefined, ctx: ExtensionContext): void => {
+		if (home && home.sessionFile === sessionFile) {
+			home = { sessionFile: home.sessionFile, pane, ctx, panel: home.panel };
+			return;
+		}
+		leaveTern();
+		if (sessionFile) home = { sessionFile, pane, ctx, panel: undefined };
+	};
+
+	const panelOf = (target: TernHome, flow: MonitorFlow): TernPanel => {
+		if (target.panel && target.panel.flow === flow) return target.panel;
+		target.panel?.close();
+		const panel = ternPanel(flow, target.pane, (message, fields) => pi.logger.warn(message, fields));
+		target.panel = panel;
+		return panel;
+	};
+
+	const report = (ctx: ExtensionContext, result: Result<void>): void => {
+		if (result.ok) return;
+		const text = result.problems.join("; ");
+		pi.logger.warn("flow panel failed", { error: text });
+		if (ctx.hasUI) ctx.ui.notify(`${tr("Flow panel failed", "flow 面板失败")}: ${text}`, "error");
 	};
 
 	const follow = (target: Watched, flow: MonitorFlow): void => {
@@ -46,18 +89,22 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 	const install = async (ctx: ExtensionContext): Promise<void> => {
 		unwatch();
 		const placement = placementOf(ctx);
+		const sessionFile = ctx.sessionManager.getSessionFile();
 		switch (placement.kind) {
 			case "none":
+				leaveTern();
+				return;
 			case "tern":
+				settleTern(placement.pane, sessionFile, ctx);
 				return;
 			case "terminal":
+				leaveTern();
 				break;
 			default: {
 				const unreachable: never = placement;
 				return unreachable;
 			}
 		}
-		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (!sessionFile) {
 			ctx.ui.setWidget(TRAY_KEY, undefined);
 			return;
@@ -69,12 +116,23 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 		if (flow && watched === target) follow(target, flow);
 	};
 
+	const showPanel = async (ctx: ExtensionContext): Promise<void> => {
+		const target = home;
+		const flow = target ? await access.load(ctx) : undefined;
+		if (!target || !flow || flow.sessionFile !== target.sessionFile) {
+			ctx.ui.notify(NO_FLOW(), "info");
+			return;
+		}
+		report(ctx, await panelOf(target, flow).show());
+	};
+
 	const openBoard = async (ctx: ExtensionContext): Promise<void> => {
 		const placement = placementOf(ctx);
 		switch (placement.kind) {
 			case "none":
-			case "tern":
 				return;
+			case "tern":
+				return showPanel(ctx);
 			case "terminal":
 				break;
 			default: {
@@ -85,7 +143,7 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 		const target = watched;
 		const flow = target?.flow ?? (await access.load(ctx));
 		if (!target || !flow) {
-			ctx.ui.notify(tr("This session has no flow yet.", "本会话还没有 flow。"), "info");
+			ctx.ui.notify(NO_FLOW(), "info");
 			return;
 		}
 		follow(target, flow);
@@ -120,6 +178,14 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 		if (watched && watched.sessionFile === flow.sessionFile) follow(watched, flow);
 	});
 
+	access.started((flow) => {
+		const target = home;
+		if (!target || target.sessionFile !== flow.sessionFile) return;
+		void panelOf(target, flow)
+			.open()
+			.then((result) => report(target.ctx, result));
+	});
+
 	const reinstall = (_event: unknown, ctx: ExtensionContext): Promise<void> => guarded(install)(ctx);
 	pi.on("session_start", reinstall);
 	pi.on("session_switch", reinstall);
@@ -127,6 +193,7 @@ export function registerMonitor(pi: ExtensionAPI, access: MonitorAccess): void {
 	pi.on("session_tree", reinstall);
 	pi.on("session_shutdown", (_event, ctx) => {
 		unwatch();
+		leaveTern();
 		if (ctx.hasUI) ctx.ui.setWidget(TRAY_KEY, undefined);
 	});
 

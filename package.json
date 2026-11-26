@@ -36,7 +36,9 @@
 		"@oh-my-pi/pi-ai": "*",
 		"@oh-my-pi/pi-catalog": "*",
 		"@oh-my-pi/pi-coding-agent": "*",
-		"@oh-my-pi/pi-tui": "*"
+		"@oh-my-pi/pi-natives": "*",
+		"@oh-my-pi/pi-tui": "*",
+		"@oh-my-pi/pi-utils": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "latest",
@@ -45,7 +47,9 @@
 		"@oh-my-pi/pi-ai": "latest",
 		"@oh-my-pi/pi-catalog": "latest",
 		"@oh-my-pi/pi-coding-agent": "latest",
+		"@oh-my-pi/pi-natives": "latest",
 		"@oh-my-pi/pi-tui": "latest",
+		"@oh-my-pi/pi-utils": "latest",
 		"@types/bun": "latest",
 		"typescript": "latest"
 	}

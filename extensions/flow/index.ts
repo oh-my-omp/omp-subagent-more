@@ -232,6 +232,7 @@ type Runtime = {
 	readonly flows: Map<string, Flow>;
 	readonly spawns: Map<string, Prepared>;
 	readonly attached: Set<(flow: MonitorFlow) => void>;
+	readonly started: Set<(flow: MonitorFlow) => void>;
 };
 
 const spawnId = (dir: string, name: string): string => `${dir}\n${name}`;
@@ -263,7 +264,7 @@ async function flowOf(rt: Runtime, parent: AgentSession): Promise<Flow> {
 		dir,
 		running: new Map(),
 		live,
-		monitor: { sessionFile, feed, port: { send: async (request) => control(rt, flow, request) } },
+		monitor: { sessionFile, dir, feed, port: { send: async (request) => control(rt, flow, request) } },
 		kick: () => {},
 		driving: false,
 	};
@@ -828,6 +829,7 @@ async function executeFlow(
 				pruneBoards(flow);
 				const lines = [...verdict.lines];
 				if (command.kind === "run") {
+					for (const listener of rt.started) listener(flow.monitor);
 					const job = ensureDriver(rt, parent, flow);
 					lines.push(
 						job === undefined
@@ -851,7 +853,7 @@ async function executeFlow(
 }
 
 export default function flow(pi: ExtensionAPI): void {
-	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), attached: new Set() };
+	const rt: Runtime = { pi, flows: new Map(), spawns: new Map(), attached: new Set(), started: new Set() };
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
 	registerMonitor(pi, {
 		load: async (ctx) => {
@@ -862,6 +864,12 @@ export default function flow(pi: ExtensionAPI): void {
 			rt.attached.add(listener);
 			return () => {
 				rt.attached.delete(listener);
+			};
+		},
+		started: (listener) => {
+			rt.started.add(listener);
+			return () => {
+				rt.started.delete(listener);
 			};
 		},
 	});
