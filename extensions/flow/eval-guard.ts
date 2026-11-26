@@ -33,7 +33,9 @@ const ASSIGN_LINE = /^[ \t]*[A-Za-z_][A-Za-z_0-9.[\], ]*?\s*=\s*(.+)$/;
 
 const INLINE_LOAD = /^%load(?:\s+([\s\S]*))?$/;
 
-const BODY_CELL_MAGICS: Readonly<Record<string, true>> = { capture: true, timeit: true, time: true };
+const CODE_LINE_MAGIC = /^%(?:time|timeit)(?:\s+([\s\S]*))?$/;
+
+const BODY_CELL_MAGICS: Readonly<Record<string, true>> = { capture: true, timeit: true };
 
 type Quote = { readonly mark: string; readonly triple: boolean; readonly raw: boolean };
 
@@ -96,6 +98,8 @@ export function normalizePython(source: string): PythonCell {
 				const load = INLINE_LOAD.exec(magic);
 				if (load) loads.push(load[1] ?? "");
 				kept.fill("", i, end);
+				const code = CODE_LINE_MAGIC.exec(magic)?.[1];
+				if (code !== undefined) kept[i] = `${/^[ \t]*/.exec(line)?.[0] ?? ""}${code.replace(/\n/g, " ")}`;
 				i = end;
 				continue;
 			}

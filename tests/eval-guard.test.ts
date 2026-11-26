@@ -40,11 +40,15 @@ describe("eval guard: calls in the cell", () => {
 		expect(await js("const t = `${await agent('q')}`;")).toContain("`agent()`");
 	});
 
-	test("Python calls in f-string expressions, after magic lines and inside %%capture bodies are refused", async () => {
+	test("Python calls in f-string expressions, after magic lines, in %time/%timeit arguments and in %%capture/%%timeit bodies are refused", async () => {
 		expect(await py("x = f\"{agent('a')}\"")).toContain("`agent()`");
 		expect(await py('!ls\nfiles = !ls\nout = %pwd\nagent("hi")')).toContain("`agent()`");
 		expect(await py('!echo "unclosed (paren\nagent("p")')).toContain("`agent()`");
 		expect(await py('%%capture out\nworkpool("task:low")')).toContain("`workpool()`");
+		expect(await py('%time agent("x")')).toContain("`agent()`");
+		expect(await py('def f():\n    r = %timeit workpool("task:low")\n    return r')).toContain("`workpool()`");
+		expect(await py('%time print(1) or \\\n    agent("x")')).toContain("`agent()`");
+		expect(await py('%%timeit\nagent("x")')).toContain("`agent()`");
 	});
 
 	test("names in strings, comments, members, keyword arguments and cell-magic payloads do not refuse the cell", async () => {
