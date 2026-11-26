@@ -285,13 +285,22 @@ function control(rt: Runtime, flow: Flow, request: MonitorRequest): MonitorOutco
 		case "answer":
 		case "stop": {
 			const verdict = flow.store.submit(
-				request.kind === "answer" ? { kind: "answer", key: request.key, value: request.text } : { kind: "stop", reason: request.reason },
+				request.kind === "answer"
+					? { kind: "answer", key: request.key, value: request.text }
+					: {
+							kind: "stop",
+							reason: request.reason === "" ? "stopped by the operator" : `stopped by the operator: ${request.reason}`,
+						},
 			);
 			if (!verdict.accepted) return { kind: "refused", reasons: verdict.refusals };
 			pruneBoards(flow);
 			flow.kick();
 			const summary =
-				request.kind === "answer" ? `answered the raise of \`${request.key}\`: ${request.text}` : `stopped the flow: ${request.reason}`;
+				request.kind === "answer"
+					? `answered the raise of \`${request.key}\`: ${request.text}`
+					: request.reason === ""
+						? "stopped the flow"
+						: `stopped the flow: ${request.reason}`;
 			rt.pi.sendMessage(
 				{ customType: "flow-monitor", content: `The operator ${summary} (from the flow monitor).`, display: true },
 				{ triggerTurn: false },

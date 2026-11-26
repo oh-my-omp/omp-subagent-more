@@ -198,10 +198,6 @@ function raisedCount(units: readonly UnitView[]): number {
 	return units.filter((unit) => unit.phase.kind === "raised").length;
 }
 
-function mermaidId(prefix: string, name: string): string {
-	return `${prefix}_${name.replace(/[^A-Za-z0-9_]/g, "_")}`;
-}
-
 function mermaidLabel(text: string): string {
 	return `"${text.replaceAll('"', "#quot;")}"`;
 }
@@ -227,16 +223,26 @@ function wiring(view: FlowView): string {
 	for (const box of view.boxes) {
 		for (const edge of box.edges) if (edge.source.kind === "input" && !inputs.includes(edge.source.name)) inputs.push(edge.source.name);
 	}
+	const missing: string[] = [];
+	for (const box of view.boxes) {
+		for (const edge of box.edges) {
+			const name = edge.source.kind === "box" ? edge.source.box : undefined;
+			if (name !== undefined && !view.boxes.some((known) => known.name === name) && !missing.includes(name)) missing.push(name);
+		}
+	}
+	const inputIds = new Map(inputs.map((name, index) => [name, `i${index}`]));
+	const boxIds = new Map([...view.boxes.map((box) => box.name), ...missing].map((name, index) => [name, `b${index}`]));
 	const lines = ["flowchart TD"];
-	for (const name of inputs) lines.push(`\t${mermaidId("i", name)}([${mermaidLabel(`input: ${name}`)}])`);
+	for (const name of inputs) lines.push(`\t${inputIds.get(name)}([${mermaidLabel(`input: ${name}`)}])`);
 	for (const box of view.boxes) {
 		const units = unitsByBox.get(box.name) ?? [];
-		lines.push(`\t${mermaidId("b", box.name)}[${mermaidLabel(boxLabel(box, units))}]`);
+		lines.push(`\t${boxIds.get(box.name)}[${mermaidLabel(boxLabel(box, units))}]`);
 	}
+	for (const name of missing) lines.push(`\t${boxIds.get(name)}[${mermaidLabel(name)}]`);
 	for (const box of view.boxes) {
-		const target = mermaidId("b", box.name);
+		const target = boxIds.get(box.name);
 		for (const edge of box.edges) {
-			const source = edge.source.kind === "input" ? mermaidId("i", edge.source.name) : mermaidId("b", edge.source.box);
+			const source = edge.source.kind === "input" ? inputIds.get(edge.source.name) : boxIds.get(edge.source.box);
 			lines.push(`\t${source} -->|${edgeText(edge)}| ${target}`);
 		}
 	}
