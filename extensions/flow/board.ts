@@ -14,9 +14,16 @@ export type BoardProps = {
 
 const STATUS_ROWS = 8;
 const CARD_CHROME_ROWS = 2;
+const ROW_MIN_COLUMNS = 80;
+const STACK_GAP_ROWS = 2;
 
-function columnLines(rows: number): number {
-	return Math.max(3, rows - STATUS_ROWS - CARD_CHROME_ROWS);
+type Layout = { readonly kind: "row"; readonly lines: number } | { readonly kind: "stack"; readonly lines: number };
+
+function layoutOf(columns: number, rows: number): Layout {
+	const room = rows - STATUS_ROWS;
+	return columns >= ROW_MIN_COLUMNS
+		? { kind: "row", lines: Math.max(3, room - CARD_CHROME_ROWS) }
+		: { kind: "stack", lines: Math.max(3, Math.floor((room - 3 * CARD_CHROME_ROWS - STACK_GAP_ROWS) / 3)) };
 }
 
 type EditorMode =
@@ -631,13 +638,23 @@ export function boardNode(props: BoardProps): JSXNode {
 		const groups = groupUnits(flow);
 		const ordered = GROUP_ORDER.flatMap((group) => groups[group]);
 		const current = selectedUnit(ordered, selectedKey());
-		const lines = columnLines(props.size().rows);
-		return node("row", {
-			gap: "md",
-			wrap: true,
-			align: "stretch",
-			children: [unitsColumn(groups, current?.key ?? null, lines), wiringColumn(flow, lines), detailColumn(current, lines)],
-		});
+		const size = props.size();
+		const layout = layoutOf(size.columns, size.rows);
+		const cards = [
+			unitsColumn(groups, current?.key ?? null, layout.lines),
+			wiringColumn(flow, layout.lines),
+			detailColumn(current, layout.lines),
+		];
+		switch (layout.kind) {
+			case "row":
+				return node("row", { gap: "md", align: "stretch", children: cards });
+			case "stack":
+				return node("col", { gap: "sm", children: cards });
+			default: {
+				const unreachable: never = layout;
+				throw new Error(`Unexpected board layout: ${String(unreachable)}`);
+			}
+		}
 	};
 
 	const footer = node("col", {
