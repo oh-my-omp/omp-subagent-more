@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-26
+
 ### Fixed
 
 - `help://flow/eval` documents `flow.define(boxes, opts)` and that it passes `opts.noEscape`, instead of saying the helper takes the boxes only and that changing `noEscape` needs a direct `tool.flow` call
