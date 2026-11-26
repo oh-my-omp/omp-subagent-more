@@ -4,7 +4,7 @@
 
 ### Added
 
-- Flow monitor in the omp TUI unless the process environment has `TERN_PANE`: a 2-line tray above the editor shows the session's flow headline and the first item that needs you (appears only when the flow defines at least one box), and `alt+w` or `/flow-monitor` opens a full-screen board of units, wiring and detail that answers raises, agrees to or refuses splits and stops the flow; disagree requires a non-empty reason, each request judged like the `flow` op of the same name ([#50](https://github.com/oh-my-omp/omp-subagent-ng/issues/50))
+- Flow monitor in the omp TUI unless the process environment has `TERN_PANE`: a 2-line tray above the editor shows the session's flow headline and the first item that needs you (appears only when the flow defines at least one box), and `alt+w` or `/flow-monitor` opens a full-screen board showing the request line above columns of units, wiring and detail that answers raises, agrees to or refuses splits and stops the flow; disagree requires a non-empty reason, each request judged like the `flow` op of the same name ([#50](https://github.com/oh-my-omp/omp-subagent-ng/issues/50))
 
 ## [0.5.1] - 2026-11-26
 

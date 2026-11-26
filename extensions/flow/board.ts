@@ -624,7 +624,7 @@ export function boardNode(props: BoardProps): JSXNode {
 		});
 	};
 
-	const footer = node("col", {
+	const status = node("col", {
 		gap: "xs",
 		children: [
 			node("text", { text: () => requestLine(request()), tone: () => requestTone(request()), wrap: "word" }),
@@ -644,6 +644,6 @@ export function boardNode(props: BoardProps): JSXNode {
 		role: "omp.flow.board",
 		gap: "sm",
 		onKey,
-		children: [columns, footer],
+		children: [status, columns],
 	});
 }
