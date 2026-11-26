@@ -15,7 +15,7 @@ type Link = { readonly kind: "idle" } | { readonly kind: "connected"; readonly c
 
 type Open = { readonly kind: "open"; readonly server: IpcServer; pane: string | null; link: Link };
 
-type PanelState = { readonly kind: "closed" } | { readonly kind: "opening" } | Open;
+type PanelState = { readonly kind: "closed" } | { readonly kind: "opening" } | Open | { readonly kind: "ended" };
 
 export type TernPanel = {
 	readonly flow: MonitorFlow;
@@ -62,6 +62,7 @@ function blockOf(stdout: string): Result<string> {
 
 export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): TernPanel {
 	let state: PanelState = { kind: "closed" };
+	let closing: Promise<void> = Promise.resolve();
 
 	const release = (target: Open): void => {
 		if (state !== target) return;
@@ -72,7 +73,7 @@ export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): Te
 			link.off();
 			link.connection.end();
 		}
-		void target.server.close();
+		closing = target.server.close().catch((error: unknown) => log("flow panel: the server did not close", { reason: errorText(error) }));
 	};
 
 	const reply = (connection: IpcConnection, frame: PanelFrame): void => {
@@ -108,6 +109,8 @@ export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): Te
 	const open = async (): Promise<Result<void>> => {
 		if (state.kind !== "closed") return done;
 		state = { kind: "opening" };
+		await closing;
+		if (state.kind !== "opening") return done;
 		let target: Open | undefined;
 		try {
 			const server = await IpcServer.listen(
@@ -125,7 +128,7 @@ export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): Te
 			target = { kind: "open", server, pane: null, link: { kind: "idle" } };
 			state = target;
 		} catch (error) {
-			state = { kind: "closed" };
+			if (state.kind === "opening") state = { kind: "closed" };
 			return {
 				ok: false,
 				problems: [tr(`the flow panel could not listen: ${errorText(error)}`, `flow 面板无法监听：${errorText(error)}`)],
@@ -165,10 +168,12 @@ export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): Te
 			case "open": {
 				if (current.pane === null) return done;
 				const focused = await tern(["focus", current.pane, "--json"]);
-				if (focused.ok) return done;
+				if (focused.ok || state.kind === "ended") return done;
 				release(current);
 				return open();
 			}
+			case "ended":
+				return done;
 			default: {
 				const unreachable: never = current;
 				return unreachable;
@@ -178,7 +183,7 @@ export function ternPanel(flow: MonitorFlow, ownPane: string, log: PanelLog): Te
 
 	const close = (): void => {
 		if (state.kind === "open") release(state);
-		else state = { kind: "closed" };
+		state = { kind: "ended" };
 	};
 
 	return { flow, open, show, close };
