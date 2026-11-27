@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the shared copy of `compact-handoff.ts` to oh-my-omp/shared@e037d66.
+
 ## [0.5.2] - 2026-11-27
 
 ### Changed
