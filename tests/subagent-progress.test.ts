@@ -221,7 +221,7 @@ describe("registerSubagentProgress compact handoff", () => {
 		} as unknown as ExtensionAPI;
 	}
 
-	test("registers omp-subagent-ng in the shared compact coordinator and silently gates when no live subagents exist", () => {
+	test("registers omp-subagent-ng in the shared compact coordinator and emits an empty-state claim when no live subagents exist", () => {
 		const coordinator = getSharedCompactCoordinator();
 		registerSubagentProgress(createMockPi(), () => {});
 		expect(coordinator.listPluginIds()).toContain("omp-subagent-ng");
@@ -241,6 +241,10 @@ describe("registerSubagentProgress compact handoff", () => {
 
 		expect(snapshot.inactiveStatefulPluginIds).toContain("omp-subagent-ng");
 		expect(snapshot.activeHandoffs.some((h) => h.pluginId === "omp-subagent-ng")).toBe(false);
+		const emptyClaimLine = snapshot.compactingResult.context?.find((line) => line.startsWith("harness-provided [omp-subagent-ng]"));
+		expect(emptyClaimLine).toBeDefined();
+		expect(emptyClaimLine).toContain("zero in-flight subagents");
+		expect(emptyClaimLine).not.toContain("\n");
 	});
 
 	test("captures live subagents and emits a plugin-managed claim + injection spec", () => {

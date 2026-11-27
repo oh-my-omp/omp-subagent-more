@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `omp-subagent-ng` emits an empty-state compaction exclusion claim when no subagents are in flight at compaction so summaries do not report finished prefix subagents as still running, and updates `omomp-shared/compact-handoff.ts` to `COMPACT_HANDOFF_REVISION = 3` ([#69](https://github.com/oh-my-omp/omp-subagent-ng/issues/69))
+
 ## [0.5.2] - 2026-11-27
 
 ### Changed

@@ -165,6 +165,8 @@ export function registerSubagentProgress(pi: ExtensionAPI, warn: (message: strin
 		pi,
 		defineStatefulHarnessHandoff<{ readonly subagentIds: readonly string[] }>({
 			pluginId: "omp-subagent-ng",
+			inactiveClaim:
+				"`omp-subagent-ng` (`<subagent-progress>`) confirms zero in-flight subagents at compaction — NEVER report historical prefix subagents as still running or write subagent status rosters/tables.",
 			captureState(compactCtx) {
 				const extCtx = compactCtx.extensionCtx;
 				const subagents = extCtx ? liveSubagents(extCtx.agent.id, extCtx.sessionManager.getSessionFile()) : [];
