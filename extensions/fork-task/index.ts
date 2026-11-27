@@ -29,7 +29,7 @@ import { type Clone, cloneDiff, yieldDelta } from "./clone.ts";
 import { errorText } from "./errors.ts";
 import { applyReplica, captureReplica, observeRequests } from "./replica.ts";
 import { readReplicaFile, replicaFilePath, sessionArtifactsDir, writeReplicaFile } from "./replica-file.ts";
-import { registerReportLimit } from "./report-limit.ts";
+import { type Ask, createReportLimitGuard, type ReportLimitGuard } from "./report-limit.ts";
 import { FORK_AGENT, type RoleResolver, roleResolver } from "./role.ts";
 import { DESCRIPTION, type ForkItem, paramsSchema } from "./schema.ts";
 import { placeWorkspace, resolveSource } from "./source.ts";
@@ -49,6 +49,7 @@ type ForkTaskRuntime = {
 	readonly deltas: DeltaStream;
 	readonly diffs: DeltaStream;
 	readonly started: Set<string>;
+	readonly checkReportLimit: ReportLimitGuard;
 };
 
 async function beforeSubagentSpawn(
@@ -301,6 +302,8 @@ async function executeForkTask(
 		await parent.sessionManager.flush();
 		const parentFile = parent.sessionManager.getSessionFile();
 		if (!parentFile) return fail("fork_task: forking needs a persisted session.");
+		const blocked = await rt.checkReportLimit(params, ctx);
+		if (blocked !== null) return fail(blocked);
 		const batch: Batch = {
 			ctx,
 			parent,
@@ -352,7 +355,7 @@ async function executeForkTask(
 	}
 }
 
-export default function forkTask(pi: ExtensionAPI): void {
+export function registerForkTask(pi: ExtensionAPI, reportLimitAsk?: Ask): void {
 	const warn = (message: string, error: unknown) => pi.logger.warn(message, { error: errorText(error) });
 	serveSources(warn);
 	const rt: ForkTaskRuntime = {
@@ -363,6 +366,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 		deltas: createDeltaStream("omp-subagent-ng/fork-task"),
 		diffs: createDeltaStream("omp-subagent-ng/fork-diff"),
 		started: new Set(),
+		checkReportLimit: createReportLimitGuard(pi, reportLimitAsk),
 	};
 
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
@@ -377,7 +381,6 @@ export default function forkTask(pi: ExtensionAPI): void {
 		rt.diffs.turnStarted();
 	});
 	registerSubagentProgress(pi, warn);
-	registerReportLimit(pi);
 
 	registerForkTaskTopics();
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
@@ -390,4 +393,8 @@ export default function forkTask(pi: ExtensionAPI): void {
 		execute: executeForkTask.bind(null, rt),
 	};
 	pi.registerTool(omompTool(tool));
+}
+
+export default function forkTask(pi: ExtensionAPI): void {
+	registerForkTask(pi);
 }
