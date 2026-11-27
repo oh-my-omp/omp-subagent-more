@@ -3,7 +3,8 @@ import * as path from "node:path";
 import type { AgentTool, StreamFn } from "@oh-my-pi/pi-agent-core";
 import type { Context, Message, Model, SimpleStreamOptions, Tool, ToolChoice } from "@oh-my-pi/pi-ai";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
-import { parkedFilePath, parsePortableSource, readOptional } from "./replica-file.ts";
+import { readOptional } from "../_shared/session-files.ts";
+import { parkedFilePath, parsePortableSource } from "./replica-file.ts";
 
 /**
  * Plain data only: the agent loop hands providers spread copies of

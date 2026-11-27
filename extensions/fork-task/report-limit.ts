@@ -1,6 +1,6 @@
 import { z } from "@oh-my-pi/omptype/zod";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { errorText } from "./errors.ts";
+import { errorText } from "../_shared/errors.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 
 const ROLE = "omp-subagent-ng";

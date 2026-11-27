@@ -24,20 +24,30 @@ import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-shared/context-delta.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { omompTool } from "../../omomp-shared/tool-entry.ts";
-import { callerSession } from "./caller-session.ts";
+import { callerSession } from "../_shared/caller-session.ts";
+import { errorText } from "../_shared/errors.ts";
+import type { ForkItem } from "../_shared/fork-item.ts";
+import { sessionArtifactsDir } from "../_shared/session-files.ts";
+import {
+	applyOverlay,
+	recordStart,
+	rejection,
+	resolveForkWorkspace,
+	runPrepare,
+	workingDirectory,
+	writeOverlay,
+} from "../_shared/workspace.ts";
 import { type Clone, cloneDiff, yieldDelta } from "./clone.ts";
-import { errorText } from "./errors.ts";
 import { applyReplica, captureReplica, observeRequests } from "./replica.ts";
-import { readReplicaFile, replicaFilePath, sessionArtifactsDir, writeReplicaFile } from "./replica-file.ts";
+import { readReplicaFile, replicaFilePath, writeReplicaFile } from "./replica-file.ts";
 import { type Ask, createReportLimitGuard, type ReportLimitGuard } from "./report-limit.ts";
 import { FORK_AGENT, type RoleResolver, roleResolver } from "./role.ts";
-import { DESCRIPTION, type ForkItem, paramsSchema } from "./schema.ts";
+import { DESCRIPTION, paramsSchema } from "./schema.ts";
 import { placeWorkspace, resolveSource } from "./source.ts";
 import { serveSources } from "./source-channel.ts";
 import { allocatedFrom, claimsName, discardPending, moveFile, type PendingFork, stageFork } from "./stage.ts";
 import { registerSubagentProgress } from "./subagent-progress.ts";
 import { docTopics, registerForkTaskTopics } from "./topics.ts";
-import { applyOverlay, recordStart, rejection, resolveForkWorkspace, runPrepare, workingDirectory, writeOverlay } from "./workspace.ts";
 
 const progressSchema = z.object({ progress: z.array(z.object({ index: z.number(), id: z.string() }).passthrough()) }).passthrough();
 

@@ -1,7 +1,6 @@
 import type { Delta } from "../../omomp-shared/context-delta.ts";
+import type { WorkingDirectory } from "../_shared/workspace.ts";
 import type { ContextFragment } from "./replica.ts";
-
-export type WorkingDirectory = { readonly path: string; readonly repoRoot: string | undefined };
 
 export type ForkBaseline = {
 	readonly cwd: WorkingDirectory;

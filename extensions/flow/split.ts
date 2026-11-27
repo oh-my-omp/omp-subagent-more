@@ -6,7 +6,7 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } 
 import { applyActiveTools } from "../../omomp-shared/active-tools.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
 import { omompTool } from "../../omomp-shared/tool-entry.ts";
-import { readOptional, sessionArtifactsDir } from "../fork-task/replica-file.ts";
+import { readOptional, sessionArtifactsDir } from "../_shared/session-files.ts";
 
 export const SPLIT_TOOL = "flow_split";
 
