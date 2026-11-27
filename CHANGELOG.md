@@ -6,6 +6,10 @@
 
 - `omp-subagent-ng` emits an empty-state compaction exclusion claim when no subagents are in flight at compaction so summaries do not report finished prefix subagents as still running, and updates `omomp-shared/compact-handoff.ts` to `COMPACT_HANDOFF_REVISION = 3` ([#69](https://github.com/oh-my-omp/omp-subagent-ng/issues/69))
 
+### Fixed
+
+- `flow`, `flow_split` and `fork_task` treat an argument whose value is empty (a blank string, `[]`, `{}` or `null`) as if the field had not been written: `flow` no longer refuses a call because a field of another op was written with an empty value, `flow` op `stop` with a blank `reason` records the same stop as an omitted one, a `fork_task` `outputSchema` of `{}` delivers by the role's own output definition as an omitted one does, and a `tasks` element that is empty (such as `{}`) refuses the call with the element's index instead of dispatching ([#54](https://github.com/oh-my-omp/omp-subagent-ng/issues/54))
+
 ## [0.5.2] - 2026-11-27
 
 ### Changed

@@ -23,6 +23,7 @@ import { cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/setting
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-shared/context-delta.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
+import { omompTool } from "../../omomp-shared/tool-entry.ts";
 import { callerSession } from "../_shared/caller-session.ts";
 import { errorText } from "../_shared/errors.ts";
 import type { ForkItem } from "../_shared/fork-item.ts";
@@ -39,7 +40,7 @@ import {
 import { type Clone, cloneDiff, yieldDelta } from "./clone.ts";
 import { applyReplica, captureReplica, observeRequests } from "./replica.ts";
 import { readReplicaFile, replicaFilePath, writeReplicaFile } from "./replica-file.ts";
-import { registerReportLimit } from "./report-limit.ts";
+import { type Ask, createReportLimitGuard, type ReportLimitGuard } from "./report-limit.ts";
 import { FORK_AGENT, type RoleResolver, roleResolver } from "./role.ts";
 import { DESCRIPTION, paramsSchema } from "./schema.ts";
 import { placeWorkspace, resolveSource } from "./source.ts";
@@ -58,6 +59,7 @@ type ForkTaskRuntime = {
 	readonly deltas: DeltaStream;
 	readonly diffs: DeltaStream;
 	readonly started: Set<string>;
+	readonly checkReportLimit: ReportLimitGuard;
 };
 
 async function beforeSubagentSpawn(
@@ -239,7 +241,7 @@ async function stageItem(rt: ForkTaskRuntime, batch: Batch, item: ForkItem, inde
 	const { ctx, parent, artifactsDir, planMode } = batch;
 	const source = await resolveSource(item.from, parent, batch.parentFile);
 	if (source.kind === "error") throw new Error(source.message);
-	const role = await batch.resolveRole(item.agent?.trim() || undefined);
+	const role = await batch.resolveRole(item.agent?.trim());
 	if (role.kind === "error") throw new Error(role.message);
 	const outputSchema = item.outputSchema ?? (role.kind === "role" ? role.output : undefined);
 	const { response, ...capture } = captureReplica(
@@ -310,6 +312,8 @@ async function executeForkTask(
 		await parent.sessionManager.flush();
 		const parentFile = parent.sessionManager.getSessionFile();
 		if (!parentFile) return fail("fork_task: forking needs a persisted session.");
+		const blocked = await rt.checkReportLimit(params, ctx);
+		if (blocked !== null) return fail(blocked);
 		const batch: Batch = {
 			ctx,
 			parent,
@@ -361,7 +365,7 @@ async function executeForkTask(
 	}
 }
 
-export default function forkTask(pi: ExtensionAPI): void {
+export function registerForkTask(pi: ExtensionAPI, reportLimitAsk?: Ask): void {
 	const warn = (message: string, error: unknown) => pi.logger.warn(message, { error: errorText(error) });
 	serveSources(warn);
 	const rt: ForkTaskRuntime = {
@@ -372,6 +376,7 @@ export default function forkTask(pi: ExtensionAPI): void {
 		deltas: createDeltaStream("omp-subagent-ng/fork-task"),
 		diffs: createDeltaStream("omp-subagent-ng/fork-diff"),
 		started: new Set(),
+		checkReportLimit: createReportLimitGuard(pi, reportLimitAsk),
 	};
 
 	pi.on("before_subagent_spawn", beforeSubagentSpawn.bind(null, rt));
@@ -386,7 +391,6 @@ export default function forkTask(pi: ExtensionAPI): void {
 		rt.diffs.turnStarted();
 	});
 	registerSubagentProgress(pi, warn);
-	registerReportLimit(pi);
 
 	registerForkTaskTopics();
 	const tool: ToolDefinition<typeof paramsSchema> & { docTopics(): Readonly<Record<string, string>> } = {
@@ -398,5 +402,9 @@ export default function forkTask(pi: ExtensionAPI): void {
 		docTopics,
 		execute: executeForkTask.bind(null, rt),
 	};
-	pi.registerTool(tool);
+	pi.registerTool(omompTool(tool));
+}
+
+export default function forkTask(pi: ExtensionAPI): void {
+	registerForkTask(pi);
 }

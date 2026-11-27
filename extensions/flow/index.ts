@@ -26,6 +26,7 @@ import {
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Shell } from "@oh-my-pi/pi-natives";
 import { tr } from "../../omomp-shared/i18n.ts";
+import { omompTool } from "../../omomp-shared/tool-entry.ts";
 import { callerSession } from "../_shared/caller-session.ts";
 import { errorText } from "../_shared/errors.ts";
 import type { ForkItem } from "../_shared/fork-item.ts";
@@ -174,7 +175,6 @@ function parseRequest(params: Params): Result<Request> {
 		case "disagree": {
 			if (keys.length !== 1) problems.push("`disagree` takes exactly one key");
 			const reason = params.reason?.trim() ?? "";
-			if (params.reason !== undefined && reason === "") problems.push("`disagree` needs a non-empty `reason`");
 			request = { kind: "decide", key: keys[0] ?? "", verdict: { kind: "disagree", reason } };
 			break;
 		}
@@ -774,5 +774,5 @@ export default function flow(pi: ExtensionAPI): void {
 		docTopics: flowTopics,
 		execute: executeFlow.bind(null, rt),
 	};
-	pi.registerTool(tool);
+	pi.registerTool(omompTool(tool));
 }

@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { AgentSession, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
+import { registerForkTask } from "../extensions/fork-task/index.ts";
 import { type Answer, type Ask, createReportLimit, parseAnswer, VERDICTS_LOG } from "../extensions/fork-task/report-limit.ts";
 
 type Logged = { readonly level: "info" | "warn"; readonly message: string; readonly data: Record<string, unknown> };
@@ -112,5 +116,127 @@ describe("parseAnswer", () => {
 		["report-limit: maybe", "unknown"],
 	])("%p → %s", (text, kind) => {
 		expect(parseAnswer(text).kind as string).toBe(kind);
+	});
+});
+
+describe("fork_task report-limit after omompTool normalization", () => {
+	afterEach(() => {
+		AgentRegistry.resetGlobalForTests();
+	});
+
+	function setupForkTask(answers: ReadonlyArray<readonly [string, Answer]>) {
+		const events: string[] = [];
+		const prompts: string[] = [];
+		let registered: ToolDefinition | undefined;
+		const pi = {
+			on: (event: string) => {
+				events.push(event);
+			},
+			registerTool: (tool: ToolDefinition) => {
+				registered = tool;
+			},
+			events: {},
+			logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+		} as unknown as ExtensionAPI;
+
+		const ask: Ask = async (_system, prompt) => {
+			prompts.push(prompt);
+			const hit = answers.find(([key]) => prompt.includes(key));
+			return hit?.[1] ?? { kind: "text", text: "report-limit: false" };
+		};
+		registerForkTask(pi, ask);
+		if (!registered) throw new Error("fork_task was not registered");
+
+		const session = {
+			settings: Settings.isolated({ "async.enabled": true, "task.maxRecursionDepth": 2 }),
+			asyncJobManager: {},
+			getToolByName: (name: string) => (name === "task" ? {} : undefined),
+			sessionManager: {
+				ensureOnDisk: async () => {},
+				flush: async () => {},
+				getSessionFile: () => "/tmp/caller-session.jsonl",
+			},
+		} as unknown as AgentSession;
+
+		AgentRegistry.global().register({
+			id: "caller",
+			displayName: "caller",
+			kind: "main",
+			status: "running",
+			session,
+			sessionFile: "/tmp/caller-session.jsonl",
+		});
+
+		const ctx = { agent: { id: "caller", depth: 0 } } as unknown as ExtensionContext;
+		const call = (input: unknown) => (registered as ToolDefinition).execute("call-1", input as never, undefined, undefined, ctx);
+
+		return { events, prompts, registered, call };
+	}
+
+	test("does not inspect on tool_call; runs inside omompTool-wrapped execute", () => {
+		const { events, registered } = setupForkTask([]);
+		expect(events).not.toContain("tool_call");
+		expect(Reflect.get(registered, "lenientArgValidation")).toBe(true);
+	});
+
+	test.each([
+		{ label: "empty string", agent: "", name: "" },
+		{ label: "whitespace", agent: "  ", name: "  " },
+		{ label: "null", agent: null, name: null },
+	])("treats $label agent and name identically to omitting them", async ({ agent, name }) => {
+		const { prompts, call } = setupForkTask([CAPPED]);
+		const result = await call({
+			context: "汇报不超过 50 字",
+			tasks: [{ agent, name, task: "count files" }],
+		});
+		expect(result.isError).toBe(true);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("`item 1`");
+		expect(prompts).toHaveLength(1);
+	});
+
+	test("trims whitespace around task:* agent names before matching", async () => {
+		const { prompts, call } = setupForkTask([CAPPED]);
+		const result = await call({
+			context: "repo",
+			tasks: [{ agent: "  task:low  ", name: "worker", task: "汇报不超过 50 字" }],
+		});
+		expect(result.isError).toBe(true);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("`worker`");
+		expect(prompts).toHaveLength(1);
+	});
+
+	test("strips null/empty optional and undeclared fields without skipping batch judgment", async () => {
+		const { prompts, call } = setupForkTask([CAPPED]);
+		const result = await call({
+			context: "repo",
+			role: null,
+			tasks: [
+				{ agent: null, name: null, outputSchema: null, task: "ok" },
+				{ agent: "task:low", name: "flagged", outputSchema: {}, task: "汇报不超过 50 字" },
+			],
+		});
+		expect(result.isError).toBe(true);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("`flagged`");
+		expect(text).not.toContain("`item 1`");
+		expect(prompts).toHaveLength(2);
+	});
+
+	test.each([
+		{ context: null, tasks: [{ task: "汇报不超过 50 字" }] },
+		{ context: "  ", tasks: [{ task: "汇报不超过 50 字" }] },
+		{ context: "ok", tasks: [] },
+		{ context: "ok", tasks: null },
+		{ context: "ok", tasks: [{}] },
+		{ context: "ok", tasks: [{ name: "" }] },
+		{ context: "ok", tasks: [null] },
+		{ context: "ok", tasks: [{ task: "  " }] },
+		{ context: "ok", tasks: [{ task: "ok" }, {}] },
+	])("refuses empty required fields and empty array elements at omompTool before report-limit runs: %j", (input) => {
+		const { prompts, call } = setupForkTask([CAPPED]);
+		expect(() => call(input)).toThrow('Validation failed for tool "fork_task"');
+		expect(prompts).toHaveLength(0);
 	});
 });
