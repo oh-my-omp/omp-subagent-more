@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `flow`, `flow_split` and `fork_task` treat an argument whose value is empty (a blank string, `[]`, `{}` or `null`) as if the field had not been written: `flow` no longer refuses a call because a field of another op was written with an empty value, `flow` op `stop` with a blank `reason` records the same stop as an omitted one, a `fork_task` `outputSchema` of `{}` delivers by the role's own output definition as an omitted one does, and a `tasks` element that is empty (such as `{}`) refuses the call with the element's index instead of dispatching ([#54](https://github.com/oh-my-omp/omp-subagent-ng/issues/54))
+
 ## [0.5.1] - 2026-11-26
 
 ### Fixed

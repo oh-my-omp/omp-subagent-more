@@ -23,6 +23,7 @@ import { cfgTaskMaxRecursionDepth } from "@oh-my-pi/pi-coding-agent/task/setting
 import { cfgAsyncEnabled } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { createDeltaStream, type Delta, type DeltaStream } from "../../omomp-shared/context-delta.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
+import { omompTool } from "../../omomp-shared/tool-entry.ts";
 import { callerSession } from "./caller-session.ts";
 import { type Clone, cloneDiff, yieldDelta } from "./clone.ts";
 import { errorText } from "./errors.ts";
@@ -229,7 +230,7 @@ async function stageItem(rt: ForkTaskRuntime, batch: Batch, item: ForkItem, inde
 	const { ctx, parent, artifactsDir, planMode } = batch;
 	const source = await resolveSource(item.from, parent, batch.parentFile);
 	if (source.kind === "error") throw new Error(source.message);
-	const role = await batch.resolveRole(item.agent?.trim() || undefined);
+	const role = await batch.resolveRole(item.agent?.trim());
 	if (role.kind === "error") throw new Error(role.message);
 	const outputSchema = item.outputSchema ?? (role.kind === "role" ? role.output : undefined);
 	const { response, ...capture } = captureReplica(
@@ -388,5 +389,5 @@ export default function forkTask(pi: ExtensionAPI): void {
 		docTopics,
 		execute: executeForkTask.bind(null, rt),
 	};
-	pi.registerTool(tool);
+	pi.registerTool(omompTool(tool));
 }
