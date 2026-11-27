@@ -26,7 +26,7 @@
 - **Topic**
   - `help://fork_task/limits` — 功能：同时经原生 `docTopics: toDocTopics(FORK_TASK_TOPICS)` 与 `registerToolTopics("omp-subagent-ng", ...)` 注册，列出前提、不支持的字段、源错误、`isolated_from_source` 约束以及在 eval 中调用 `await tool.fork_task(...)` 的行为。时机：模型读取时；精简工具说明直接指向它。实例：``Not fork fields: `steps`, `solutionSpace`, `model`, `tools`.``
 - **报告长度检查**
-  - 报告长度判定 — 功能：共享 `context` 或条目 `task`（`agent` 为 `task:*` 或省略的条目）限制了 worker 报告长度时拦下 `fork_task` 调用，每个条目问模型一个问题，总时限 25 秒。时机：每次 `fork_task` 的 `tool_call`，执行之前。实例：拦截原因 ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``。
+  - 报告长度判定 — 功能：共享 `context` 或条目 `task`（`agent` 为 `task:*` 或省略的条目）限制了 worker 报告长度时拦下 `fork_task` 调用，每个条目问模型一个问题，总时限 25 秒。时机：每次调用 `fork_task` 时，在参数归一化与前提检查之后、暂存之前。实例：拦截原因 ``禁止限制 task 系列 subagent 的报告字数：… 删掉字数/长度限制后重新派发；报告长时让 worker 写入文件（如 `local://<name>.md`）…``。
   - `@omp-subagent-ng` 模型角色 — 功能：判定先问这个角色，再走 `default` 角色链；没有模型、请求失败或回答无法解析时放行。时机：每次判定。实例：在 `/model` → "+ New role" 绑定；模型须回答 `report-limit: true` 或 `report-limit: false`。
   - 判定缓存与日志 — 功能：每个进程只记住 `clear` 判定（对去空白的 context 和 task 取 sha256），每次判定过的调用写一行日志。时机：每次判定之后。实例：日志行 `omp-subagent-ng report-limit verdicts`。
 - **会话 artifacts 中的分叉记录**

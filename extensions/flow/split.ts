@@ -5,6 +5,7 @@ import { z } from "@oh-my-pi/omptype/zod";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { applyActiveTools } from "../../omomp-shared/active-tools.ts";
 import { tr } from "../../omomp-shared/i18n.ts";
+import { omompTool } from "../../omomp-shared/tool-entry.ts";
 import { readOptional, sessionArtifactsDir } from "../_shared/session-files.ts";
 
 export const SPLIT_TOOL = "flow_split";
@@ -143,7 +144,7 @@ export function registerSplitTool(pi: ExtensionAPI): void {
 			}
 		},
 	};
-	pi.registerTool(tool);
+	pi.registerTool(omompTool(tool));
 	pi.on("session_start", async (_event, ctx) => {
 		const file = ctx.sessionManager.getSessionFile();
 		if (ctx.agent.kind !== "sub" || !file || (await readOptional(markerPath(file))) === undefined) return;
