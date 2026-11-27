@@ -9,7 +9,7 @@ import {
 	defineStatefulHarnessHandoff,
 	registerCompactHandoff,
 } from "../../omomp-shared/compact-handoff.ts";
-import { callerSession } from "./caller-session.ts";
+import { callerSession } from "../_shared/caller-session.ts";
 
 export const PROGRESS_TYPE = "omp-subagent-more.subagent-progress";
 export const GRACE_MS = 10_000;

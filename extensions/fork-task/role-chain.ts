@@ -4,8 +4,8 @@ import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { resolveRoleChain } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
 import { MODEL_ROLE_IDS, roleCandidatePool } from "@oh-my-pi/pi-coding-agent/config/model-roles";
 import { kindOf } from "@oh-my-pi/pi-coding-agent/judgment";
-import { callerSession } from "./caller-session.ts";
-import { errorText } from "./errors.ts";
+import { callerSession } from "../_shared/caller-session.ts";
+import { errorText } from "../_shared/errors.ts";
 
 type Effort = (typeof THINKING_EFFORTS)[number];
 
