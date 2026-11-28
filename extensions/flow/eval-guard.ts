@@ -47,9 +47,11 @@ const STANDALONE_LOAD = /^%load(?:[ \t]+([^\r\n]*))?$/;
 
 const ASSIGN_LINE = /^[ \t]*[A-Za-z_][A-Za-z_0-9.[\], ]*?\s*=\s*(.+)$/;
 
-const INLINE_LOAD = /^%load(?:\s+([\s\S]*))?$/;
+const LINE_MAGIC = /^%\s*([A-Za-z_][A-Za-z_0-9]*)(?:\s+(.*))?$/;
 
-const CODE_LINE_MAGIC = /^%(?:time|timeit)(?:\s+([\s\S]*))?$/;
+const CELL_MAGIC = /^%%\s*([A-Za-z_][A-Za-z_0-9]*)/;
+
+const CODE_LINE_MAGICS: Readonly<Record<string, true>> = { time: true, timeit: true };
 
 const BODY_CELL_MAGICS: Readonly<Record<string, true>> = { capture: true, timeit: true };
 
@@ -100,7 +102,7 @@ export function normalizePython(source: string): PythonCell {
 			const rhs = command ? "" : (ASSIGN_LINE.exec(line)?.[1]?.trim() ?? "");
 			if (command || rhs.startsWith("%") || rhs.startsWith("!")) {
 				if (stripped.startsWith("%%")) {
-					if (!BODY_CELL_MAGICS[/^%%(\w+)/.exec(stripped)?.[1] ?? ""]) {
+					if (!BODY_CELL_MAGICS[CELL_MAGIC.exec(stripped)?.[1] ?? ""]) {
 						kept.fill("", i);
 						break;
 					}
@@ -110,12 +112,18 @@ export function normalizePython(source: string): PythonCell {
 				}
 				let end = i + 1;
 				if (command) while (end < lines.length && lines[end - 1]?.endsWith("\\")) end += 1;
-				const magic = (command ? lines.slice(i, end).join("\n") : rhs).trimStart().replace(/\\\n/g, " ");
-				const load = INLINE_LOAD.exec(magic);
-				if (load) loads.push(load[1] ?? "");
+				const folded = command
+					? lines
+							.slice(i, end)
+							.map((part, k) => (k < end - i - 1 ? part.slice(0, -1) : part))
+							.join("")
+					: rhs;
+				const head = LINE_MAGIC.exec(folded.trimStart());
+				const name = head?.[1] ?? "";
+				const args = (head?.[2] ?? "").trimEnd();
+				if (name === "load") loads.push(args);
 				kept.fill("", i, end);
-				const code = CODE_LINE_MAGIC.exec(magic)?.[1];
-				if (code !== undefined) kept[i] = `${/^[ \t]*/.exec(line)?.[0] ?? ""}${code.replace(/\n/g, " ")}`;
+				if (CODE_LINE_MAGICS[name]) kept[i] = `${/^[ \t]*/.exec(line)?.[0] ?? ""}${args}`;
 				i = end;
 				continue;
 			}

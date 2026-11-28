@@ -51,6 +51,15 @@ describe("eval guard: calls in the cell", () => {
 		expect(await py('%%timeit\nagent("x")')).toContain("`agent()`");
 	});
 
+	test("magic lines are read the way the host reads them: blanks after % and continuations joined without a separator", async () => {
+		expect(await py('% time completion("x")')).toContain("`completion()`");
+		expect(await py("r = %  timeit judge(s, q)")).toContain("`judge()`");
+		expect(await py('%time comp\\\nletion("x")')).toContain("`completion()`");
+		expect(await py('%% capture out\ntool.flow({"op": "status"})')).toContain("`tool.flow()`");
+		expect(await py('%% writefile x.py\ncompletion("x")')).toBeNull();
+		expect(await py("%time(completion('x'))")).toBeNull();
+	});
+
 	test("names in strings, comments, members, keyword arguments and cell-magic payloads do not refuse the cell", async () => {
 		expect(await py('# agent(x)\ns = "workpool(1)"\nobj.agent(1)\nr = await tool.task({"tasks": [{"agent": "task:low"}]})')).toBeNull();
 		expect(await py('s = """\n%load evil.py\nagent(1)\n"""')).toBeNull();
@@ -130,7 +139,7 @@ describe("eval guard: scripts included with %load", () => {
 
 	test("an inline Python %load line is followed, also through nested scripts", async () => {
 		const f = files({ "outer.py": "import os\n%load inner.py", "inner.py": DISPATCH_PY });
-		expect(await py('x = 1\n%load "outer.py"\nprint(x)', f.load)).toContain("`agent()`");
+		expect(await py('x = 1\n% load "outer.py"\nprint(x)', f.load)).toContain("`agent()`");
 		expect(f.asked).toEqual([
 			{ kind: "line", file: "outer.py" },
 			{ kind: "line", file: "inner.py" },
