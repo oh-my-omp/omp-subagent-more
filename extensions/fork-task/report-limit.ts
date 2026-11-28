@@ -1,6 +1,6 @@
 import { z } from "@oh-my-pi/omptype/zod";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { errorText } from "./errors.ts";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { errorText } from "../_shared/errors.ts";
 import { completeRoles, MEDIUM_EFFORT } from "./role-chain.ts";
 
 const ROLE = "omp-subagent-ng";
@@ -83,7 +83,9 @@ export function createReportLimit(log: { info: Log; warn: Log }) {
 			if (!call.success) return null;
 			const { context, tasks } = call.data;
 			const judged = tasks.flatMap((item, index) =>
-				item.agent === undefined || item.agent.startsWith("task:") ? [{ item, label: `\`${item.name ?? `item ${index + 1}`}\`` }] : [],
+				item.agent === undefined || item.agent.trim().startsWith("task:")
+					? [{ item, label: `\`${item.name ?? `item ${index + 1}`}\`` }]
+					: [],
 			);
 			if (judged.length === 0) return null;
 			const deadlineAt = Date.now() + DEADLINE_MS;
@@ -96,38 +98,41 @@ export function createReportLimit(log: { info: Log; warn: Log }) {
 	};
 }
 
-export function registerReportLimit(pi: ExtensionAPI): void {
+export type ReportLimitGuard = (params: unknown, ctx: ExtensionContext) => Promise<string | null>;
+
+export function createReportLimitGuard(pi: ExtensionAPI, ask?: Ask): ReportLimitGuard {
 	const reportLimit = createReportLimit({
 		info: (message, data) => pi.logger.info(message, data),
 		warn: (message, data) => pi.logger.warn(message, data),
 	});
-	// A throwing tool_call handler blocks the tool, so every failure lets the call run.
-	pi.on("tool_call", async (event, ctx) => {
-		try {
-			const reason = await reportLimit.inspect(event.toolName, event.input, async (systemPrompt, prompt, signal, deadlineAt) => {
-				const reply = await completeRoles(ctx, [ROLE, "default"], systemPrompt, prompt, MEDIUM_EFFORT, deadlineAt, signal);
-				switch (reply.kind) {
-					case "text":
-						pi.logger.info("omp-subagent-ng report-limit answered", { model: reply.model, failures: reply.failures });
-						return { kind: "text", text: reply.text };
-					case "no-model":
-						return { kind: "failed", why: `no model: assign @${ROLE} or the default role in /model` };
-					case "deadline":
-						return { kind: "failed", why: "deadline" };
-					case "all-failed":
-						return { kind: "failed", why: `every model failed: ${reply.failures.join("; ")}` };
-					case "error":
-						return { kind: "failed", why: reply.error };
-					default: {
-						const unreachable: never = reply;
-						return unreachable;
-					}
+	const defaultAsk =
+		(ctx: ExtensionContext): Ask =>
+		async (systemPrompt, prompt, signal, deadlineAt) => {
+			const reply = await completeRoles(ctx, [ROLE, "default"], systemPrompt, prompt, MEDIUM_EFFORT, deadlineAt, signal);
+			switch (reply.kind) {
+				case "text":
+					pi.logger.info("omp-subagent-ng report-limit answered", { model: reply.model, failures: reply.failures });
+					return { kind: "text", text: reply.text };
+				case "no-model":
+					return { kind: "failed", why: `no model: assign @${ROLE} or the default role in /model` };
+				case "deadline":
+					return { kind: "failed", why: "deadline" };
+				case "all-failed":
+					return { kind: "failed", why: `every model failed: ${reply.failures.join("; ")}` };
+				case "error":
+					return { kind: "failed", why: reply.error };
+				default: {
+					const unreachable: never = reply;
+					return unreachable;
 				}
-			});
-			return reason === null ? undefined : { block: true, reason };
+			}
+		};
+	return async (params, ctx) => {
+		try {
+			return await reportLimit.inspect("fork_task", params, ask ?? defaultAsk(ctx));
 		} catch (error) {
 			pi.logger.warn("omp-subagent-ng report-limit skipped a fork_task call", { error: errorText(error) });
-			return undefined;
+			return null;
 		}
-	});
+	};
 }

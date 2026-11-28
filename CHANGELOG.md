@@ -4,8 +4,24 @@
 
 ### Changed
 
-- An `eval` cell whose source, including a script it runs with `%load`, calls the eval prelude's `agent()` or `workpool()` is refused before it runs, in the main session and in subagent sessions, with a reason naming the function and pointing to `help://flow/eval`: subagents started from eval go through the `flow` tool, whose background job is not cancelled when the cell is interrupted ([#57](https://github.com/oh-my-omp/omp-subagent-ng/issues/57))
 - A Python `eval` cell that calls `judge()`, `judge_batch()`, `completion()` or `tool.flow()` is refused before it runs as well, since Python cells only compute; the reason for any refused Python cell names the calls, asks for a JavaScript eval cell and points to `help://flow/eval` for `agent`, `workpool` and `tool.flow` and to `help://eval/judge` for `judge`, `judge_batch` and `completion` ([#58](https://github.com/oh-my-omp/omp-subagent-ng/issues/58))
+
+## [0.5.3] - 2026-11-28
+
+### Changed
+
+- `omp-subagent-ng` emits an empty-state compaction exclusion claim when no subagents are in flight at compaction so summaries do not report finished prefix subagents as still running, and updates `omomp-shared/compact-handoff.ts` to `COMPACT_HANDOFF_REVISION = 3` ([#69](https://github.com/oh-my-omp/omp-subagent-ng/issues/69))
+
+### Fixed
+
+- `flow`, `flow_split` and `fork_task` treat an argument whose value is empty (a blank string, `[]`, `{}` or `null`) as if the field had not been written: `flow` no longer refuses a call because a field of another op was written with an empty value, `flow` op `stop` with a blank `reason` records the same stop as an omitted one, a `fork_task` `outputSchema` of `{}` delivers by the role's own output definition as an omitted one does, and a `tasks` element that is empty (such as `{}`) refuses the call with the element's index instead of dispatching ([#54](https://github.com/oh-my-omp/omp-subagent-ng/issues/54))
+
+## [0.5.2] - 2026-11-27
+
+### Changed
+
+- An `eval` cell whose source, including a script it runs with `%load`, calls the eval prelude's `agent()` or `workpool()` is refused before it runs, in the main session and in subagent sessions, with a reason naming the function and pointing to `help://flow/eval`: subagents started from eval go through the `flow` tool, whose background job is not cancelled when the cell is interrupted ([#57](https://github.com/oh-my-omp/omp-subagent-ng/issues/57))
+- The daily `omomp-check` run, and a manual run with `report_issue` set, keeps one tracking issue in this repository open while the check fails, naming the first failing stage, its error and the `@oh-my-pi/*` versions, and closes it once the check passes; the check now also runs the `oh-my-omp/shared` gate on both extensions ([#43](https://github.com/oh-my-omp/omp-subagent-ng/issues/43))
 
 ## [0.5.1] - 2026-11-26
 

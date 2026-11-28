@@ -5,12 +5,12 @@ import { type AgentSession, createAgentSession, type ExtensionContext } from "@o
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/tools/todo";
-import { hasErrorCode } from "./errors.ts";
+import { hasErrorCode } from "../_shared/errors.ts";
+import type { ForkWorkspace } from "../_shared/workspace.ts";
 import { forkNotice } from "./notice.ts";
 import type { ForkNotice, Replica } from "./replica.ts";
 import type { ForkSource } from "./source.ts";
 import { finalizeStaging } from "./staging.ts";
-import type { ForkWorkspace } from "./workspace.ts";
 
 export type PendingFork = {
 	readonly name: string;
