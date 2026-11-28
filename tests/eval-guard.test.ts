@@ -60,6 +60,7 @@ describe("eval guard: calls in the cell", () => {
 		expect(await py("%time(completion('x'))")).toBeNull();
 		expect(await py('%time completion("x")\r\nprint(1)\r\n')).toContain("`completion()`");
 		expect(await py('%time comp\\\r\nletion("x")\r\n')).toContain("`completion()`");
+		expect(await py("print('a\fcompletion(1)')")).toBeNull();
 	});
 
 	test("names in strings, comments, members, keyword arguments and cell-magic payloads do not refuse the cell", async () => {

@@ -92,6 +92,7 @@ type PythonCell = { readonly code: string; readonly loads: readonly string[] };
 const PYTHON_LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
 
 export function normalizePython(source: string): PythonCell {
+	if (!source.includes("%") && !source.includes("!")) return { code: source, loads: [] };
 	const lines = source.split(PYTHON_LINE_BREAK);
 	const kept = [...lines];
 	const loads: string[] = [];
