@@ -91,7 +91,19 @@ type PythonCell = { readonly code: string; readonly loads: readonly string[] };
 // biome-ignore lint/suspicious/noControlCharactersInRegex: these are the line boundaries of Python's str.splitlines, which the host's transform_cell splits on
 const PYTHON_LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
 
-export function normalizePython(source: string): PythonCell {
+const COMMENT_PREAMBLE = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)*/;
+
+function stripCommentPreamble(source: string): string {
+	let end = COMMENT_PREAMBLE.exec(source)?.[0].length ?? 0;
+	const lineStart = source.lastIndexOf("\n", end - 1) + 1;
+	if (source.slice(lineStart, end).trim() === "") end = lineStart;
+	const preamble = source.slice(0, end);
+	if (!preamble.includes("//") && !preamble.includes("/*")) return source;
+	return "\n".repeat(preamble.split("\n").length - 1) + source.slice(end);
+}
+
+export function normalizePython(cell: string): PythonCell {
+	const source = stripCommentPreamble(cell);
 	if (!source.includes("%") && !source.includes("!")) return { code: source, loads: [] };
 	const lines = source.split(PYTHON_LINE_BREAK);
 	const kept = [...lines];

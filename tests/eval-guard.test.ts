@@ -51,7 +51,7 @@ describe("eval guard: calls in the cell", () => {
 		expect(await py('%%timeit\nagent("x")')).toContain("`agent()`");
 	});
 
-	test("magic lines are read the way the host reads them: blanks after % and continuations joined without a separator", async () => {
+	test("cells are read the way the host transform reads them: comment preamble, no-magic passthrough, splitlines, blanks after %, joined continuations", async () => {
 		expect(await py('% time completion("x")')).toContain("`completion()`");
 		expect(await py("r = %  timeit judge(s, q)")).toContain("`judge()`");
 		expect(await py('%time comp\\\nletion("x")')).toContain("`completion()`");
@@ -61,6 +61,9 @@ describe("eval guard: calls in the cell", () => {
 		expect(await py('%time completion("x")\r\nprint(1)\r\n')).toContain("`completion()`");
 		expect(await py('%time comp\\\r\nletion("x")\r\n')).toContain("`completion()`");
 		expect(await py("print('a\fcompletion(1)')")).toBeNull();
+		expect(await py("// then call completion() on it\nprint(1)")).toBeNull();
+		expect(await py("/* judge(x) */\n# note\nprint(1)")).toBeNull();
+		expect(await py('// preamble\ncompletion("x")')).toContain("`completion()`");
 	});
 
 	test("names in strings, comments, members, keyword arguments and cell-magic payloads do not refuse the cell", async () => {
