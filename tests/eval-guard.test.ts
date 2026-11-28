@@ -84,6 +84,16 @@ describe("eval guard: calls in the cell", () => {
 		expect(both?.split("\n").slice(1)).toEqual(["help://flow/eval", "help://eval/judge"]);
 	});
 
+	test("Python calls are matched by the name Python resolves: NFKC spellings, comments and parentheses in the callee, any call count", async () => {
+		expect(await py("print(ｃompletion('x').wait())")).toContain("`completion()`");
+		expect(await py("r = await ｔool.ｆlow({'op': 'status'})")).toContain("`tool.flow()`");
+		expect(await py("x = [tool  # status\n    .flow({})]")).toContain("`tool.flow()`");
+		expect(await py("r = await (tool).flow({})\nh = (judge)(s, q)")).toContain("`judge()` and `tool.flow()`");
+		const many = Array.from({ length: 200 }, (_, i) => `f${i}(1)`).join("\n");
+		expect(await py(`${many}\nh = agent("x")`)).toContain("`agent()`");
+		expect(await py("t(ool).flow({})\nobj.ｃompletion(1)\nmy_judge(1)")).toBeNull();
+	});
+
 	test("Python cells without those calls run: @tool, tool bridges other than tool.flow, wait, members and strings", async () => {
 		expect(
 			await py(

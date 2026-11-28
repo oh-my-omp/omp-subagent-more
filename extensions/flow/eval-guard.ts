@@ -126,17 +126,53 @@ export function normalizePython(source: string): PythonCell {
 	return { code: kept.join("\n"), loads };
 }
 
-const patterns = (language: Language, name: Refused): string[] =>
-	language === "js" ? [`${name}($$$ARGS)`, `globalThis.${name}($$$ARGS)`] : [`${name}($$$ARGS)`];
+const WRAPPED_NAME = /(?<![\w)\]])\(([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\)/g;
+
+function pythonCallee(text: string): string {
+	let callee = text
+		.normalize("NFKC")
+		.replace(/#[^\n]*/g, "")
+		.replace(/\\\r?\n|\s/g, "");
+	let unwrapped = callee.replace(WRAPPED_NAME, "$1");
+	while (unwrapped !== callee) {
+		callee = unwrapped;
+		unwrapped = callee.replace(WRAPPED_NAME, "$1");
+	}
+	return callee;
+}
 
 async function calledIn(language: Language, code: string): Promise<Refused[]> {
-	const found = await Promise.all(
-		REFUSED[language].map(async (name) => {
-			const result = await astMatch({ source: code, lang: GRAMMAR[language], patterns: patterns(language, name), limit: 1 });
-			return result.totalMatches > 0 ? [name] : [];
-		}),
-	);
-	return found.flat();
+	switch (language) {
+		case "js": {
+			const found = await Promise.all(
+				REFUSED.js.map(async (name) => {
+					const result = await astMatch({
+						source: code,
+						lang: GRAMMAR.js,
+						patterns: [`${name}($$$ARGS)`, `globalThis.${name}($$$ARGS)`],
+						limit: 1,
+					});
+					return result.totalMatches > 0 ? [name] : [];
+				}),
+			);
+			return found.flat();
+		}
+		case "py": {
+			const calls = await astMatch({
+				source: code,
+				lang: GRAMMAR.py,
+				patterns: ["$CALLEE($$$ARGS)"],
+				includeMeta: true,
+				limit: Number.MAX_SAFE_INTEGER,
+			});
+			const callees = new Set(calls.matches.map((match) => pythonCallee(match.metaVariables?.CALLEE ?? "")));
+			return REFUSED.py.filter((name) => callees.has(name));
+		}
+		default: {
+			const unreachable: never = language;
+			return unreachable;
+		}
+	}
 }
 
 const singleArg = (raw: string): string | null => {
