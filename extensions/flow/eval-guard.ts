@@ -11,13 +11,29 @@ import { astMatch } from "@oh-my-pi/pi-natives";
 import { callerSession } from "../_shared/caller-session.ts";
 import { errorText } from "../_shared/errors.ts";
 
-export type Spawner = "agent" | "workpool";
-
-const SPAWNERS: readonly Spawner[] = ["agent", "workpool"];
+export type Refused = "agent" | "workpool" | "judge" | "judge_batch" | "completion" | "tool.flow";
 
 const cellSchema = z.object({ language: z.enum(["py", "js"]), code: z.string() }).passthrough();
 
 type Language = z.infer<typeof cellSchema>["language"];
+
+const REFUSED: Readonly<Record<Language, readonly Refused[]>> = {
+	js: ["agent", "workpool"],
+	py: ["agent", "workpool", "judge", "judge_batch", "completion", "tool.flow"],
+};
+
+type Topic = "help://flow/eval" | "help://eval/judge";
+
+const TOPICS: readonly Topic[] = ["help://flow/eval", "help://eval/judge"];
+
+const TOPIC: Readonly<Record<Refused, Topic>> = {
+	agent: "help://flow/eval",
+	workpool: "help://flow/eval",
+	"tool.flow": "help://flow/eval",
+	judge: "help://eval/judge",
+	judge_batch: "help://eval/judge",
+	completion: "help://eval/judge",
+};
 
 export type Script = { readonly path: string; readonly code: string };
 
@@ -31,9 +47,11 @@ const STANDALONE_LOAD = /^%load(?:[ \t]+([^\r\n]*))?$/;
 
 const ASSIGN_LINE = /^[ \t]*[A-Za-z_][A-Za-z_0-9.[\], ]*?\s*=\s*(.+)$/;
 
-const INLINE_LOAD = /^%load(?:\s+([\s\S]*))?$/;
+const LINE_MAGIC = /^%\s*([A-Za-z_][A-Za-z_0-9]*)(?:\s+(.*))?$/;
 
-const CODE_LINE_MAGIC = /^%(?:time|timeit)(?:\s+([\s\S]*))?$/;
+const CELL_MAGIC = /^%%\s*([A-Za-z_][A-Za-z_0-9]*)/;
+
+const CODE_LINE_MAGICS: Readonly<Record<string, true>> = { time: true, timeit: true };
 
 const BODY_CELL_MAGICS: Readonly<Record<string, true>> = { capture: true, timeit: true };
 
@@ -70,8 +88,24 @@ function scanQuotes(line: string, open: Quote | null): Quote | null {
 
 type PythonCell = { readonly code: string; readonly loads: readonly string[] };
 
-export function normalizePython(source: string): PythonCell {
-	const lines = source.split("\n");
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the line boundaries of Python's str.splitlines, which the host's transform_cell splits on
+const PYTHON_LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
+
+const COMMENT_PREAMBLE = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)*/;
+
+function stripCommentPreamble(source: string): string {
+	let end = COMMENT_PREAMBLE.exec(source)?.[0].length ?? 0;
+	const lineStart = source.lastIndexOf("\n", end - 1) + 1;
+	if (source.slice(lineStart, end).trim() === "") end = lineStart;
+	const preamble = source.slice(0, end);
+	if (!preamble.includes("//") && !preamble.includes("/*")) return source;
+	return "\n".repeat(preamble.split("\n").length - 1) + source.slice(end);
+}
+
+export function normalizePython(cell: string): PythonCell {
+	const source = stripCommentPreamble(cell);
+	if (!source.includes("%") && !source.includes("!")) return { code: source, loads: [] };
+	const lines = source.split(PYTHON_LINE_BREAK);
 	const kept = [...lines];
 	const loads: string[] = [];
 	let quote: Quote | null = null;
@@ -84,7 +118,7 @@ export function normalizePython(source: string): PythonCell {
 			const rhs = command ? "" : (ASSIGN_LINE.exec(line)?.[1]?.trim() ?? "");
 			if (command || rhs.startsWith("%") || rhs.startsWith("!")) {
 				if (stripped.startsWith("%%")) {
-					if (!BODY_CELL_MAGICS[/^%%(\w+)/.exec(stripped)?.[1] ?? ""]) {
+					if (!BODY_CELL_MAGICS[CELL_MAGIC.exec(stripped)?.[1] ?? ""]) {
 						kept.fill("", i);
 						break;
 					}
@@ -94,12 +128,18 @@ export function normalizePython(source: string): PythonCell {
 				}
 				let end = i + 1;
 				if (command) while (end < lines.length && lines[end - 1]?.endsWith("\\")) end += 1;
-				const magic = (command ? lines.slice(i, end).join("\n") : rhs).trimStart().replace(/\\\n/g, " ");
-				const load = INLINE_LOAD.exec(magic);
-				if (load) loads.push(load[1] ?? "");
+				const folded = command
+					? lines
+							.slice(i, end)
+							.map((part, k) => (k < end - i - 1 ? part.slice(0, -1) : part))
+							.join("")
+					: rhs;
+				const head = LINE_MAGIC.exec(folded.trimStart());
+				const name = head?.[1] ?? "";
+				const args = (head?.[2] ?? "").trimEnd();
+				if (name === "load") loads.push(args);
 				kept.fill("", i, end);
-				const code = CODE_LINE_MAGIC.exec(magic)?.[1];
-				if (code !== undefined) kept[i] = `${/^[ \t]*/.exec(line)?.[0] ?? ""}${code.replace(/\n/g, " ")}`;
+				if (CODE_LINE_MAGICS[name]) kept[i] = `${/^[ \t]*/.exec(line)?.[0] ?? ""}${args}`;
 				i = end;
 				continue;
 			}
@@ -110,17 +150,53 @@ export function normalizePython(source: string): PythonCell {
 	return { code: kept.join("\n"), loads };
 }
 
-const patterns = (language: Language, name: Spawner): string[] =>
-	language === "js" ? [`${name}($$$ARGS)`, `globalThis.${name}($$$ARGS)`] : [`${name}($$$ARGS)`];
+const WRAPPED_NAME = /(?<![\w)\]])\(([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\)/g;
 
-async function calledIn(language: Language, code: string): Promise<Spawner[]> {
-	const found = await Promise.all(
-		SPAWNERS.map(async (name) => {
-			const result = await astMatch({ source: code, lang: GRAMMAR[language], patterns: patterns(language, name), limit: 1 });
-			return result.totalMatches > 0 ? [name] : [];
-		}),
-	);
-	return found.flat();
+function pythonCallee(text: string): string {
+	let callee = text
+		.normalize("NFKC")
+		.replace(/#[^\n]*/g, "")
+		.replace(/\\\r?\n|\s/g, "");
+	let unwrapped = callee.replace(WRAPPED_NAME, "$1");
+	while (unwrapped !== callee) {
+		callee = unwrapped;
+		unwrapped = callee.replace(WRAPPED_NAME, "$1");
+	}
+	return callee;
+}
+
+async function calledIn(language: Language, code: string): Promise<Refused[]> {
+	switch (language) {
+		case "js": {
+			const found = await Promise.all(
+				REFUSED.js.map(async (name) => {
+					const result = await astMatch({
+						source: code,
+						lang: GRAMMAR.js,
+						patterns: [`${name}($$$ARGS)`, `globalThis.${name}($$$ARGS)`],
+						limit: 1,
+					});
+					return result.totalMatches > 0 ? [name] : [];
+				}),
+			);
+			return found.flat();
+		}
+		case "py": {
+			const calls = await astMatch({
+				source: code,
+				lang: GRAMMAR.py,
+				patterns: ["$CALLEE($$$ARGS)"],
+				includeMeta: true,
+				limit: Number.MAX_SAFE_INTEGER,
+			});
+			const callees = new Set(calls.matches.map((match) => pythonCallee(match.metaVariables?.CALLEE ?? "")));
+			return REFUSED.py.filter((name) => callees.has(name));
+		}
+		default: {
+			const unreachable: never = language;
+			return unreachable;
+		}
+	}
 }
 
 const singleArg = (raw: string): string | null => {
@@ -132,7 +208,7 @@ const singleArg = (raw: string): string | null => {
 	}
 };
 
-async function scan(language: Language, code: string, load: Load, seen: Set<string>): Promise<Set<Spawner>> {
+async function scan(language: Language, code: string, load: Load, seen: Set<string>): Promise<Set<Refused>> {
 	const standalone = STANDALONE_LOAD.exec(code.trim());
 	if (standalone) {
 		const file = singleArg(standalone[1] ?? "");
@@ -150,30 +226,48 @@ async function scan(language: Language, code: string, load: Load, seen: Set<stri
 	return found;
 }
 
-async function included(language: Language, script: Script, load: Load, seen: Set<string>): Promise<Set<Spawner>> {
+async function included(language: Language, script: Script, load: Load, seen: Set<string>): Promise<Set<Refused>> {
 	if (seen.has(script.path)) return new Set();
 	seen.add(script.path);
 	if (language === "js") return new Set(await calledIn("js", script.code));
 	return scan("py", script.code, load, seen);
 }
 
-export async function spawnersCalled(language: Language, code: string, load: Load): Promise<Spawner[]> {
+export async function refusedCalls(language: Language, code: string, load: Load): Promise<Refused[]> {
 	const found = await scan(language, code, load, new Set());
-	return SPAWNERS.filter((name) => found.has(name));
+	return REFUSED[language].filter((name) => found.has(name));
 }
 
-export const refusal = (names: readonly Spawner[]): string =>
-	[
-		`This eval cell was not run: it calls ${names.map((name) => `\`${name}()\``).join(" and ")} from the eval prelude. Subagents started from an eval cell are cancelled when the cell is interrupted; start them through the flow tool instead:`,
-		"help://flow/eval",
-	].join("\n");
+const listed = (names: readonly Refused[]): string => {
+	const shown = names.map((name) => `\`${name}()\``);
+	return shown.length < 3 ? shown.join(" and ") : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+};
+
+export function refusal(language: Language, names: readonly Refused[]): string {
+	switch (language) {
+		case "js":
+			return [
+				`This eval cell was not run: it calls ${listed(names)} from the eval prelude. Subagents started from an eval cell are cancelled when the cell is interrupted; start them through the flow tool instead:`,
+				"help://flow/eval",
+			].join("\n");
+		case "py":
+			return [
+				`This Python eval cell was not run: it calls ${listed(names)}. Python eval cells only compute and do not call models or the flow; make these calls from a JavaScript eval cell instead:`,
+				...TOPICS.filter((topic) => names.some((name) => TOPIC[name] === topic)),
+			].join("\n");
+		default: {
+			const unreachable: never = language;
+			return unreachable;
+		}
+	}
+}
 
 export async function inspectEval(toolName: string, input: unknown, load: Load): Promise<string | null> {
 	if (toolName !== "eval") return null;
 	const cell = cellSchema.safeParse(input);
 	if (!cell.success) return null;
-	const names = await spawnersCalled(cell.data.language, cell.data.code, load);
-	return names.length === 0 ? null : refusal(names);
+	const names = await refusedCalls(cell.data.language, cell.data.code, load);
+	return names.length === 0 ? null : refusal(cell.data.language, names);
 }
 
 function resolveContext(ctx: ExtensionContext): ResolveContext {

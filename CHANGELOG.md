@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A Python `eval` cell that calls `judge()`, `judge_batch()`, `completion()` or `tool.flow()` is refused before it runs as well, since Python cells only compute; the reason for any refused Python cell names the calls, asks for a JavaScript eval cell and points to `help://flow/eval` for `agent`, `workpool` and `tool.flow` and to `help://eval/judge` for `judge`, `judge_batch` and `completion` ([#58](https://github.com/oh-my-omp/omp-subagent-ng/issues/58))
+
 ## [0.5.3] - 2026-11-28
 
 ### Changed
