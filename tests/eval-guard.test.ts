@@ -58,6 +58,8 @@ describe("eval guard: calls in the cell", () => {
 		expect(await py('%% capture out\ntool.flow({"op": "status"})')).toContain("`tool.flow()`");
 		expect(await py('%% writefile x.py\ncompletion("x")')).toBeNull();
 		expect(await py("%time(completion('x'))")).toBeNull();
+		expect(await py('%time completion("x")\r\nprint(1)\r\n')).toContain("`completion()`");
+		expect(await py('%time comp\\\r\nletion("x")\r\n')).toContain("`completion()`");
 	});
 
 	test("names in strings, comments, members, keyword arguments and cell-magic payloads do not refuse the cell", async () => {

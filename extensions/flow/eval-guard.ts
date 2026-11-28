@@ -88,8 +88,11 @@ function scanQuotes(line: string, open: Quote | null): Quote | null {
 
 type PythonCell = { readonly code: string; readonly loads: readonly string[] };
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the line boundaries of Python's str.splitlines, which the host's transform_cell splits on
+const PYTHON_LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
+
 export function normalizePython(source: string): PythonCell {
-	const lines = source.split("\n");
+	const lines = source.split(PYTHON_LINE_BREAK);
 	const kept = [...lines];
 	const loads: string[] = [];
 	let quote: Quote | null = null;
